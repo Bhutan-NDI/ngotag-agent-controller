@@ -1,12 +1,10 @@
-name: Build and deploy Node.js app to ECSsdc
+name: Build and deploy credo on qa
 
 on:
   push:
-    branches:
-      - pipeline-implementation
-  #   paths:
-  #     - 'apps/agent-service/**'
-  # workflow_dispatch:
+    tags:
+      - 'qa-notification*'
+  
     
 env:
 
