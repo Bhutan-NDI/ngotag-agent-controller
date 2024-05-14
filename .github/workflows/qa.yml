@@ -3,7 +3,7 @@ name: Build and deploy credo on qa
 on:
   push:
     tags:
-      - 'qa-notification*'
+      - 'qa*'
   
     
 env:
