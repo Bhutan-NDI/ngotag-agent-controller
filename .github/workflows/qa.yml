@@ -4,17 +4,17 @@ on:
   push:
     branches:
       - pipeline-implementation
-    paths:
-      - 'apps/agent-service/**'
-  workflow_dispatch:
+  #   paths:
+  #     - 'apps/agent-service/**'
+  # workflow_dispatch:
     
 env:
 
-  ECR_IMAGE_TAG: "AGENT_V_${{ github.run_number }}"
+  ECR_IMAGE_TAG: "CREDO_V_${{ github.run_number }}"
 
-  ECR_REPOSITORY: "dev-services"
+  ECR_REPOSITORY: "qa-services"
   AWS_REGION: "ap-southeast-1"
-  CLUSTER: "DEV-NGOTAG-CLUSTER"
+  CLUSTER: "QA_AFJ_CLUSTER"
 
 jobs:
   build:
@@ -46,8 +46,8 @@ jobs:
       - name: Build, tag, and push image to Amazon ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: dev-services
-          IMAGE_TAG: "AGENT_V_${{ github.run_number }}"
+          ECR_REPOSITORY: qa-services
+          IMAGE_TAG: "CREDO_V_${{ github.run_number }}"
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG  .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
@@ -56,8 +56,8 @@ jobs:
       - name: Set environment variables
         run: |
           echo "ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_ENV
-          echo "ECR_REPOSITORY=dev-services" >> $GITHUB_ENV
-          echo "IMAGE_TAG=AGENT_V_${{ github.run_number }}" >> $GITHUB_ENV
+          echo "ECR_REPOSITORY=qa-services" >> $GITHUB_ENV
+          echo "IMAGE_TAG=CREDO_V_${{ github.run_number }}" >> $GITHUB_ENV
    
       - name: Print environment variables
         run: |
@@ -72,17 +72,17 @@ jobs:
       
       - name: Replace executionRoleArn in task definition
         run: |
-          sed -i "s#\"executionRoleArn\": \"arn:aws:iam::.*:role/ecsTaskExecutionRole\"#\"executionRoleArn\": \"arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/ecsTaskExecutionRole\"#" taskdef/credo-service.json
+          sed -i "s#\"executionRoleArn\": \"arn:aws:iam::.*:role/ecsTaskExecutionRole\"#\"executionRoleArn\": \"arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/ecsTaskExecutionRole\"#" qa-taskdef/qa-credo-service.json
 
       - name: Update Task Definition and service
         run: |
-          FAMILY=$(sed -n 's/.*"family": "\(.*\)",/\1/p' taskdef/credo-service.json)
-          NAME=$(sed -n 's/.*"name": "\(.*\)",/\1/p' taskdef/credo-service.json)
-          SERVICE_NAME="${NAME}-service"
+          FAMILY=$(sed -n 's/.*"family": "\(.*\)",/\1/p' qa-taskdef/qa-credo-service.json)
+          NAME=$(sed -n 's/.*"name": "\(.*\)",/\1/p' qa-taskdef/qa-credo-service.json)
+          SERVICE_NAME="685df587-7cf5-46cf-873c-502719ac5c35-Platform-admin-service-Y2N"
           echo "SERVICE_NAME: $SERVICE_NAME"
 
           # Replace placeholders in the JSON file
-          sed -e "s;%BUILD_NUMBER%;${{ github.run_number }};g" -e "s;%REPOSITORY_URI%;${REPOSITORY_URI};g" taskdef/credo-service.json > ${GITHUB_WORKSPACE}/${NAME}-v_${{ github.run_number }}.json
+          sed -e "s;%BUILD_NUMBER%;${{ github.run_number }};g" -e "s;%REPOSITORY_URI%;${REPOSITORY_URI};g" taskdef/qa-credo-service.json > ${GITHUB_WORKSPACE}/${NAME}-v_${{ github.run_number }}.json
  
           # Debug: Print the content of the modified JSON file
           cat ${GITHUB_WORKSPACE}/${NAME}-v_${{ github.run_number }}.json
