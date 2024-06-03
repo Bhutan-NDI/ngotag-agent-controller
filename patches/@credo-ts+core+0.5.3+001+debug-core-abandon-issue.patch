@@ -1,0 +1,55 @@
+diff --git a/node_modules/@credo-ts/core/build/modules/dif-presentation-exchange/DifPresentationExchangeService.js b/node_modules/@credo-ts/core/build/modules/dif-presentation-exchange/DifPresentationExchangeService.js
+index 80acfe9..a92f41a 100644
+--- a/node_modules/@credo-ts/core/build/modules/dif-presentation-exchange/DifPresentationExchangeService.js
++++ b/node_modules/@credo-ts/core/build/modules/dif-presentation-exchange/DifPresentationExchangeService.js
+@@ -69,11 +69,14 @@ let DifPresentationExchangeService = class DifPresentationExchangeService {
+         }
+     }
+     validatePresentation(presentationDefinition, presentation) {
++        console.log("inside validate presentaion DifPresentationExchangeService.js::  presentationDefinition  " , presentationDefinition)
++        console.log("inside validate presentaion DifPresentationExchangeService.js:: presentation " , presentation)
+         const { errors } = this.pex.evaluatePresentation(presentationDefinition, (0, utils_2.getSphereonOriginalVerifiablePresentation)(presentation), {
+             limitDisclosureSignatureSuites: ['BbsBlsSignatureProof2020', 'DataIntegrityProof.anoncreds-2023'],
+         });
+         if (errors) {
+             const errorMessages = this.formatValidated(errors);
++            console.log("inside validatePresentation DifPresentationExchangeService.js errors ::" ,errorMessages )
+             if (errorMessages.length > 0) {
+                 throw new DifPresentationExchangeError_1.DifPresentationExchangeError(`Invalid presentation`, { additionalMessages: errorMessages });
+             }
+diff --git a/node_modules/@credo-ts/core/build/modules/proofs/formats/dif-presentation-exchange/DifPresentationExchangeProofFormatService.js b/node_modules/@credo-ts/core/build/modules/proofs/formats/dif-presentation-exchange/DifPresentationExchangeProofFormatService.js
+index 006d870..0b086e5 100644
+--- a/node_modules/@credo-ts/core/build/modules/proofs/formats/dif-presentation-exchange/DifPresentationExchangeProofFormatService.js
++++ b/node_modules/@credo-ts/core/build/modules/proofs/formats/dif-presentation-exchange/DifPresentationExchangeProofFormatService.js
+@@ -170,6 +170,7 @@ class DifPresentationExchangeProofFormatService {
+         try {
+             ps.validatePresentationDefinition(request.presentation_definition);
+             ps.validatePresentationSubmission(jsonPresentation.presentation_submission);
++            console.log("inside processPresentation of DifPresentationExchangeProofFormatService.js :: request.presentation_definition" , request.presentation_definition )
+             ps.validatePresentation(request.presentation_definition, parsedPresentation);
+             let verificationResult;
+             // FIXME: for some reason it won't accept the input if it doesn't know
+diff --git a/node_modules/@credo-ts/core/build/modules/proofs/protocol/v2/ProofFormatCoordinator.js b/node_modules/@credo-ts/core/build/modules/proofs/protocol/v2/ProofFormatCoordinator.js
+index 83277c5..c749043 100644
+--- a/node_modules/@credo-ts/core/build/modules/proofs/protocol/v2/ProofFormatCoordinator.js
++++ b/node_modules/@credo-ts/core/build/modules/proofs/protocol/v2/ProofFormatCoordinator.js
+@@ -263,6 +263,7 @@ class ProofFormatCoordinator {
+                 formatVerificationResults.push(isValid);
+             }
+             catch (error) {
++                console.log("inside  processPresentation catch block of  ProofFormatCoordinator.js :: error" ,error)
+                 return {
+                     message: error.message,
+                     isValid: false,
+diff --git a/node_modules/@credo-ts/core/build/modules/proofs/protocol/v2/V2ProofProtocol.js b/node_modules/@credo-ts/core/build/modules/proofs/protocol/v2/V2ProofProtocol.js
+index 382c097..e147559 100644
+--- a/node_modules/@credo-ts/core/build/modules/proofs/protocol/v2/V2ProofProtocol.js
++++ b/node_modules/@credo-ts/core/build/modules/proofs/protocol/v2/V2ProofProtocol.js
+@@ -513,6 +513,7 @@ class V2ProofProtocol extends BaseProofProtocol_1.BaseProofProtocol {
+             message: presentationMessage,
+         });
+         proofRecord.isVerified = result.isValid;
++        console.log("inside V2ProofProtocol.js result::" , result)
+         if (result.isValid) {
+             await this.updateState(messageContext.agentContext, proofRecord, models_2.ProofState.PresentationReceived);
+         }
