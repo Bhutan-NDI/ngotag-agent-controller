@@ -1,5 +1,5 @@
 {
-    "family": "QA_Platform-admin_TASKDEFIITION",
+    "family": "DEV_AFJ_TASKDEF",
     "containerDefinitions": [
         {
             "name": "Platform-admin",
@@ -8,13 +8,13 @@
             "memory": 2048,
             "portMappings": [
                 {
-                    "containerPort": 8027,
-                    "hostPort": 8027,
+                    "containerPort": 8001,
+                    "hostPort": 8001,
                     "protocol": "tcp"
                 },
                 {
-                    "containerPort": 9027,
-                    "hostPort": 9027,
+                    "containerPort": 9001,
+                    "hostPort": 9001,
                     "protocol": "tcp"
                 }
 
@@ -23,7 +23,7 @@
             "command": [
                 "--auto-accept-connections",
                 "--config",
-                "/config/685df587-7cf5-46cf-873c-502719ac5c35_Platform-admin.json"
+                "/config/eb927bfe-8d01-4ea6-8643-b37be771afd6_Platform-admin.json"
             ],
             "environment": [],
             "environmentFiles": [],
@@ -40,7 +40,7 @@
                 "logDriver": "awslogs",
                 "options": {
                     "awslogs-create-group": "true",
-                    "awslogs-group": "/ecs/QA_Platform-admin_TASKDEFIITION",
+                    "awslogs-group": "/ecs/DEV_AFJ_TASKDEF",
                     "awslogs-region": "ap-southeast-1",
                     "awslogs-stream-prefix": "ecs"
                 },
