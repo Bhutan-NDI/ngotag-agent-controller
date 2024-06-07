@@ -39,6 +39,7 @@
   "autoAcceptMediationRequests": false,
   "adminPort": 4001,
   "tenancy": true,
+  "schemaFileServerURL": "https://schema.credebl.id/schemas/",
   "didRegistryContractAddress": "0x1adeA199dCf07E17232415Cb232442BE52517Add",
   "schemaManagerContractAddress": "0x289c7Bd4C7d38cC54bff370d6f9f01b74Df51b11",
   "rpcUrl": "https://rpc-amoy.polygon.technology",

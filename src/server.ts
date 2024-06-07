@@ -7,6 +7,7 @@ import bodyParser from 'body-parser'
 import cors from 'cors'
 import express from 'express'
 import { rateLimit } from 'express-rate-limit'
+import * as fs from 'fs'
 import { serve, generateHTML } from 'swagger-ui-express'
 import { container } from 'tsyringe'
 
@@ -24,7 +25,7 @@ import { ValidateError, type Exception } from 'tsoa'
 
 export const setupServer = async (agent: Agent, config: ServerConfig, apiKey?: string) => {
   container.registerInstance(Agent, agent)
-
+  fs.writeFileSync('config.json', JSON.stringify(config, null, 2))
   const app = config.app ?? express()
   if (config.cors) app.use(cors())
 

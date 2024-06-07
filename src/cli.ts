@@ -193,6 +193,7 @@ export async function runCliServer() {
     webhookUrl: parsed['webhook-url'],
     adminPort: parsed['admin-port'],
     tenancy: parsed['tenancy'],
+    schemaFileServerURL: parsed['schemaFileServerURL'],
     didRegistryContractAddress: parsed['didRegistryContractAddress'],
     schemaManagerContractAddress: parsed['schemaManagerContractAddress'],
     rpcUrl: parsed['rpcUrl'],

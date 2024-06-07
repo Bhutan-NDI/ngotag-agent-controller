@@ -399,7 +399,8 @@ export class DidController extends Controller {
   public async handlePolygon(createDidOptions: DidCreate) {
     // need to discuss try catch logic
     const { endpoint, network, privatekey } = createDidOptions
-    if (network !== 'mainnet' && network !== 'testnet') {
+    const networkName = network?.split(':')[1]
+    if (networkName !== 'mainnet' && networkName !== 'testnet') {
       throw Error('Invalid network type')
     }
     if (!privatekey || typeof privatekey !== 'string' || !privatekey.trim() || privatekey.length !== 64) {
@@ -409,7 +410,7 @@ export class DidController extends Controller {
     return this.agent.dids.create<PolygonDidCreateOptions>({
       method: 'polygon',
       options: {
-        network,
+        network: networkName,
         endpoint,
       },
       secret: {

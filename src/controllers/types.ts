@@ -383,3 +383,10 @@ export interface WriteTransaction {
 export interface RecipientKeyOption {
   recipientKey?: string
 }
+
+export interface SchemaMetadata {
+  did: string
+  schemaId: string
+  schemaTxnHash?: string
+  schemaUrl?: string
+}

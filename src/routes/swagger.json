@@ -1104,6 +1104,28 @@
 				"type": "string",
 				"example": "1.0.0"
 			},
+			"SchemaMetadata": {
+				"properties": {
+					"did": {
+						"type": "string"
+					},
+					"schemaId": {
+						"type": "string"
+					},
+					"schemaTxnHash": {
+						"type": "string"
+					},
+					"schemaUrl": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"did",
+					"schemaId"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"WriteTransaction": {
 				"properties": {
 					"endorsedTransaction": {
@@ -4825,7 +4847,9 @@
 						"description": "Ok",
 						"content": {
 							"application/json": {
-								"schema": {}
+								"schema": {
+									"$ref": "#/components/schemas/SchemaMetadata"
+								}
 							}
 						}
 					},
