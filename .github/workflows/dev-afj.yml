@@ -4,9 +4,7 @@ on:
   push:
     branches:
       - pipeline-implementation
-    paths:
-      - 'apps/agent-service/**'
-  workflow_dispatch:
+  
     
 env:
 
@@ -41,13 +39,15 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v1
 
       - name: update modules
-        run: yarn
+        run: |
+           rm -rf node_modules
+           yarn
 
       - name: Build, tag, and push image to Amazon ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: dev-services
-          IMAGE_TAG: "AGENT_V_${{ github.run_number }}"
+          IMAGE_TAG: "AFJ_V_${{ github.run_number }}"
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG  .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
@@ -57,7 +57,7 @@ jobs:
         run: |
           echo "ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_ENV
           echo "ECR_REPOSITORY=dev-services" >> $GITHUB_ENV
-          echo "IMAGE_TAG=AGENT_V_${{ github.run_number }}" >> $GITHUB_ENV
+          echo "IMAGE_TAG=AFJ_V_${{ github.run_number }}" >> $GITHUB_ENV
    
       - name: Print environment variables
         run: |
