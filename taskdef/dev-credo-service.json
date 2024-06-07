@@ -1,0 +1,80 @@
+{
+    "family": "DEV_AFJ_TASKDEF",
+    "containerDefinitions": [
+        {
+            "name": "Platform-admin",
+            "image": "%REPOSITORY_URI%:CREDO_V_%BUILD_NUMBER%",
+            "cpu": 1024,
+            "memory": 2048,
+            "portMappings": [
+                {
+                    "containerPort": 8001,
+                    "hostPort": 8001,
+                    "protocol": "tcp"
+                },
+                {
+                    "containerPort": 9001,
+                    "hostPort": 9001,
+                    "protocol": "tcp"
+                }
+
+            ],
+            "essential": true,
+            "command": [
+                "--auto-accept-connections",
+                "--config",
+                "/config/eb927bfe-8d01-4ea6-8643-b37be771afd6_Platform-admin.json"
+            ],
+            "environment": [
+                {
+                    "name": "AFJ_REST_LOG_LEVEL",
+                    "value": "1"
+                }
+            ],
+            "environmentFiles": [],
+            "mountPoints": [
+                {
+                    "sourceVolume": "AGENT-CONFIG",
+                    "containerPath": "/config",
+                    "readOnly": true
+                }
+            ],
+            "volumesFrom": [],
+            "ulimits": [],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-create-group": "true",
+                    "awslogs-group": "/ecs/DEV_AFJ_TASKDEF",
+                    "awslogs-region": "ap-southeast-1",
+                    "awslogs-stream-prefix": "ecs"
+                },
+                "secretOptions": []
+            }
+        }
+        
+    ],
+   
+    "executionRoleArn": "arn:aws:iam::id:role/ecsTaskExecutionRole",
+    "networkMode": "awsvpc",
+    "placementConstraints": [],
+    "volumes": [
+        {
+            "name": "AGNET-CONFIG",
+            "efsVolumeConfiguration": {
+                "fileSystemId": "fs-0f406534d277ce362",
+                "rootDirectory": "/",
+                "transitEncryption": "ENABLED",
+                "authorizationConfig": {
+                    "accessPointId": "fsap-08e845bf6b2e91d54",
+                    "iam": "DISABLED"
+                }
+            }
+        }
+    ],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "1024",
+    "memory": "2048"
+}
