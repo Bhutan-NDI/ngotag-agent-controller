@@ -39,7 +39,9 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v1
 
       - name: update modules
-        run: yarn
+        run: |
+           rm -rf node_modules
+           yarn
 
       - name: Build, tag, and push image to Amazon ECR
         env:
