@@ -26,12 +26,7 @@
                 "/config/685df587-7cf5-46cf-873c-502719ac5c35_Platform-admin.json"
             ],
             "environment": [],
-            "environmentFiles": [
-                {
-                    "value": "arn:aws:s3:::env-qabucket/.env",
-                    "type": "s3"
-                }
-            ],
+            "environmentFiles": [],
             "mountPoints": [
                 {
                     "sourceVolume": "AGENT-CONFIG",
