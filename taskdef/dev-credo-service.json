@@ -25,7 +25,12 @@
                 "--config",
                 "/config/eb927bfe-8d01-4ea6-8643-b37be771afd6_Platform-admin.json"
             ],
-            "environment": [],
+            "environment": [
+                {
+                    "name": "AFJ_REST_LOG_LEVEL",
+                    "value": "1"
+                }
+            ],
             "environmentFiles": [],
             "mountPoints": [
                 {
@@ -53,6 +58,20 @@
     "executionRoleArn": "arn:aws:iam::id:role/ecsTaskExecutionRole",
     "networkMode": "awsvpc",
     "placementConstraints": [],
+    "volumes": [
+        {
+            "name": "AGNET-CONFIG",
+            "efsVolumeConfiguration": {
+                "fileSystemId": "fs-0f406534d277ce362",
+                "rootDirectory": "/",
+                "transitEncryption": "ENABLED",
+                "authorizationConfig": {
+                    "accessPointId": "fsap-08e845bf6b2e91d54",
+                    "iam": "DISABLED"
+                }
+            }
+        }
+    ],
     "requiresCompatibilities": [
         "FARGATE"
     ],
