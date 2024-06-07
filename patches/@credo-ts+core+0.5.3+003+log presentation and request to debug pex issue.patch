@@ -1,0 +1,14 @@
+diff --git a/node_modules/@credo-ts/core/build/modules/proofs/formats/dif-presentation-exchange/DifPresentationExchangeProofFormatService.js b/node_modules/@credo-ts/core/build/modules/proofs/formats/dif-presentation-exchange/DifPresentationExchangeProofFormatService.js
+index 0b086e5..69000f6 100644
+--- a/node_modules/@credo-ts/core/build/modules/proofs/formats/dif-presentation-exchange/DifPresentationExchangeProofFormatService.js
++++ b/node_modules/@credo-ts/core/build/modules/proofs/formats/dif-presentation-exchange/DifPresentationExchangeProofFormatService.js
+@@ -170,7 +170,8 @@ class DifPresentationExchangeProofFormatService {
+         try {
+             ps.validatePresentationDefinition(request.presentation_definition);
+             ps.validatePresentationSubmission(jsonPresentation.presentation_submission);
+-            console.log("inside processPresentation of DifPresentationExchangeProofFormatService.js :: request.presentation_definition" , request.presentation_definition )
++            console.log("inside processPresentation of DifPresentationExchangeProofFormatService.js :: request", JSON.stringify(request, null, 2))
++            console.log("inside processPresentation of DifPresentationExchangeProofFormatService.js :: jsonPresentation", JSON.stringify(jsonPresentation, null, 2))
+             ps.validatePresentation(request.presentation_definition, parsedPresentation);
+             let verificationResult;
+             // FIXME: for some reason it won't accept the input if it doesn't know
