@@ -1,0 +1,48 @@
+diff --git a/node_modules/@sphereon/pex/dist/main/lib/evaluation/handlers/uriEvaluationHandler.js b/node_modules/@sphereon/pex/dist/main/lib/evaluation/handlers/uriEvaluationHandler.js
+index 52d0666..0a1c997 100644
+--- a/node_modules/@sphereon/pex/dist/main/lib/evaluation/handlers/uriEvaluationHandler.js
++++ b/node_modules/@sphereon/pex/dist/main/lib/evaluation/handlers/uriEvaluationHandler.js
+@@ -19,13 +19,15 @@ class UriEvaluationHandler extends abstractEvaluationHandler_1.AbstractEvaluatio
+         return 'UriEvaluation';
+     }
+     handle(definition, wrappedVcs) {
+-        console.log("definition::" ,JSON.stringify(definition,null,2))
+-        console.log("wrappedVcs" , JSON.stringify(wrappedVcs,null,2))
++        console.log("In handle :: definition :: " ,JSON.stringify(definition,null,2))
++        console.log("In handle :: wrappedVcs :: " , JSON.stringify(wrappedVcs,null,2))
+         var _a, _b, _c;
+         // This filter is removed in V2
+         definition.input_descriptors.forEach((inDesc, descriptorIdx) => {
++            console.log("In handle :: descriptorIdx :: " , descriptorIdx)
+             const uris = definition.getVersion() !== types_1.PEVersion.v2 ? inDesc.schema.map((so) => so.uri) : [];
+             wrappedVcs.forEach((wvc, wrappedVCIdx) => {
++                console.log("In handle :: wrappedVCIdx ::" , wrappedVCIdx)
+                 const vcUris = UriEvaluationHandler.buildVcContextAndSchemaUris(wvc.credential, definition.getVersion());
+                 this.evaluateUris(wvc, vcUris, uris, descriptorIdx, wrappedVCIdx, definition.getVersion());
+             });
+@@ -62,6 +64,7 @@ class UriEvaluationHandler extends abstractEvaluationHandler_1.AbstractEvaluatio
+                 }
+             }
+ 
++            console.log('In handle End :: definition ::: ', JSON.stringify(definition, null, 2));
+             console.log("searching input_descriptor_path in definition :: jsonpath_1.JSONPath.nodes(definition, result.input_descriptor_path)::", JSON.stringify(result.input_descriptor_path,null,2))
+             const inputDescriptor = jsonpath_1.JSONPath.nodes(definition, result.input_descriptor_path)[0].value;
+            
+@@ -102,6 +105,8 @@ class UriEvaluationHandler extends abstractEvaluationHandler_1.AbstractEvaluatio
+             hasAnyMatch = true;
+         }
+         if (hasAnyMatch) {
++            console.log('In evaluateUris :: idIdx ::',idIdx);
++            console.log('In evaluateUris :: vcIdx ::',vcIdx);
+             this.getResults().push(this.createSuccessResultObject(wvc, inputDescriptorsUris, idIdx, vcIdx));
+         }
+         else {
+@@ -175,6 +180,8 @@ class UriEvaluationHandler extends abstractEvaluationHandler_1.AbstractEvaluatio
+         return result;
+     }
+     createResult(idIdx, vcIdx) {
++        console.log('In createResult :: idIdx ::',idIdx);
++        console.log('In createResult :: vcIdx ::',vcIdx);
+         return {
+             input_descriptor_path: `$.input_descriptors[${idIdx}]`,
+             verifiable_credential_path: `$[${vcIdx}]`,
