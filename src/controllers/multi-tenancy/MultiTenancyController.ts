@@ -2013,4 +2013,36 @@ export class MultiTenancyController extends Controller {
 
     return questionAnswerRecord
   }
+
+
+  /**
+   * Send a question to a connection
+   *
+   * @param tenantId Tenant identifier
+   * @param connectionId Connection identifier
+   * @param content The content of the message
+   */
+  @Security('apiKey')
+  @Post('/basic-message/:connectionId/:tenantId')
+  public async sendBasicMessage(
+    @Path('connectionId') connectionId: RecordId,
+    @Path('tenantId') tenantId: string,
+    @Body() request: Record<'content', string>,
+    @Res() notFoundError: TsoaResponse<404, { reason: string }>,
+    @Res() internalServerError: TsoaResponse<500, { message: string }>
+  ) {
+    try {
+      let basicMessageRecord
+      await this.agent.modules.tenants.withTenantAgent({ tenantId }, async (tenantAgent) => {
+        basicMessageRecord = await tenantAgent.basicMessages.sendMessage(connectionId, request.content)
+        basicMessageRecord = basicMessageRecord?.toJSON()
+      })
+      return basicMessageRecord
+    } catch (error) {
+      if (error instanceof RecordNotFoundError) {
+        return notFoundError(404, { reason: `connection with connection id "${connectionId}" not found.` })
+      }
+      return internalServerError(500, { message: `something went wrong: ${error}` })
+    }
+  }
 }
