@@ -1,0 +1,80 @@
+{
+    "family": "Stage_Platform-admin_TASKDEFIITION",
+    "containerDefinitions": [
+        {
+            "name": "Platform-admin",
+            "image": "%REPOSITORY_URI%:CREDO_V_%BUILD_NUMBER%",
+            "cpu": 2048,
+            "memory": 8019,
+            "portMappings": [
+                {
+                    "name": "platform-admin-8012-tcp",
+                    "containerPort": 8012,
+                    "hostPort": 8012,
+                    "protocol": "tcp"
+                },
+                {
+                    "name": "platform-admin-9012-tcp",
+                    "containerPort": 9012,
+                    "hostPort": 9012,
+                    "protocol": "tcp"
+                }
+            ],
+            "essential": true,
+            "command": [
+                "--auto-accept-connections",
+                "--config",
+                "/config/049b3262-5b2e-4d81-af7d-7badf7187736_Platform-admin.json"
+            ],
+            "environment": [],
+            "environmentFiles": [
+                {
+                    "value": "arn:aws:s3:::env-stagebucket/.env",
+                    "type": "s3"
+                }
+            ],
+            "mountPoints": [
+                {
+                    "sourceVolume": "AGENT-CONFIG",
+                    "containerPath": "/config",
+                    "readOnly": true
+                }
+            ],
+            "volumesFrom": [],
+            "ulimits": [],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/stage_Platform-admin_TASKDEFITION",
+                    "awslogs-create-group": "true",
+                    "awslogs-region": "ap-southeast-1",
+                    "awslogs-stream-prefix": "ecs"
+                },
+                "secretOptions": []
+            },
+            "systemControls": []
+        }
+    ],
+    "executionRoleArn": "arn:aws:iam::id:role/ecsTaskExecutionRole",
+    "networkMode": "awsvpc",
+    "volumes": [
+        {
+            "name": "AGENT-CONFIG",
+            "efsVolumeConfiguration": {
+                "fileSystemId": "fs-0d8cf2678c1623315",
+                "rootDirectory": "/",
+                "transitEncryption": "ENABLED",
+                "authorizationConfig": {
+                    "accessPointId": "fsap-052f7f42375b640a5",
+                    "iam": "DISABLED"
+                }
+            }
+        }
+    ],
+    "placementConstraints": [],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "2048",
+    "memory": "8019"
+}
