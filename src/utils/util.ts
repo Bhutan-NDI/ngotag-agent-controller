@@ -158,6 +158,6 @@ export const INDICIO_NYM_URL = 'https://selfserve.indiciotech.io/nym'
 export const windowMs = 1000
 export const maxRateLimit = 800
 
-export const DID_CONTRACT_ADDRESS = '0xcB80F37eDD2bE3570c6C9D5B0888614E04E1e49E'
-export const SCHEMA_MANAGER_CONTRACT_ADDRESS = '0x4742d43C2dFCa5a1d4238240Afa8547Daf87Ee7a'
-export const RPC_URL = 'https://rpc-mumbai.maticvigil.com'
+export const DID_CONTRACT_ADDRESS = '0x0C16958c4246271622201101C83B9F0Fc7180d15'
+export const SCHEMA_MANAGER_CONTRACT_ADDRESS = '0x4B16719E73949a62E9A7306F352ec73F1B143c27'
+export const RPC_URL = 'https://polygon-rpc.com'
