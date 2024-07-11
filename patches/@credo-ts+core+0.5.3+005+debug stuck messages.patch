@@ -1,0 +1,92 @@
+diff --git a/node_modules/@credo-ts/core/build/agent/AgentConfig.js b/node_modules/@credo-ts/core/build/agent/AgentConfig.js
+index 39b2108..77568bb 100644
+--- a/node_modules/@credo-ts/core/build/agent/AgentConfig.js
++++ b/node_modules/@credo-ts/core/build/agent/AgentConfig.js
+@@ -34,6 +34,7 @@ class AgentConfig {
+         return (_a = this.initConfig.useDidKeyInProtocols) !== null && _a !== void 0 ? _a : true;
+     }
+     get endpoints() {
++        this.logger.debug(`123--------debug logs------AgentConfig : endpoints ${this.endpoints}`);
+         // if endpoints is not set, return queue endpoint
+         // https://github.com/hyperledger/aries-rfcs/issues/405#issuecomment-582612875
+         if (!this._endpoints || this._endpoints.length === 0) {
+diff --git a/node_modules/@credo-ts/core/build/agent/Dispatcher.js b/node_modules/@credo-ts/core/build/agent/Dispatcher.js
+index c1cea4d..d38e13d 100644
+--- a/node_modules/@credo-ts/core/build/agent/Dispatcher.js
++++ b/node_modules/@credo-ts/core/build/agent/Dispatcher.js
+@@ -75,6 +75,7 @@ let Dispatcher = class Dispatcher {
+             }
+         }
+         if (outboundMessage) {
++            this.logger.debug(`123--------debug logs------sending outbound message`);
+             // set the inbound message context, if not already defined
+             if (!outboundMessage.inboundMessageContext) {
+                 outboundMessage.inboundMessageContext = messageContext;
+diff --git a/node_modules/@credo-ts/core/build/agent/EnvelopeService.js b/node_modules/@credo-ts/core/build/agent/EnvelopeService.js
+index 0238d59..5ffad9e 100644
+--- a/node_modules/@credo-ts/core/build/agent/EnvelopeService.js
++++ b/node_modules/@credo-ts/core/build/agent/EnvelopeService.js
+@@ -23,6 +23,7 @@ let EnvelopeService = class EnvelopeService {
+     }
+     async packMessage(agentContext, payload, keys) {
+         const { recipientKeys, routingKeys, senderKey } = keys;
++        this.logger.debug(`123--------debug logs------EnvelopService : packMessage`);
+         let recipientKeysBase58 = recipientKeys.map((key) => key.publicKeyBase58);
+         const routingKeysBase58 = routingKeys.map((key) => key.publicKeyBase58);
+         const senderKeyBase58 = senderKey && senderKey.publicKeyBase58;
+diff --git a/node_modules/@credo-ts/core/build/agent/MessageSender.js b/node_modules/@credo-ts/core/build/agent/MessageSender.js
+index 689b024..ec1eb28 100644
+--- a/node_modules/@credo-ts/core/build/agent/MessageSender.js
++++ b/node_modules/@credo-ts/core/build/agent/MessageSender.js
+@@ -160,8 +160,10 @@ let MessageSender = class MessageSender {
+         var _a, e_2, _b, _c;
+         var _d;
+         const { agentContext, connection, outOfBand, message } = outboundMessageContext;
++        this.logger.debug(`123--------debug logs------MessageSender : Starting sendMessage()`);
+         const errors = [];
+         if (outboundMessageContext.isOutboundServiceMessage()) {
++            this.logger.debug(`123--------debug logs------MessageSender : isOutboundServiceMessage is true`);
+             return this.sendMessageToService(outboundMessageContext);
+         }
+         if (!connection) {
+@@ -304,6 +306,7 @@ let MessageSender = class MessageSender {
+     async sendMessageToService(outboundMessageContext) {
+         var _a, _b;
+         const session = this.findSessionForOutboundContext(outboundMessageContext);
++        this.logger.debug(`123--------debug logs------MessageSender : isOutboundServiceMessage is true`);
+         if (session) {
+             this.logger.debug(`Found session with return routing for message '${outboundMessageContext.message.id}'`);
+             try {
+@@ -391,6 +394,7 @@ let MessageSender = class MessageSender {
+         if (!session && ((_c = outboundContext.connection) === null || _c === void 0 ? void 0 : _c.id)) {
+             session = this.transportService.findSessionByConnectionId(outboundContext.connection.id);
+         }
++        this.logger.debug(`123--------debug logs------MessageSender : find session ${sessionId}`);
+         return session && ((_d = session.inboundMessage) === null || _d === void 0 ? void 0 : _d.hasAnyReturnRoute()) ? session : null;
+     }
+     async retrieveServicesByConnection(agentContext, connection, transportPriority, outOfBand) {
+@@ -429,6 +433,8 @@ let MessageSender = class MessageSender {
+         let services = didCommServices.filter((s) => !isDidCommTransportQueue(s.serviceEndpoint));
+         const queueService = didCommServices.find((s) => isDidCommTransportQueue(s.serviceEndpoint));
+         // If restrictive will remove services not listed in schemes list
++        this.logger.debug(`123--------debug logs------MessageSender : services ${services}`);
++        this.logger.debug(`123--------debug logs------MessageSender : queueService ${queueService}`);
+         if (transportPriority === null || transportPriority === void 0 ? void 0 : transportPriority.restrictive) {
+             services = services.filter((service) => {
+                 const serviceSchema = (0, uri_1.getProtocolScheme)(service.serviceEndpoint);
+@@ -443,6 +449,7 @@ let MessageSender = class MessageSender {
+                 return (transportPriority === null || transportPriority === void 0 ? void 0 : transportPriority.schemes.indexOf(aScheme)) - (transportPriority === null || transportPriority === void 0 ? void 0 : transportPriority.schemes.indexOf(bScheme));
+             });
+         }
++        this.logger.debug(`123--------debug logs------MessageSender : hasQueueService ${queueService}`);
+         this.logger.debug(`Retrieved ${services.length} services for message to connection '${connection.id}'(${connection.theirLabel})'`, { hasQueueService: queueService !== undefined });
+         return { services, queueService };
+     }
+@@ -468,6 +475,7 @@ MessageSender = __decorate([
+ ], MessageSender);
+ exports.MessageSender = MessageSender;
+ function isDidCommTransportQueue(serviceEndpoint) {
++    this.logger.debug(`123--------debug logs------MessageSender : isDidCommTransportQueue ${serviceEndpoint}`);
+     return serviceEndpoint === constants_1.DID_COMM_TRANSPORT_QUEUE;
+ }
+ exports.isDidCommTransportQueue = isDidCommTransportQueue;
