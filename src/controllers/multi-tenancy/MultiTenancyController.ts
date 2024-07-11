@@ -1007,7 +1007,7 @@ export class MultiTenancyController extends Controller {
           schema,
         })
       })
-      
+
       if (schemaResponse.schemaState?.state === 'failed') {
         const reason = schemaResponse.schemaState?.reason?.toLowerCase()
         if (reason && reason.includes('insufficient') && reason.includes('funds')) {
@@ -2013,7 +2013,6 @@ export class MultiTenancyController extends Controller {
 
     return questionAnswerRecord
   }
-
 
   /**
    * Send a question to a connection
