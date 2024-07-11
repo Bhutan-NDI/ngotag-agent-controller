@@ -172,7 +172,7 @@ const getModules = (networkConfig: [IndyVdrPoolConfig, ...IndyVdrPoolConfig[]]) 
     }),
     w3cCredentials: new W3cCredentialsModule(),
     cache: new CacheModule({
-      cache: new InMemoryLruCache({ limit: Infinity }),
+      cache: new InMemoryLruCache({ limit: 2147483647 }),
     }),
 
     questionAnswer: new QuestionAnswerModule(),
@@ -191,8 +191,8 @@ const getWithTenantModules = (networkConfig: [IndyVdrPoolConfig, ...IndyVdrPoolC
   const modules = getModules(networkConfig)
   return {
     tenants: new TenantsModule<typeof modules>({
-      sessionAcquireTimeout: Infinity,
-      sessionLimit: Infinity,
+      sessionAcquireTimeout: 2147483647,
+      sessionLimit: 2147483647,
     }),
     ...modules,
   }
