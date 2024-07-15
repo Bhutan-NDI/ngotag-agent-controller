@@ -12,7 +12,7 @@ export async function expressAuthentication(
   secMethod?: { [key: string]: any },
   scopes?: string
 ) {
-  const logger = new TsLogger(LogLevel.info)
+  const logger = new TsLogger(LogLevel.error)
 
   logger.info(`secMethod::: ${secMethod}`)
   logger.info(`scopes::: ${scopes}`)

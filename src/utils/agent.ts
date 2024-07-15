@@ -39,7 +39,7 @@ import { TsLogger } from './logger'
 import { BCOVRIN_TEST_GENESIS } from './util'
 
 export const setupAgent = async ({ name, endpoints, port }: { name: string; endpoints: string[]; port: number }) => {
-  const logger = new TsLogger(LogLevel.debug)
+  const logger = new TsLogger(LogLevel.error)
 
   const config: InitConfig = {
     label: name,
