@@ -3,7 +3,7 @@
   "walletId": "sample",
   "walletKey": "sample",
   "walletType": "postgres",
-  "walletUrl": "localhost:5452",
+  "walletUrl": "192.168.1.123:5452",
   "walletAccount": "root",
   "walletPassword": "root",
   "walletAdminAccount": "root",
