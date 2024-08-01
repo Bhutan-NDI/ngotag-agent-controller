@@ -9,7 +9,7 @@ import { sendWebhookEvent } from './WebhookEvent'
 export const reuseConnectionEvents = async (agent: Agent, config: ServerConfig) => {
   agent.events.on(OutOfBandEventTypes.HandshakeReused, async (event: HandshakeReusedEvent) => {
     const body = {
-      connectionRecord: event.payload.connectionRecord.toJSON(),
+      ...event.payload.connectionRecord.toJSON(),
       outOfBandRecord: event.payload.outOfBandRecord.toJSON(),
       reuseThreadId: event.payload.reuseThreadId,
       ...event.metadata,
