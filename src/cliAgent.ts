@@ -180,7 +180,7 @@ const getModules = (networkConfig: [IndyVdrPoolConfig, ...IndyVdrPoolConfig[]]) 
       didContractAddress: '0x0C16958c4246271622201101C83B9F0Fc7180d15',
       schemaManagerContractAddress: '0x4B16719E73949a62E9A7306F352ec73F1B143c27',
       fileServerToken:
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJBeWFuV29ya3MiLCJpZCI6ImM5MTk5MGYwLWRjZjUtNGRlMC1hZTFjLTBiN2MxZWFkYTFlMiJ9.SUcpnbgKh3suYIEgtdiOUTUx0EDco4YrMdU_dGHeHyQ',
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJCaHV0YW5OREkiLCJpZCI6IjZlMWFhMWFlLWY2OGUtNDljMy1hN2RkLTQ2YjEzMWI5YjliNSJ9.JTe1crdKlPVTijAKtX4TQORbbUhz04sX4kQTi5KKDZQ',
       rpcUrl: 'https://polygon-rpc.com',
       serverUrl: 'https://schema.ngotag.com',
     }),
@@ -191,7 +191,7 @@ const getWithTenantModules = (networkConfig: [IndyVdrPoolConfig, ...IndyVdrPoolC
   const modules = getModules(networkConfig)
   return {
     tenants: new TenantsModule<typeof modules>({
-      sessionAcquireTimeout: 1000,
+      sessionAcquireTimeout: 86400000,
       sessionLimit: 2147483647,
     }),
     ...modules,
