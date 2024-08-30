@@ -1643,6 +1643,7 @@ export class MultiTenancyController extends Controller {
           autoAcceptProof: createRequestOptions.autoAcceptProof,
           comment: createRequestOptions.comment,
         })
+        console.log(`-----------createProofRequest`,JSON.stringify(proof,null,2));
 
         const proofMessage = proof.message
         const outOfBandRecord = await tenantAgent.oob.createInvitation({
@@ -1671,7 +1672,7 @@ export class MultiTenancyController extends Controller {
           invitationDid: createRequestOptions?.invitationDid ? '' : invitationDid,
         }
       })
-
+      console.log(`-----------createProofRequest oobProofRecord`,JSON.stringify(oobProofRecord,null,2));
       return oobProofRecord
     } catch (error) {
       return internalServerError(500, { message: `something went wrong: ${error}` })
