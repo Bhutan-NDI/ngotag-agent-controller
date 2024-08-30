@@ -16,6 +16,7 @@ export const proofEvents = async (agent: Agent, config: ServerConfig) => {
       })
       const data = await tenantAgent.proofs.getFormatData(record.id)
       body.proofData = data
+      console.log(`body:`,JSON.stringify(body,null,2));
     }
 
     // Only send webhook if webhook url is configured
