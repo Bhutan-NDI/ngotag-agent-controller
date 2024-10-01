@@ -1,18 +1,18 @@
-name: Build and deploy CREDO DEV to ECS
+name: Build and deploy CREDO STAGE to ECS
 
 on:
   push:
-    branches:
-      - pipeline-implementation
+    tags:
+      - 'prod*'
    
     
 env:
 
   ECR_IMAGE_TAG: "AFJ_V_${{ github.run_number }}"
 
-  ECR_REPOSITORY: "stage-services"
+  ECR_REPOSITORY: "prod-services"
   AWS_REGION: "ap-southeast-1"
-  CLUSTER: "STAGE_AFJ_CLUSTER"
+  CLUSTER: "PROD-CREDO-CLUSTER"
 
 jobs:
   build:
@@ -56,7 +56,7 @@ jobs:
       - name: Set environment variables
         run: |
           echo "ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_ENV
-          echo "ECR_REPOSITORY=dev-services" >> $GITHUB_ENV
+          echo "ECR_REPOSITORY=prod-services" >> $GITHUB_ENV
           echo "IMAGE_TAG=AFJ_V_${{ github.run_number }}" >> $GITHUB_ENV
    
       - name: Print environment variables
@@ -72,17 +72,17 @@ jobs:
       
       - name: Replace executionRoleArn in task definition
         run: |
-          sed -i "s#\"executionRoleArn\": \"arn:aws:iam::.*:role/ecsTaskExecutionRole\"#\"executionRoleArn\": \"arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/ecsTaskExecutionRole\"#" taskdef/stage-credo-service.json
+          sed -i "s#\"executionRoleArn\": \"arn:aws:iam::.*:role/ecsTaskExecutionRole\"#\"executionRoleArn\": \"arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/ecsTaskExecutionRole\"#" taskdef/prod-credo-service.json
 
       - name: Update Task Definition and service
         run: |
           FAMILY= "stage_Platform-admin_TASKDEFITION"
-          NAME=$(sed -n 's/.*"name": "\(.*\)",/\1/p' taskdef/stage-credo-service.json)
+          NAME=$(sed -n 's/.*"name": "\(.*\)",/\1/p' taskdef/prod-credo-service.json)
           SERVICE_NAME="049b3262-5b2e-4d81-af7d-7badf7187736-Platform-admin-service-Njl"
           echo "SERVICE_NAME: $SERVICE_NAME"
 
           # Replace placeholders in the JSON file
-          sed -e "s;%BUILD_NUMBER%;${{ github.run_number }};g" -e "s;%REPOSITORY_URI%;${REPOSITORY_URI};g" taskdef/stage-credo-service.json > ${GITHUB_WORKSPACE}/${NAME}-v_${{ github.run_number }}.json
+          sed -e "s;%BUILD_NUMBER%;${{ github.run_number }};g" -e "s;%REPOSITORY_URI%;${REPOSITORY_URI};g" taskdef/prod-credo-service.json > ${GITHUB_WORKSPACE}/${NAME}-v_${{ github.run_number }}.json
  
           # Debug: Print the content of the modified JSON file
           cat ${GITHUB_WORKSPACE}/${NAME}-v_${{ github.run_number }}.json

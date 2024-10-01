@@ -1,10 +1,9 @@
-name: Build and deploy CREDO DEV to ECS
+name: Build and deploy CREDO STAGE to ECS
 
 on:
   push:
-    branches:
-      - pipeline-implementation
-   
+    tags:
+      - 'stage*'
     
 env:
 
@@ -46,7 +45,7 @@ jobs:
       - name: Build, tag, and push image to Amazon ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: prod-services
+          ECR_REPOSITORY: stage-services
           IMAGE_TAG: "AFJ_V_${{ github.run_number }}"
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG  .
@@ -72,16 +71,16 @@ jobs:
       
       - name: Replace executionRoleArn in task definition
         run: |
-          sed -i "s#\"executionRoleArn\": \"arn:aws:iam::.*:role/ecsTaskExecutionRole\"#\"executionRoleArn\": \"arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/ecsTaskExecutionRole\"#" taskdef/prod-credo-service.json
+          sed -i "s#\"executionRoleArn\": \"arn:aws:iam::.*:role/ecsTaskExecutionRole\"#\"executionRoleArn\": \"arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/ecsTaskExecutionRole\"#" taskdef/stage-credo-service.json
 
       - name: Update Task Definition and service
         run: |
           FAMILY= "stage_Platform-admin_TASKDEFITION"
-          SERVICE_NAME="3dcc6bba-a81a-4a1a-a256-267a09acb005-Platform-admin-service-NWJ"
+          SERVICE_NAME="049b3262-5b2e-4d81-af7d-7badf7187736-Platform-admin-service-Njl"
           echo "SERVICE_NAME: $SERVICE_NAME"
 
           # Replace placeholders in the JSON file
-          sed -e "s;%BUILD_NUMBER%;${{ github.run_number }};g" -e "s;%REPOSITORY_URI%;${REPOSITORY_URI};g" taskdef/prod-credo-service.json > ${GITHUB_WORKSPACE}/${NAME}-v_${{ github.run_number }}.json
+          sed -e "s;%BUILD_NUMBER%;${{ github.run_number }};g" -e "s;%REPOSITORY_URI%;${REPOSITORY_URI};g" taskdef/stage-credo-service.json > ${GITHUB_WORKSPACE}/${NAME}-v_${{ github.run_number }}.json
  
           # Debug: Print the content of the modified JSON file
           cat ${GITHUB_WORKSPACE}/${NAME}-v_${{ github.run_number }}.json

@@ -1,4 +1,4 @@
-name: Build and deploy credo on qa
+name: Build and deploy credo on QA
 
 on:
   push:

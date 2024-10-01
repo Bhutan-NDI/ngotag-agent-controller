@@ -29,7 +29,7 @@
             "environment": [],
             "environmentFiles": [
                 {
-                    "value": "arn:aws:s3:::env-stagebucket/.env",
+                    "value": "arn:aws:s3:::env-prodbucket/prod-credo.env",
                     "type": "s3"
                 }
             ],

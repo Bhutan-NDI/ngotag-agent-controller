@@ -31,7 +31,12 @@
                     "value": "1"
                 }
             ],
-            "environmentFiles": [],
+            "environmentFiles": [
+                {
+                    "value": "arn:aws:s3:::env-devbucket/dev-credo.env",
+                    "type": "s3"
+                }
+            ],
             "mountPoints": [
                 {
                     "sourceVolume": "AGENT-CONFIG",
