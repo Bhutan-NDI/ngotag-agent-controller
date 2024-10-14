@@ -20,6 +20,7 @@ import { questionAnswerEvents } from './events/QuestionAnswerEvents'
 import { RegisterRoutes } from './routes/routes'
 import { SecurityMiddleware } from './securityMiddleware'
 import { maxRateLimit, windowMs } from './utils/util'
+import { reuseConnectionEvents } from './events/ReuseConnectionEvents'
 
 import { ValidateError, type Exception } from 'tsoa'
 
@@ -35,6 +36,7 @@ export const setupServer = async (agent: Agent, config: ServerConfig, apiKey?: s
     connectionEvents(agent, config)
     credentialEvents(agent, config)
     proofEvents(agent, config)
+    reuseConnectionEvents(agent, config)
   }
 
   // Use body parser to read sent json payloads
