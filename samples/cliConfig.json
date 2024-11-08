@@ -39,10 +39,10 @@
   "autoAcceptMediationRequests": false,
   "adminPort": 4001,
   "tenancy": true,
-  "schemaFileServerURL": "https://schema.credebl.id/schemas/",
-  "didRegistryContractAddress": "0x0C16958c4246271622201101C83B9F0Fc7180d15",
-  "schemaManagerContractAddress": "0x4B16719E73949a62E9A7306F352ec73F1B143c27",
-  "rpcUrl": "https://polygon-rpc.com",
-  "fileServerUrl": "https://schema.credebl.id/",
-  "fileServerToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJBeWFuV29ya3MiLCJpZCI6ImNhZDI3ZjhjLTMyNWYtNDRmZC04ZmZkLWExNGNhZTY3NTMyMSJ9.I3IR7abjWbfStnxzn1BhxhV0OEzt1x3mULjDdUcgWHk"
+  "schemaFileServerURL": "https://dev-schema.ngotag.com/schemas/",
+  "didRegistryContractAddress": "0x7423254347AbE61F7606d0b850CAa1233Fb660bC",
+  "schemaManagerContractAddress": "0xbE3F8C090C4ecF52322eD49E7f9BB4a2686C413",
+  "rpcUrl": "https://ethereum-sepolia.blockpi.network/v1/rpc/public",
+  "fileServerUrl": "https://dev-schema.ngotag.com/",
+  "fileServerToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJBeWFuV29ya3MiLCJpZCI6ImU2YTFjNTFiLTAxYzEtNDE3ZS05NDYxLWU1NTQxMDcyOGNiMiJ9.v043_U8UTvyqg2dE0pXartu3ku_NInuHwc6lPcrnP8g"
 }
