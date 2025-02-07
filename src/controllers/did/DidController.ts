@@ -10,10 +10,11 @@ import {
   getBls12381G2Key2020,
   createPeerDidDocumentFromServices,
   PeerDidNumAlgo,
+  DidRepository,
 } from '@credo-ts/core'
 import axios from 'axios'
 import { Request as Req } from 'express'
-import { Body, Controller, Example, Get, Path, Post, Route, Tags, Security, Request } from 'tsoa'
+import { Body, Controller, Example, Get, Path, Post, Route, Tags, Security, Request, Query } from 'tsoa'
 import { injectable } from 'tsyringe'
 
 import { DidMethod, Network, Role, SCOPES } from '../../enums'
@@ -374,7 +375,15 @@ export class DidController extends Controller {
       })
       didDocument = createdDid[0]?.didDocument
     }
-
+    if (didOptions.isDefault) {
+      const didRepository = await agent.dependencyManager.resolve(DidRepository)
+      const [didRecord] = await agent.dids.getCreatedDids({
+        did: did,
+        method: DidMethod.Key,
+      })
+      didRecord.setTag('isDefault', true)
+      await didRepository.update(agent.context, didRecord)
+    }
     await agent.dids.import({
       did,
       overwrite: true,
@@ -473,9 +482,17 @@ export class DidController extends Controller {
   }
 
   @Get('/')
-  public async getDids(@Request() request: Req) {
+  public async getDids(@Request() request: Req, @Query('isDefault') isDefault: boolean = false) {
     try {
-      const createdDids = await request.agent.dids.getCreatedDids()
+      let createdDids
+      if (isDefault) {
+        const didRepository = await request.agent.dependencyManager.resolve(DidRepository)
+        createdDids = await didRepository.findSingleByQuery(request.agent.context, {
+          isDefault: true,
+        })
+      } else {
+        createdDids = await request.agent.dids.getCreatedDids()
+      }
       return createdDids
     } catch (error) {
       throw ErrorHandlingService.handle(error)

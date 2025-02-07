@@ -1114,8 +1114,17 @@
 					"id": {
 						"type": "string"
 					},
-					"type": {
+					"didDocument": {
+						"$ref": "#/components/schemas/DidDocument"
+					},
+					"privatekey": {
 						"type": "string"
+					},
+					"endpoint": {
+						"type": "string"
+					},
+					"isDefault": {
+						"type": "boolean"
 					}
 				},
 				"required": [
@@ -1610,7 +1619,8 @@
 					},
 					"proof": {
 						"$ref": "#/components/schemas/SingleOrArray_LinkedDataProof-or-DataIntegrityProof_"
-					}
+					},
+					"prettyVc": {}
 				},
 				"required": [
 					"context",
@@ -4156,7 +4166,25 @@
 						]
 					}
 				],
-				"parameters": []
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "query",
+						"name": "isDefault",
+						"required": false,
+						"schema": {
+							"default": false,
+							"type": "boolean"
+						}
+					}
+				]
 			}
 		},
 		"/agent/token": {
@@ -4247,6 +4275,66 @@
 						}
 					}
 				}
+			},
+			"delete": {
+				"operationId": "DeleteConnectionById",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/Record_string.any_"
+								},
+								"examples": {
+									"Example 1": {
+										"value": {
+											"_tags": {
+												"invitationDid": "did:peer:2.SeyJzIjoiaHR0cHM6Ly9kYTIzLTg5LTIwLTE2Mi0xNDYubmdyb2suaW8iLCJ0IjoiZGlkLWNvbW11bmljYXRpb24iLCJwcmlvcml0eSI6MCwicmVjaXBpZW50S2V5cyI6WyJkaWQ6a2V5Ono2TWtualg3U1lXRmdHMThCYkNEZHJnemhuQnA0UlhyOGVITHZxQ3FvRXllckxiTiN6Nk1rbmpYN1NZV0ZnRzE4QmJDRGRyZ3pobkJwNFJYcjhlSEx2cUNxb0V5ZXJMYk4iXSwiciI6W119",
+												"did": "did:peer:1zQmfQh1T3rSqarP2FZ37uKjdQHPKFdVyo2mGiAPHZ8Ep7hv",
+												"invitationKey": "9HG4rJFpLiWf56MWxHj9rgdpErFzim2zEpHuxy1dw7oz",
+												"outOfBandId": "edbc89fe-785f-4774-a288-46012486881d",
+												"verkey": "9HG4rJFpLiWf56MWxHj9rgdpErFzim2zEpHuxy1dw7oz"
+											},
+											"metadata": {},
+											"id": "821f9b26-ad04-4f56-89b6-e2ef9c72b36e",
+											"createdAt": "2022-01-01T00:00:00.000Z",
+											"did": "did:peer:1zQmfQh1T3rSqarP2FZ37uKjdQHPKFdVyo2mGiAPHZ8Ep7hv",
+											"invitationDid": "did:peer:2.SeyJzIjoiaHR0cHM6Ly9kYTIzLTg5LTIwLTE2Mi0xNDYubmdyb2suaW8iLCJ0IjoiZGlkLWNvbW11bmljYXRpb24iLCJwcmlvcml0eSI6MCwicmVjaXBpZW50S2V5cyI6WyJkaWQ6a2V5Ono2TWtualg3U1lXRmdHMThCYkNEZHJnemhuQnA0UlhyOGVITHZxQ3FvRXllckxiTiN6Nk1rbmpYN1NZV0ZnRzE4QmJDRGRyZ3pobkJwNFJYcjhlSEx2cUNxb0V5ZXJMYk4iXSwiciI6W119",
+											"outOfBandId": "edbc89fe-785f-4774-a288-46012486881d"
+										}
+									}
+								}
+							}
+						}
+					}
+				},
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"apiKey": []
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "connectionId",
+						"required": true,
+						"schema": {
+							"$ref": "#/components/schemas/RecordId"
+						}
+					}
+				]
 			}
 		},
 		"/agent/credential/sign": {

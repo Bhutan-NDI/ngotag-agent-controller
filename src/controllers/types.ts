@@ -303,6 +303,8 @@ export interface DidCreate {
   didDocument?: DidDocument
   privatekey?: string
   endpoint?: string
+  isDefault?: boolean
+  address?: string
 }
 
 export interface CreateTenantOptions {
