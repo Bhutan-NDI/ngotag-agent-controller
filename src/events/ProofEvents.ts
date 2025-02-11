@@ -9,8 +9,8 @@ import { sendWebhookEvent } from './WebhookEvent'
 export const proofEvents = async (agent: Agent, config: ServerConfig) => {
   agent.events.on(ProofEventTypes.ProofStateChanged, async (event: ProofStateChangedEvent) => {
     const record = event.payload.proofRecord
-    const body = { ...record.toJSON(), ...event.metadata } as { proofData?: any }
-    if (event.metadata.contextCorrelationId !== 'default') {
+    const body = { ...record.toJSON(), ...event.metadata } as { proofData?: any; contextCorrelationId?:any }
+    if (event.metadata.contextCorrelationId !== 'default' && record.state === 'done') {
       const tenantAgent = await agent.modules.tenants.getTenantAgent({
         tenantId: event.metadata.contextCorrelationId,
       })
@@ -26,12 +26,13 @@ export const proofEvents = async (agent: Agent, config: ServerConfig) => {
 
     // Only send webhook if webhook url is configured
     if (config.webhookUrl) {
-      // await sendWebhookEvent(config.webhookUrl + '/proofs', body, agent.config.logger)  
-      
-      // updating specific to old version of platform: 
-      // TODO: Remove after the update
-      const res = { ...body, type:'Verification'}
-      await sendWebhookEvent(config.webhookUrl, res, agent.config.logger)
+      // Split the URL by '/'
+      const parts = config.webhookUrl.split('/');
+      // Extract the last value
+      const orgId = parts[parts.length - 1];
+      body.contextCorrelationId = orgId;
+      // TODO: Remove the above lines after the update
+      await sendWebhookEvent(config.webhookUrl + '/proofs', body, agent.config.logger)  
     }
 
     if (config.socketServer) {
