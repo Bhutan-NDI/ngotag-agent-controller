@@ -26,7 +26,12 @@ export const proofEvents = async (agent: Agent, config: ServerConfig) => {
 
     // Only send webhook if webhook url is configured
     if (config.webhookUrl) {
-      await sendWebhookEvent(config.webhookUrl + '/proofs', body, agent.config.logger)
+      // await sendWebhookEvent(config.webhookUrl + '/proofs', body, agent.config.logger)  
+      
+      // updating specific to old version of platform: 
+      // TODO: Remove after the update
+      const res = { ...body, type:'Verification'}
+      await sendWebhookEvent(config.webhookUrl, res, agent.config.logger)
     }
 
     if (config.socketServer) {
