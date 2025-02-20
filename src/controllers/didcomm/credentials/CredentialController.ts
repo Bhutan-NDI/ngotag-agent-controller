@@ -13,7 +13,7 @@ import {
   PeerDidNumAlgo,
 } from '@credo-ts/core'
 import { Request as Req } from 'express'
-import { Body, Controller, Get, Path, Post, Route, Tags, Example, Query, Security, Request } from 'tsoa'
+import { Body, Controller, Get, Path, Post, Route, Tags, Example, Query, Security, Request, Delete } from 'tsoa'
 import { injectable } from 'tsyringe'
 
 import { SCOPES } from '../../../enums'
@@ -318,6 +318,19 @@ export class CredentialController extends Controller {
     const linkSecretIds = await agent.modules.anoncreds.getLinkSecretIds()
     if (linkSecretIds.length === 0) {
       await agent.modules.anoncreds.createLinkSecret()
+    }
+  }
+
+  @Delete('/credential/:credentialRecordId')
+  public async deleteCredentialById(
+    @Request() request: Req,
+    @Path('credentialRecordId') credentialRecordId: RecordId
+  ) {
+    try {
+      await request.agent.credentials.deleteById(credentialRecordId)
+      return { message: 'Credential Deleted Successfully' }
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
     }
   }
 }
