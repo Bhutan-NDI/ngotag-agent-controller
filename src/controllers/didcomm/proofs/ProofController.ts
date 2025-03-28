@@ -277,4 +277,80 @@ export class ProofController extends Controller {
       throw ErrorHandlingService.handle(error)
     }
   }
+
+  @Get('/credentialsForRequest/:proofRecordId')
+  public async getCredentialsForRequest(
+    @Request() request: Req,
+    @Path('proofRecordId') proofRecordId: RecordId
+  ) {
+    try {
+      const credentials = await request.agent.proofs.getCredentialsForRequest({ proofRecordId })
+      return credentials
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  @Post('/proofs/accept-request-with-cred')
+  @Example<ProofExchangeRecordProps>(ProofRecordExample)
+  public async acceptRequestWithProofFormatInput(
+    @Request() request: Req,
+    @Body()
+    acceptRequestWithProofFormatInput: {
+      proofRecordId: string
+      comment?: string
+      proofFormats: {
+        presentationExchange: {
+          credentials: Record<string, string>
+        }
+      }
+    }
+  ) {
+    let proofRecord
+    try {
+      const getCredentials = await request.agent.proofs.getCredentialsForRequest({
+        proofRecordId: acceptRequestWithProofFormatInput.proofRecordId,
+      })
+
+      const proofFormats: {
+        presentationExchange: {
+          credentials: Record<string, any>
+        }
+      } = {
+        presentationExchange: {
+          credentials: {},
+        },
+      }
+
+      getCredentials.proofFormats.presentationExchange?.requirements.forEach((requirement) => {
+        proofFormats.presentationExchange.credentials[`${requirement.submissionEntry[0].inputDescriptorId}`] = [
+          // requirement.submissionEntry[0].verifiableCredentials[
+          //   acceptRequestWithProofFormatInput.proofFormats.presentationExchange.credentials[
+          //     `${requirement.submissionEntry[0].inputDescriptorId}`
+          //   ]
+          // ].credentialRecord,
+          requirement.submissionEntry[0].verifiableCredentials.find(
+            (credentials) =>
+              credentials.credentialRecord.id ===
+              acceptRequestWithProofFormatInput.proofFormats.presentationExchange.credentials[
+                `${requirement.submissionEntry[0].inputDescriptorId}`
+              ]
+          )?.credentialRecord,
+        ]
+      })
+
+      const acceptProofRequest = {
+        proofRecordId: acceptRequestWithProofFormatInput.proofRecordId,
+        comment: acceptRequestWithProofFormatInput.comment,
+        proofFormats: proofFormats,
+      }
+      const proof = await request.agent.proofs.acceptRequest(acceptProofRequest)
+
+      proofRecord = proof.toJSON()
+      
+      return proofRecord
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
 }
