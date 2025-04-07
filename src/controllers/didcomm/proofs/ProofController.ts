@@ -1,5 +1,6 @@
 import type {
   AcceptProofRequestOptions,
+  DeclineProofRequestOptions,
   PeerDidNumAlgo2CreateOptions,
   ProofExchangeRecordProps,
   ProofsProtocolVersionType,
@@ -348,6 +349,33 @@ export class ProofController extends Controller {
 
       proofRecord = proof.toJSON()
       
+      return proofRecord
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  @Post('/proofs/:proofRecordId/decline-request')
+  @Example<ProofExchangeRecordProps>(ProofRecordExample)
+  public async declineRequest(
+    @Request() request: Req,
+    @Path('proofRecordId') proofRecordId: string,
+    @Body()
+    req: //TODO type for request
+    {
+      sendProblemReport?: boolean
+      problemReportDescription?: string
+    }
+  ) {
+    let proofRecord
+    try {
+      const declineProofRequestOptions: DeclineProofRequestOptions = {
+        proofRecordId,
+        sendProblemReport: req.sendProblemReport,
+        problemReportDescription: req.problemReportDescription,
+      }
+      const proof = await request.agent.proofs.declineRequest(declineProofRequestOptions)
+      proofRecord = proof.toJSON()
       return proofRecord
     } catch (error) {
       throw ErrorHandlingService.handle(error)
