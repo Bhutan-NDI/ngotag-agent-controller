@@ -1,0 +1,25 @@
+diff --git a/node_modules/@sphereon/pex/dist/main/lib/evaluation/evaluationClientWrapper.js b/node_modules/@sphereon/pex/dist/main/lib/evaluation/evaluationClientWrapper.js
+index 813c057..bdc92d0 100644
+--- a/node_modules/@sphereon/pex/dist/main/lib/evaluation/evaluationClientWrapper.js
++++ b/node_modules/@sphereon/pex/dist/main/lib/evaluation/evaluationClientWrapper.js
+@@ -146,13 +146,13 @@ class EvaluationClientWrapper {
+                 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                 // @ts-ignore
+                 if (inputDescriptorsFromLogs.indexOf(pd.input_descriptors[i].id) == -1) {
+-                    checkResult.push({
+-                        input_descriptor_path: `$.input_descriptors[${i}]`,
+-                        evaluator: 'checkWithoutSubmissionRequirement',
+-                        verifiable_credential_path: '',
+-                        status: ConstraintUtils_1.Status.ERROR,
+-                        payload: `Not all the InputDescriptors are addressed`,
+-                    });
++                    // checkResult.push({
++                    //     input_descriptor_path: `$.input_descriptors[${i}]`,
++                    //     evaluator: 'checkWithoutSubmissionRequirement',
++                    //     verifiable_credential_path: '',
++                    //     status: ConstraintUtils_1.Status.ERROR,
++                    //     payload: `Not all the InputDescriptors are addressed`,
++                    // });
+                 }
+             }
+         }
