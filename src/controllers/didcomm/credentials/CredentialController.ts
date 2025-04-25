@@ -3,6 +3,9 @@ import type {
   CredentialProtocolVersionType,
   PeerDidNumAlgo2CreateOptions,
   Routing,
+  W3cCredentialOptions,
+  W3cCredentialSubjectOptions,
+  W3cJsonLdSignCredentialOptions,
 } from '@credo-ts/core'
 
 import {
@@ -11,6 +14,10 @@ import {
   CredentialRole,
   createPeerDidDocumentFromServices,
   PeerDidNumAlgo,
+  DidRepository,
+  ClaimFormat,
+  JsonTransformer,
+  W3cJsonLdVerifiableCredential,
 } from '@credo-ts/core'
 import { Request as Req } from 'express'
 import { Body, Controller, Get, Path, Post, Route, Tags, Example, Query, Security, Request, Delete } from 'tsoa'
@@ -29,8 +36,10 @@ import {
   AcceptCredential,
   CreateOfferOobOptions,
   ThreadId,
+  selfAttestedJsonLdCredentialOptions,
 } from '../../types'
 import { OutOfBandController } from '../outofband/OutOfBandController'
+import { NotFoundError } from 'src/errors'
 
 @Tags('DIDComm - Credentials')
 @Security('jwt', [SCOPES.TENANT_AGENT, SCOPES.DEDICATED_AGENT])
@@ -100,6 +109,60 @@ export class CredentialController extends Controller {
     }
   }
 
+  @Post('/w3c/self-attested')
+  public async createW3cSelfAttestedCredential(
+    @Request() request: Req,
+    @Body() selfAttestedCredentialOptions: selfAttestedJsonLdCredentialOptions
+  ) {
+    let selfAttestedStoredCredential
+    try {
+      // Get default DID of the tenant
+      const didRepository = await request.agent.dependencyManager.resolve(DidRepository)
+      const defaultDidRecord = await didRepository.findSingleByQuery(request.agent.context, {
+        isDefault: true,
+      })
+      const selfDid = defaultDidRecord?.did
+      const selfDidVerificationMethod = defaultDidRecord?.didDocument?.verificationMethod?.[0]?.id
+
+      if (!selfDid) {
+        throw new NotFoundError('Default DID not found')
+      }
+      if (!selfDidVerificationMethod) {
+        throw new Error('Default DID Verification method is missing or undefined')
+      }
+
+      const {
+        credentialSubject: selfAttestedSubjectOptions,
+        proofType: selfAttestedProofType,
+        ...selfAttestedOptions
+      } = selfAttestedCredentialOptions
+
+      const selfAttestedSubject: W3cCredentialSubjectOptions = {
+        id: selfDid,
+        ...selfAttestedSubjectOptions,
+      }
+      const selfAttestedW3cCredential: W3cCredentialOptions = {
+        ...selfAttestedOptions,
+        issuer: selfDid,
+        issuanceDate: new Date().toISOString(),
+        credentialSubject: selfAttestedSubject,
+      }
+      const selfAttestedJsonLdCredential: W3cJsonLdSignCredentialOptions = {
+        format: ClaimFormat.LdpVc,
+        // @ts-ignore W3cCredential not used since optional expirationDate is failing
+        // credential: new W3cCredential(selfAttestedW3cCredential),
+        credential: { ...selfAttestedW3cCredential },
+        proofType: selfAttestedProofType,
+        verificationMethod: selfDidVerificationMethod,
+      }
+      const signedCred = await request.agent.w3cCredentials.signCredential(selfAttestedJsonLdCredential)
+      const selfAttestedVC = JsonTransformer.fromJSON(signedCred, W3cJsonLdVerifiableCredential)
+      selfAttestedStoredCredential = await request.agent.w3cCredentials.storeCredential({ credential: selfAttestedVC })
+      return selfAttestedStoredCredential
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
   /**
    * Retrieve credential exchange record by credential record id
    *
