@@ -142,6 +142,13 @@ export interface CreateProofRequestOobOptions {
   invitationDid?: string
 }
 
+export interface selfAttestedJsonLdCredentialOptions {
+  '@context': Array<string | JsonObject>
+  type: Array<string>
+  credentialSubject: SingleOrArray<JsonObject>
+  proofType: string
+}
+
 export interface OfferCredentialOptions {
   credentialFormats: {
     indy: {
