@@ -163,6 +163,22 @@ export class CredentialController extends Controller {
       throw ErrorHandlingService.handle(error)
     }
   }
+
+  @Delete('/w3c/:credentialRecordId')
+  public async deleteW3cCredentialById(
+    @Request() request: Req,
+    @Path('credentialRecordId') credentialRecordId: RecordId,
+  ) {
+    try {
+      await request.agent.w3cCredentials.removeCredentialRecord(credentialRecordId)
+
+      return { message: 'W3C Credential Deleted Successfully' }
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+
   /**
    * Retrieve credential exchange record by credential record id
    *
