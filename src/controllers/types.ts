@@ -409,6 +409,15 @@ export type VerifyDataOptions = {
   signature: string
 }
 
+export interface SafeW3cJsonLdVerifyCredentialOptions extends W3cJsonLdVerifyCredentialOptions {
+  // Ommited due to issues with TSOA
+  proof: SingleOrArray<Omit<LinkedDataProofOptions, 'cryptosuite'> | DataIntegrityProofOptions>
+}
+
+export type CustomW3cJsonLdSignCredentialOptions = Omit<W3cJsonLdSignCredentialOptions, 'format'> & {
+  [key: string]: unknown
+}
+
 export interface jsonLdCredentialOptions {
   '@context': Array<string | JsonObject>
   type: Array<string>

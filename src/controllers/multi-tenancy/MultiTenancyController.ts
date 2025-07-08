@@ -1,4 +1,28 @@
-import type { RestMultiTenantAgentModules } from '../../cliAgent'
+import type { RestAgentModules, RestMultiTenantAgentModules } from '../../cliAgent'
+import type {
+  CustomW3cJsonLdSignCredentialOptions,
+  RecipientKeyOption,
+  SafeW3cJsonLdVerifyCredentialOptions,
+  SchemaMetadata,
+  SignDataOptions,
+} from '../types'
+import type { Version } from '../examples'
+import type { RecipientKeyOption, SchemaMetadata } from '../types'
+import type { PolygonDidCreateOptions } from '@ayanworks/credo-polygon-w3c-module/build/dids'
+import type {
+  AcceptProofRequestOptions,
+  ConnectionRecordProps,
+  CreateOutOfBandInvitationConfig,
+  CredentialProtocolVersionType,
+  KeyDidCreateOptions,
+  OutOfBandRecord,
+  PeerDidNumAlgo2CreateOptions,
+  ProofExchangeRecordProps,
+  ProofsProtocolVersionType,
+  Routing,
+} from '@credo-ts/core'
+import type { IndyVdrDidCreateOptions, IndyVdrDidCreateResult } from '@credo-ts/indy-vdr'
+import type { QuestionAnswerRecord, ValidResponse } from '@credo-ts/question-answer'
 import type { TenantRecord } from '@credo-ts/tenants'
 
 import { Agent, JsonTransformer, injectable, RecordNotFoundError } from '@credo-ts/core'
@@ -6,9 +30,41 @@ import { Request as Req } from 'express'
 import jwt from 'jsonwebtoken'
 import { Body, Controller, Delete, Post, Route, Tags, Path, Security, Request, Res, TsoaResponse, Get } from 'tsoa'
 
-import { AgentRole, SCOPES } from '../../enums'
-import ErrorHandlingService from '../../errorHandlingService'
-import { CreateTenantOptions } from '../types'
+import { CredentialEnum, DidMethod, Network, Role } from '../../enums/enum'
+import { BCOVRIN_REGISTER_URL, INDICIO_NYM_URL } from '../../utils/util'
+import { W3cJsonLdVerifiableCredential } from '@credo-ts/core'
+import { SchemaId, CredentialDefinitionId, RecordId, ProofRecordExample, ConnectionRecordExample } from '../examples'
+import {
+  RequestProofOptions,
+  CreateOfferOptions,
+  CreateTenantOptions,
+  DidCreate,
+  DidNymTransaction,
+  EndorserTransaction,
+  ReceiveInvitationByUrlProps,
+  ReceiveInvitationProps,
+  WriteTransaction,
+  CreateProofRequestOobOptions,
+  CreateOfferOobOptions,
+  SignDataOptions,
+  VerifyDataOptions,
+} from '../types'
+
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Post,
+  Query,
+  Res,
+  Route,
+  Tags,
+  TsoaResponse,
+  Path,
+  Example,
+  Security,
+} from 'tsoa'
 
 @Tags('MultiTenancy')
 @Security('jwt', [SCOPES.MULTITENANT_BASE_AGENT])
@@ -169,6 +225,146 @@ export class MultiTenancyController extends Controller {
         return notFoundError(404, { reason: `connection with connection id "${connectionId}" not found.` })
       }
       return internalServerError(500, { message: `something went wrong: ${error}` })
+    }
+  }
+
+  /**
+   * Sign data using a key
+   *
+   * @param tenantId Tenant identifier
+   * @param request Sign options
+   *  data - Data has to be in base64 format
+   *  publicKeyBase58 - Public key in base58 format
+   * @returns Signature in base64 format
+   */
+  @Security('apiKey')
+  @Post('/sign/:tenantId')
+  public async sign(
+    @Path('tenantId') tenantId: string,
+    @Body() request: CustomW3cJsonLdSignCredentialOptions | SignDataOptions | any,
+    @Res() badRequestError: TsoaResponse<400, { reason: string }>,
+    @Res() notFoundError: TsoaResponse<404, { reason: string }>,
+    @Res() internalServerError: TsoaResponse<500, { message: string }>
+  ) {
+    try {
+      const signature = await this.agent.modules.tenants.withTenantAgent({ tenantId }, async (tenantAgent) => {
+        assertAskarWallet(tenantAgent.context.wallet)
+
+        // Raw Data Signing
+        const rawData = request as SignDataOptions
+
+        if (!rawData.data) return notFoundError(404, { reason: `Missing "data" for raw data signing` })
+
+        const hasDidOrMethod = rawData.did || rawData.method
+        const hasPublicKey = rawData.publicKeyBase58 && rawData.keyType
+
+        if (!hasDidOrMethod && !hasPublicKey) {
+          return badRequestError(400, {
+            reason: `Either (did or method) OR (publicKeyBase58 and keyType) must be provided.`,
+          })
+        }
+
+        let keyToUse: Key
+
+        if (hasDidOrMethod) {
+          const dids = await tenantAgent.dids.getCreatedDids({
+            method: rawData.method || undefined,
+            did: rawData.did || undefined,
+          })
+
+          const verificationMethod = dids[0]?.didDocument?.verificationMethod?.[0]?.publicKeyBase58
+          if (!verificationMethod) {
+            return badRequestError(400, {
+              reason: `No publicKeyBase58 found for the given DID or method.`,
+            })
+          }
+
+          keyToUse = Key.fromPublicKeyBase58(verificationMethod, rawData.keyType)
+        } else {
+          keyToUse = Key.fromPublicKeyBase58(rawData.publicKeyBase58, rawData.keyType)
+        }
+
+        if (!keyToUse) {
+          throw new Error('Unable to construct signing key.')
+        }
+
+        const signature = await tenantAgent.context.wallet.sign({
+          data: TypedArrayEncoder.fromBase64(rawData.data),
+          key: keyToUse,
+        })
+        return TypedArrayEncoder.toBase64(signature)
+      })
+      return signature
+    } catch (error) {
+      if (error instanceof RecordNotFoundError) {
+        return notFoundError(404, { reason: `record with key "${request.publicKeyBase58}" not found.` })
+      }
+      return internalServerError(500, { message: `something went wrong: ${error}` })
+    }
+  }
+
+  /**
+   * Verify data using a key
+   *
+   * @param tenantId Tenant identifier
+   * @param request Verify options
+   *  data - Data has to be in base64 format
+   *  publicKeyBase58 - Public key in base58 format
+   *  signature - Signature in base64 format
+   * @returns isValidSignature - true if signature is valid, false otherwise
+   */
+  @Security('apiKey')
+  @Post('/verify/:tenantId')
+  public async verify(
+    @Path('tenantId') tenantId: string,
+    @Body() request: VerifyDataOptions,
+    @Res() notFoundError: TsoaResponse<404, { reason: string }>,
+    @Res() internalServerError: TsoaResponse<500, { message: string }>
+  ) {
+    try {
+      const isValidSignature = await this.agent.modules.tenants.withTenantAgent({ tenantId }, async (tenantAgent) => {
+        assertAskarWallet(tenantAgent.context.wallet)
+        const isValidSignature = await tenantAgent.context.wallet.verify({
+          data: TypedArrayEncoder.fromBase64(request.data),
+          key: Key.fromPublicKeyBase58(request.publicKeyBase58, request.keyType),
+          signature: TypedArrayEncoder.fromBase64(request.signature),
+        })
+        return isValidSignature
+      })
+      return isValidSignature
+    } catch (error) {
+      if (error instanceof RecordNotFoundError) {
+        return notFoundError(404, { reason: `record with key "${request.publicKeyBase58}" not found.` })
+      }
+      return internalServerError(500, { message: `something went wrong: ${error}` })
+    }
+  }
+
+  @Security('apiKey')
+  @Post('/credential/verify/:tenantId')
+  public async verifyCredential(
+    @Path('tenantId') tenantId: string,
+    @Body() credentialToVerify: SafeW3cJsonLdVerifyCredentialOptions | any,
+    @Res() internalServerError: TsoaResponse<500, { message: string }>
+  ) {
+    let formattedCredential
+    try {
+      await this.agent.modules.tenants.withTenantAgent({ tenantId }, async (tenantAgent) => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { credential, ...credentialOptions } = credentialToVerify
+        const transformedCredential = JsonTransformer.fromJSON(
+          credentialToVerify?.credential,
+          W3cJsonLdVerifiableCredential
+        )
+        const signedCred = await tenantAgent.w3cCredentials.verifyCredential({
+          credential: transformedCredential,
+          ...credentialOptions,
+        })
+        formattedCredential = signedCred
+      })
+      return formattedCredential
+    } catch (error) {
+      return internalServerError(500, { message: `Something went wrong: ${error}` })
     }
   }
 }
