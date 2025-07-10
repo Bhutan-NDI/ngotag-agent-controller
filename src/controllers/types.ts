@@ -407,6 +407,8 @@ export type VerifyDataOptions = {
   keyType: KeyType
   publicKeyBase58: string
   signature: string
+  did?: string
+  method?: string
 }
 
 export interface SafeW3cJsonLdVerifyCredentialOptions extends W3cJsonLdVerifyCredentialOptions {

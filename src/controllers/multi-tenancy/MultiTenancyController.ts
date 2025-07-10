@@ -318,15 +318,48 @@ export class MultiTenancyController extends Controller {
   public async verify(
     @Path('tenantId') tenantId: string,
     @Body() request: VerifyDataOptions,
+    @Res() badRequestError: TsoaResponse<400, { reason: string }>,
     @Res() notFoundError: TsoaResponse<404, { reason: string }>,
     @Res() internalServerError: TsoaResponse<500, { message: string }>
   ) {
     try {
       const isValidSignature = await this.agent.modules.tenants.withTenantAgent({ tenantId }, async (tenantAgent) => {
         assertAskarWallet(tenantAgent.context.wallet)
+
+        const hasDidOrMethod = request.did || request.method
+        const hasPublicKey = request.publicKeyBase58 && request.keyType
+
+        if (!hasDidOrMethod && !hasPublicKey) {
+          return badRequestError(400, {
+            reason: `Either (did or method) OR (publicKeyBase58 and keyType) must be provided.`,
+          })
+        }
+
+        let keyToUse: Key
+
+        if (hasDidOrMethod) {
+          const dids = await tenantAgent.dids.getCreatedDids({
+            method: request.method || undefined,
+            did: request.did || undefined,
+          })
+          const verificationMethod = dids[0]?.didDocument?.verificationMethod?.[0]?.publicKeyBase58
+          if (!verificationMethod) {
+            return badRequestError(400, {
+              reason: `No publicKeyBase58 found for the given DID or method.`,
+            })
+          }
+          keyToUse = Key.fromPublicKeyBase58(verificationMethod, request.keyType)
+        } else {
+          keyToUse = Key.fromPublicKeyBase58(request.publicKeyBase58, request.keyType)
+        }
+
+        if (!keyToUse) {
+          throw new Error('Unable to construct key.')
+        }
+
         const isValidSignature = await tenantAgent.context.wallet.verify({
           data: TypedArrayEncoder.fromBase64(request.data),
-          key: Key.fromPublicKeyBase58(request.publicKeyBase58, request.keyType),
+          key: keyToUse,
           signature: TypedArrayEncoder.fromBase64(request.signature),
         })
         return isValidSignature
