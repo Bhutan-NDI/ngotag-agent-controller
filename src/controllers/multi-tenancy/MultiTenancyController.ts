@@ -66,6 +66,7 @@ import {
   Example,
   Security,
 } from 'tsoa'
+import ErrorHandlingService from 'src/errorHandlingService'
 
 @Tags('MultiTenancy')
 @Security('jwt', [SCOPES.MULTITENANT_BASE_AGENT])
@@ -399,6 +400,22 @@ export class MultiTenancyController extends Controller {
       return formattedCredential
     } catch (error) {
       return internalServerError(500, { message: `Something went wrong: ${error}` })
+    }
+  }
+
+  @Get('/checkCloudWalletExists/:tenantId')
+  public async getCloudWallet(@Request() request: Req, @Path('tenantId') tenantId: string) {
+    try {
+      const agent = request.agent as Agent<RestMultiTenantAgentModules>
+      const tenant = await agent.modules.tenants.getTenantById(tenantId)
+      if (tenant) {
+        return 'Tenant exists'
+      } else {
+        this.setStatus(404)
+        return 'Tenant does not exist'
+      }
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
     }
   }
 }
