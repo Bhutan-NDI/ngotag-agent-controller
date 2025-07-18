@@ -1,7 +1,7 @@
 import type { DidResolutionResultProps } from '../types'
+import type { EthereumDidCreateOptions } from '@ankitaawts/credo-ethr-module/build/dids'
 import type { PolygonDidCreateOptions } from '@ayanworks/credo-polygon-w3c-module/build/dids'
 import type { DidDocument, KeyDidCreateOptions, PeerDidNumAlgo2CreateOptions } from '@credo-ts/core'
-import { EthrDidCreateOptions } from 'ethr-did'
 import {
   KeyType,
   TypedArrayEncoder,
@@ -479,15 +479,15 @@ export class DidController extends Controller {
     const { endpoint, network, privatekey } = createDidOptions
     const networkName = network?.split(':')[1]
 
-    if (networkName !== 'mainnet' && networkName !== 'testnet') {
+    if (networkName !== 'mainnet' && networkName !== 'sepolia') {
       throw new BadRequestError('Invalid network type')
     }
     if (!privatekey || typeof privatekey !== 'string' || !privatekey.trim() || privatekey.length !== 64) {
       throw new BadRequestError('Invalid private key or key not supported')
     }
 
-    const createDidResponse = await agent.dids.create<EthrDidCreateOptions>({
-      method: 'ethereum',
+    const createDidResponse = await agent.dids.create<EthereumDidCreateOptions>({
+      method: 'ethr',
       options: {
         network: networkName,
         endpoint,
