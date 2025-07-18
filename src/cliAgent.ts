@@ -104,6 +104,7 @@ export interface AriesRestConfig {
   apiKey: string
   updateJwtSecret?: boolean
 }
+import { EthrDidRegistrar, EthrDidResolver, EthrModule } from 'ethr-did'
 
 export async function readRestConfig(path: string) {
   const configString = await readFile(path, { encoding: 'utf-8' })
@@ -147,8 +148,19 @@ const getModules = (
     }),
 
     dids: new DidsModule({
-      registrars: [new IndyVdrIndyDidRegistrar(), new KeyDidRegistrar(), new PolygonDidRegistrar()],
-      resolvers: [new IndyVdrIndyDidResolver(), new KeyDidResolver(), new WebDidResolver(), new PolygonDidResolver()],
+      registrars: [
+        new IndyVdrIndyDidRegistrar(),
+        new KeyDidRegistrar(),
+        new PolygonDidRegistrar(),
+        new EthrDidRegistrar(),
+      ],
+      resolvers: [
+        new IndyVdrIndyDidResolver(),
+        new KeyDidResolver(),
+        new WebDidResolver(),
+        new PolygonDidResolver(),
+        new EthrDidResolver(),
+      ],
     }),
 
     anoncreds: new AnonCredsModule({
@@ -204,6 +216,15 @@ const getModules = (
       fileServerToken: fileServerToken ? fileServerToken : (process.env.FILE_SERVER_TOKEN as string),
       rpcUrl: rpcUrl ? rpcUrl : (process.env.RPC_URL as string),
       serverUrl: fileServerUrl ? fileServerUrl : (process.env.SERVER_URL as string),
+    }),
+
+    ethereum: new EthrModule({
+      didContractAddress: '0x485cFb9cdB84c0a5AfE69b75E2e79497Fc2256Fc',
+      schemaManagerContractAddress: '0x8f3db5523620278C47b0cAf6353Ee32C5eDa95bF',
+      fileServerToken:
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJBeWFuV29ya3MiLCJpZCI6IjliZjNiODFlLTA0ZDEtNDdmYy1iZTIwLWE2MTBiZDE5NTZlZiJ9.suWGau_pvNhGSGHRMqomqWoYhwMA7pcRt0kyHhaRZhM',
+      rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/XUo--fMnn250sIOxldOhx1J9-rput18B',
+      serverUrl: 'https://dev-schema.ngotag.com',
     }),
   }
 }
