@@ -2,7 +2,7 @@ import type { RestAgentModules } from '../../cliAgent'
 import type { SchemaMetadata } from '../types'
 
 import { generateSecp256k1KeyPair } from '@ayanworks/credo-polygon-w3c-module'
-import { DidOperation } from '@ayanworks/credo-polygon-w3c-module/build/ledger'
+// import { DidOperation } from '@ayanworks/credo-polygon-w3c-module/build/ledger'
 import { Agent, CredoError } from '@credo-ts/core'
 import * as fs from 'fs'
 import { injectable } from 'tsyringe'
@@ -105,33 +105,33 @@ export class Ethereum extends Controller {
    *
    * @returns Transaction Object
    */
-  @Post('estimate-transaction')
-  public async estimateTransaction(
-    @Body()
-    estimateTransactionRequest: {
-      operation: any
-      transaction: any
-    },
-    @Res() internalServerError: TsoaResponse<500, { message: string }>,
-    @Res() badRequestError: TsoaResponse<400, { reason: string }>
-  ): Promise<unknown> {
-    try {
-      const { operation } = estimateTransactionRequest
+  // @Post('estimate-transaction')
+  // public async estimateTransaction(
+  //   @Body()
+  //   estimateTransactionRequest: {
+  //     operation: any
+  //     transaction: any
+  //   },
+  //   @Res() internalServerError: TsoaResponse<500, { message: string }>,
+  //   @Res() badRequestError: TsoaResponse<400, { reason: string }>
+  // ): Promise<unknown> {
+  //   try {
+  //     const { operation } = estimateTransactionRequest
 
-      if (!(operation in DidOperation)) {
-        return badRequestError(400, {
-          reason: `Invalid method parameter!`,
-        })
-      }
-      if (operation === DidOperation.Create) {
-        return this.agent.modules.ethereum.estimateFeeForDidOperation({ operation })
-      } else if (operation === DidOperation.Update) {
-        return this.agent.modules.ethereum.estimateFeeForDidOperation({ operation })
-      }
-    } catch (error) {
-      return internalServerError(500, { message: `something went wrong: ${error}` })
-    }
-  }
+  //     if (!(operation in DidOperation)) {
+  //       return badRequestError(400, {
+  //         reason: `Invalid method parameter!`,
+  //       })
+  //     }
+  //     if (operation === DidOperation.Create) {
+  //       return this.agent.modules.ethereum.estimateFeeForDidOperation({ operation })
+  //     } else if (operation === DidOperation.Update) {
+  //       return this.agent.modules.ethereum.estimateFeeForDidOperation({ operation })
+  //     }
+  //   } catch (error) {
+  //     return internalServerError(500, { message: `something went wrong: ${error}` })
+  //   }
+  // }
 
   /**
    * Fetch schema details
@@ -146,7 +146,7 @@ export class Ethereum extends Controller {
     @Res() forbiddenError: TsoaResponse<401, { reason: string }>
   ): Promise<unknown> {
     try {
-      return this.agent.modules.ethereuem.getSchemaById(did, schemaId)
+      return this.agent.modules.ethereum.getSchemaById(did, schemaId)
     } catch (error) {
       if (error instanceof CredoError) {
         if (error.message.includes('UnauthorizedClientRequest')) {
