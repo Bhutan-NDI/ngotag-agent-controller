@@ -3,8 +3,8 @@ import type { WalletConfig } from '@credo-ts/core/build/types'
 import type { IndyVdrPoolConfig } from '@credo-ts/indy-vdr'
 
 // eslint-disable-next-line import/no-extraneous-dependencies
-import { EthereumDidRegistrar, EthereumDidResolver, EthereumModule } from '@ankitaawts/credo-ethr-module'
 import { PolygonDidRegistrar, PolygonDidResolver, PolygonModule } from '@ayanworks/credo-polygon-w3c-module'
+import { EthereumDidRegistrar, EthereumDidResolver, EthereumModule } from '@bhutan-ndi/credo-ethr-module'
 import {
   AnonCredsCredentialFormatService,
   AnonCredsModule,
@@ -219,16 +219,14 @@ const getModules = (
       serverUrl: fileServerUrl ? fileServerUrl : (process.env.SERVER_URL as string),
     }),
     ethereum: new EthereumModule({
-      config: {
-        networks: [
-          {
-            name: 'sepolia',
-            chainId: 11155111,
-            rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/<API-KEY>',
-            registry: '0x485cFb9cdB84c0a5AfE69b75E2e79497Fc2256Fc',
-          },
-        ],
-      },
+      didContractAddress: '0x485cFb9cdB84c0a5AfE69b75E2e79497Fc2256Fc',
+      schemaManagerContractAddress: '0x8f3db5523620278C47b0cAf6353Ee32C5eDa95bF',
+      fileServerToken:
+        '<FILE-SERVER-TOKEN>',
+      rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/<API-KEY>',
+      serverUrl: 'https://dev-schema.ngotag.com',
+      networkName: 'sepolia',
+      chainNameOrId: '11155111',
     }),
   }
 }
