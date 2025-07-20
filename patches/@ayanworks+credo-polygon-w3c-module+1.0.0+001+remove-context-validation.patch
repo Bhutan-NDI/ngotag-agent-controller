@@ -1,0 +1,43 @@
+diff --git a/node_modules/@ayanworks/credo-polygon-w3c-module/build/signature-suites/EcdsaSecp256k1Signature2019.js b/node_modules/@ayanworks/credo-polygon-w3c-module/build/signature-suites/EcdsaSecp256k1Signature2019.js
+index 03ac355..08b31d7 100644
+--- a/node_modules/@ayanworks/credo-polygon-w3c-module/build/signature-suites/EcdsaSecp256k1Signature2019.js
++++ b/node_modules/@ayanworks/credo-polygon-w3c-module/build/signature-suites/EcdsaSecp256k1Signature2019.js
+@@ -50,22 +50,22 @@ class EcdsaSecp256k1Signature2019 extends core_1.JwsLinkedDataSignature {
+         this.requiredKeyType = 'EcdsaSecp256k1VerificationKey2019';
+     }
+     async assertVerificationMethod(document) {
+-        if (!_includesCompatibleContext({ document: document })) {
+-            // For DID Documents, since keys do not have their own contexts,
+-            // the suite context is usually provided by the documentLoader logic
+-            throw new TypeError(`The '@context' of the verification method (key) MUST contain the context url "${this.contextUrl}".`);
+-        }
+-        if (!_isSecp256k12019Key(document)) {
+-            const verificationMethodType = jsonld.getValues(document, 'type')[0];
+-            throw new Error(`Unsupported verification method type '${verificationMethodType}'. Verification method type MUST be 'EcdsaSecp256k1VerificationKey2019'.`);
+-        }
+-        else if (_isSecp256k12019Key(document) && !_includesSecp256k12019Context(document)) {
+-            throw new Error(`For verification method type 'EcdsaSecp256k1VerificationKey2019' the '@context' MUST contain the context url "${exports.SECURITY_CONTEXT_SECP256k1_URL}".`);
+-        }
+-        // ensure verification method has not been revoked
+-        if (document.revoked !== undefined) {
+-            throw new Error('The verification method has been revoked.');
+-        }
++        // if (!_includesCompatibleContext({ document: document })) {
++        //     // For DID Documents, since keys do not have their own contexts,
++        //     // the suite context is usually provided by the documentLoader logic
++        //     throw new TypeError(`The '@context' of the verification method (key) MUST contain the context url "${this.contextUrl}".`);
++        // }
++        // if (!_isSecp256k12019Key(document)) {
++        //     const verificationMethodType = jsonld.getValues(document, 'type')[0];
++        //     throw new Error(`Unsupported verification method type '${verificationMethodType}'. Verification method type MUST be 'EcdsaSecp256k1VerificationKey2019'.`);
++        // }
++        // else if (_isSecp256k12019Key(document) && !_includesSecp256k12019Context(document)) {
++        //     throw new Error(`For verification method type 'EcdsaSecp256k1VerificationKey2019' the '@context' MUST contain the context url "${exports.SECURITY_CONTEXT_SECP256k1_URL}".`);
++        // }
++        // // ensure verification method has not been revoked
++        // if (document.revoked !== undefined) {
++        //     throw new Error('The verification method has been revoked.');
++        // }
+     }
+     async getVerificationMethod(options) {
+         const verificationMethod = await super.getVerificationMethod({
