@@ -62,10 +62,8 @@
         }
         
     ],
-    "family": "QA_Platform-admin_TASKDEFINITION",
     "executionRoleArn": "arn:aws:iam::058264212188:role/ecsTaskExecutionRole",
     "networkMode": "awsvpc",
-    "revision": 28,
     "volumes": [
         {
             "name": "AGENT-CONFIG",
