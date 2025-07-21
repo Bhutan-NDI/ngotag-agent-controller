@@ -8,11 +8,13 @@
             "memory": 2048,
             "portMappings": [
                 {
+                    "name": "platform-admin-8027-tcp",
                     "containerPort": 8027,
                     "hostPort": 8027,
                     "protocol": "tcp"
                 },
                 {
+                    "name": "platform-admin-9027-tcp",
                     "containerPort": 9027,
                     "hostPort": 9027,
                     "protocol": "tcp"
@@ -25,7 +27,12 @@
                 "--config",
                 "/config/685df587-7cf5-46cf-873c-502719ac5c35_Platform-admin.json"
             ],
-            "environment": [],
+            "environment": [
+                {
+                    "name": "AFJ_REST_LOG_LEVEL",
+                    "value": "1"
+                }       
+            ],
             "environmentFiles": [
                 {
                     "value": "arn:aws:s3:::env-qabucket/.env",
@@ -50,10 +57,29 @@
                     "awslogs-stream-prefix": "ecs"
                 },
                 "secretOptions": []
-            }
+            },
+            "systemControls": []
         }
         
     ],
+    "family": "QA_Platform-admin_TASKDEFINITION",
+    "executionRoleArn": "arn:aws:iam::058264212188:role/ecsTaskExecutionRole",
+    "networkMode": "awsvpc",
+    "revision": 28,
+    "volumes": [
+        {
+            "name": "AGENT-CONFIG",
+            "efsVolumeConfiguration": {
+            "fileSystemId": "fs-027dfce09a9626534",
+            "rootDirectory": "/",
+            "transitEncryption": "ENABLED",
+            "authorizationConfig": {
+            "accessPointId": "fsap-0d962feb103255a71",
+            "iam": "DISABLED"
+        }
+      }
+    }
+],
    
     "executionRoleArn": "arn:aws:iam::id:role/ecsTaskExecutionRole",
     "networkMode": "awsvpc",
