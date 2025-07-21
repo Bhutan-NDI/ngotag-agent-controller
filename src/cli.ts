@@ -46,6 +46,9 @@ interface Parsed {
   rpcUrl?: string
   fileServerUrl?: string
   fileServerToken?: string
+  chainId?: string
+  chainName?: string
+  registry?: string
   apiKey?: string
   updateJwtSecret?: boolean
 }
@@ -214,7 +217,10 @@ export async function runCliServer() {
     rpcUrl: parsed.rpcUrl,
     fileServerUrl: parsed.fileServerUrl,
     fileServerToken: parsed.fileServerToken,
+    chainId: parsed.chainId,
+    name: parsed.chainName,
+    registry: parsed.registry,
     apiKey: parsed['apiKey'],
     updateJwtSecret: parsed['updateJwtSecret'],
-  } as AriesRestConfig)
+  } as unknown as AriesRestConfig)
 }

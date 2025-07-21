@@ -7,7 +7,9 @@ import type { AskarModuleConfigStoreOptions } from '@credo-ts/askar'
 import type { InitConfig } from '@credo-ts/core'
 import type { IndyVdrPoolConfig } from '@credo-ts/indy-vdr'
 
+// eslint-disable-next-line import/no-extraneous-dependencies
 import { PolygonDidRegistrar, PolygonDidResolver, PolygonModule } from '@ayanworks/credo-polygon-w3c-module'
+import { EthereumDidRegistrar, EthereumDidResolver, EthereumModule } from '@bhutan-ndi/credo-ethr-module'
 import {
   AnonCredsDidCommCredentialFormatService,
   AnonCredsModule,
@@ -195,6 +197,7 @@ const getModules = (
         new KeyDidRegistrar(),
         new JwkDidRegistrar(),
         new PolygonDidRegistrar(),
+        new EthereumDidRegistrar(),
       ],
       resolvers: [
         new IndyVdrIndyDidResolver(),
@@ -202,6 +205,7 @@ const getModules = (
         new WebDidResolver(),
         new JwkDidResolver(),
         new PolygonDidResolver(),
+        new EthereumDidResolver(),
       ],
     }),
 
@@ -311,6 +315,18 @@ const getModules = (
 
         // NoAuth: return all certs from the static trust list URL
         return await getX509CertsByUrl()
+      },
+    }),
+    ethereum: new EthereumModule({
+      config: {
+        networks: [
+          {
+            name: 'sepolia',
+            chainId: 11155111,
+            rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/XUo--fMnn250sIOxldOhx1J9-rput18B',
+            registry: '0x485cFb9cdB84c0a5AfE69b75E2e79497Fc2256Fc',
+          },
+        ],
       },
     }),
   }
