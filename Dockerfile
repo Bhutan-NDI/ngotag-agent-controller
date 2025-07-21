@@ -1,5 +1,5 @@
 # Stage 1: Builder stage
-FROM node:18.19.0-bookworm AS builder
+FROM node:18.19.0 AS builder
 
 WORKDIR /app
 
@@ -19,7 +19,7 @@ RUN yarn global add patch-package
 RUN yarn build
 
 # Stage 2: Production stage
-FROM node:18.19.0-bookworm AS runtime
+FROM node:18.19.0-slim AS runtime
 
 WORKDIR /app
 
