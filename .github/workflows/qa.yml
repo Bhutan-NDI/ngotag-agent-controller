@@ -57,7 +57,6 @@ jobs:
             --push \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker image list
           
       - name: Set environment variables
