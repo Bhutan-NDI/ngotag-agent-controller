@@ -1,5 +1,9 @@
 {
     "family": "QA_Platform-admin_TASKDEFIITION",
+    "runtimePlatform": {
+        "operatingSystemFamily": "LINUX",
+        "cpuArchitecture": "ARM64"
+    },
     "containerDefinitions": [
         {
             "name": "Platform-admin",
