@@ -54,9 +54,10 @@ jobs:
         run: |
           docker buildx build \
             --platform linux/amd64 \
-            --push \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-            .
+            --output type=docker \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           
       - name: Set environment variables
         run: |
