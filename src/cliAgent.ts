@@ -229,11 +229,11 @@ const getModules = (
           },
         ],
       },
-      schemaManagerContractAddress: '0x8f3db5523620278C47b0cAf6353Ee32C5eDa95bF',
-      fileServerToken:
-        '<FILE-SERVER-TOKEN>',
-      rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/<API-KEY>',
+      schemaManagerContractAddress: '0x1930977f040844021f5C13b42AA8b296f0cb52DB',
       serverUrl: 'https://dev-schema.ngotag.com',
+      fileServerToken:
+            '<FILE-SERVER-TOKEN>',
+      rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/<API-KEY>',
     }),
   }
 }
