@@ -92,7 +92,7 @@ export class Ethereum extends Controller {
         schemaUrl: configJson.schemaFileServerURL + schemaResponse?.schemaId,
         did: schemaResponse?.did,
         schemaId: schemaResponse?.schemaId,
-        schemaTxnHash: schemaResponse?.resourceTxnHash,
+        // schemaTxnHash: schemaResponse?.resourceTxnHash,
       }
       return schemaPayload
     } catch (error) {
