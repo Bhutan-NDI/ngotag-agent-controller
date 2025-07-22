@@ -9,7 +9,7 @@ import type { IndyVdrPoolConfig } from '@credo-ts/indy-vdr'
 
 // eslint-disable-next-line import/no-extraneous-dependencies
 import { PolygonDidRegistrar, PolygonDidResolver, PolygonModule } from '@ayanworks/credo-polygon-w3c-module'
-import { EthereumDidRegistrar, EthereumDidResolver, EthereumModule } from '@bhutan-ndi/credo-ethr-module'
+import { EthereumDidRegistrar, EthereumDidResolver, EthereumModule } from '@bhutan-ndi/ndi-credo-ethr-module'
 import {
   AnonCredsDidCommCredentialFormatService,
   AnonCredsModule,
@@ -328,6 +328,11 @@ const getModules = (
           },
         ],
       },
+      schemaManagerContractAddress: '0x1930977f040844021f5C13b42AA8b296f0cb52DB',
+      serverUrl: 'https://dev-schema.ngotag.com',
+      fileServerToken:
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJBeWFuV29ya3MiLCJpZCI6ImU3NGFkMWQyLTY5NGYtNGI3Ny05Mjk2LWY5NTdhY2YxNGE4NSJ9.wNd6OUveLZlJoN5ys68lPOX8aSY1HwVJaMW4K36sY4k',
+      rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/XUo--fMnn250sIOxldOhx1J9-rput18B',
     }),
   }
 }
