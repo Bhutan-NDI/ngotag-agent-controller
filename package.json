@@ -41,7 +41,7 @@
   },
   "dependencies": {
     "@ayanworks/credo-polygon-w3c-module": "2.0.2",
-    "@bhutan-ndi/ndi-credo-ethr-module": "0.0.1-alpha",
+    "@ayanworks/credo-ethr-module": "0.0.1",
     "@sd-jwt/jwt-status-list": "0.19.0",
     "@credo-ts/anoncreds": "0.6.2",
     "@credo-ts/askar": "0.6.2",

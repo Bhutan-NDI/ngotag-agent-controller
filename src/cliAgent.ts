@@ -8,8 +8,8 @@ import type { InitConfig } from '@credo-ts/core'
 import type { IndyVdrPoolConfig } from '@credo-ts/indy-vdr'
 
 // eslint-disable-next-line import/no-extraneous-dependencies
+import { EthereumDidRegistrar, EthereumDidResolver, EthereumModule } from '@ayanworks/credo-ethr-module'
 import { PolygonDidRegistrar, PolygonDidResolver, PolygonModule } from '@ayanworks/credo-polygon-w3c-module'
-import { EthereumDidRegistrar, EthereumDidResolver, EthereumModule } from '@bhutan-ndi/ndi-credo-ethr-module'
 import {
   AnonCredsDidCommCredentialFormatService,
   AnonCredsModule,
