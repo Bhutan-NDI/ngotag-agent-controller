@@ -4,8 +4,8 @@ import type { TenantRecord } from '@credo-ts/tenants'
 import { Agent, JsonTransformer, injectable, RecordNotFoundError } from '@credo-ts/core'
 import { Request as Req } from 'express'
 import jwt from 'jsonwebtoken'
+import { connect, StringCodec } from 'nats'
 import { Body, Controller, Delete, Post, Route, Tags, Path, Security, Request, Res, TsoaResponse, Get } from 'tsoa'
-
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { CreateTenantOptions } from '../types'
@@ -138,5 +138,30 @@ export class MultiTenancyController extends Controller {
     }
     const token = jwt.sign({ role: AgentRole.RestTenantAgent, tenantId }, key)
     return token
+  }
+
+  @Security('apiKey')
+  @Post('/export/:tenantId')
+  public async exportTenant(
+    @Request() request: Req,
+    @Path('tenantId') tenantId: string,
+    @Body() body: { passKey: string },
+  ) {
+    try {
+      const NATS_URL = `${process.env.NATS_URL}`
+      const nc = await connect({ servers: NATS_URL })
+      const sc = StringCodec()
+      const walletConfig = request.agent.wallet.walletConfig
+      const msg = await nc.request(
+        'wallet.export_upload_s3',
+        sc.encode(JSON.stringify({ ...walletConfig, tenantId, passKey: body.passKey })),
+        {
+          timeout: 6000,
+        },
+      )
+      return { path: sc.decode(msg.data) }
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
   }
 }
