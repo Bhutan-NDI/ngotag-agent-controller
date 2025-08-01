@@ -74,6 +74,7 @@
     "express-rate-limit": "^7.5.0",
     "joi": "^17.13.3",
     "jsonwebtoken": "^9.0.2",
+    "nats": "2.28.2",
     "node-fetch": "2",
     "patch-package": "^8.0.0",
     "reflect-metadata": "^0.2.2",

@@ -9,7 +9,7 @@
     "paths": {
       "credo-controller/*": ["*/src"]
     },
-    "lib": ["ES2021.Promise"],
+    "lib": ["ES2021","DOM"],
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "types": ["jest", "node"],
