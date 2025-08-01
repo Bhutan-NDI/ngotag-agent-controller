@@ -7102,6 +7102,13 @@ napi-postinstall@^0.2.2:
   resolved "https://registry.yarnpkg.com/napi-postinstall/-/napi-postinstall-0.2.4.tgz#419697d0288cb524623e422f919624f22a5e4028"
   integrity sha512-ZEzHJwBhZ8qQSbknHqYcdtQVr8zUgGyM/q6h6qAyhtyVMNrSgDhrC4disf03dYW0e+czXyLnZINnCTEkWy0eJg==
 
+nats@2.28.2:
+  version "2.28.2"
+  resolved "https://registry.yarnpkg.com/nats/-/nats-2.28.2.tgz#b3ad20e1204fe917d87b7d3fbcd76985461fa490"
+  integrity sha512-02cvR8EPach+0BfVaQjPgsbPFn6uMjEQAuvXS2ppg8jiWEm2KYdfmeFmtshiU9b2+kFh3LSEKMEaIfRgk3K8tw==
+  dependencies:
+    nkeys.js "1.1.0"
+
 natural-compare@^1.4.0:
   version "1.4.0"
   resolved "https://registry.yarnpkg.com/natural-compare/-/natural-compare-1.4.0.tgz#4abebfeed7541f2c27acfb29bdbbd15c8d5ba4f7"
@@ -7140,6 +7147,13 @@ ngrok@^4.3.3:
     yaml "^1.10.0"
   optionalDependencies:
     hpagent "^0.1.2"
+
+nkeys.js@1.1.0:
+  version "1.1.0"
+  resolved "https://registry.yarnpkg.com/nkeys.js/-/nkeys.js-1.1.0.tgz#de83a9a13f396c5b6d7c412788f4b9f7f35d4c18"
+  integrity sha512-tB/a0shZL5UZWSwsoeyqfTszONTt4k2YS0tuQioMOD180+MbombYVgzDUYHlx+gejYK6rgf08n/2Df99WY0Sxg==
+  dependencies:
+    tweetnacl "1.0.3"
 
 node-addon-api@^2.0.0:
   version "2.0.2"
@@ -8593,6 +8607,11 @@ tsyringe@^4.6.0, tsyringe@^4.8.0:
   integrity sha512-axr3IdNuVIxnaK5XGEUFTu3YmAQ6lllgrvqfEoR16g/HGnYY/6We4oWENtAnzK6/LpJ2ur9PAb80RBt7/U4ugw==
   dependencies:
     tslib "^1.9.3"
+
+tweetnacl@1.0.3:
+  version "1.0.3"
+  resolved "https://registry.yarnpkg.com/tweetnacl/-/tweetnacl-1.0.3.tgz#ac0af71680458d8a6378d0d0d050ab1407d35596"
+  integrity sha512-6rt+RN7aOi1nGMyC4Xa5DdYiukl2UWCbcJft7YhxReBGQD7OAM8Pbxw6YMo4r2diNEA8FEmu32YOn9rhaiE5yw==
 
 type-check@^0.4.0, type-check@~0.4.0:
   version "0.4.0"
