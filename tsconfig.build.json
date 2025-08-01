@@ -6,6 +6,7 @@
     "sourceMap": true,
     "strict": true,
     "noEmitOnError": true,
+    "lib": ["ES2021","DOM"],
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
