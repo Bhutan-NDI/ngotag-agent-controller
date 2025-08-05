@@ -145,7 +145,7 @@ export class MultiTenancyController extends Controller {
   public async exportTenant(
     @Request() request: Req,
     @Path('tenantId') tenantId: string,
-    @Body() body: { passKey: string },
+    @Body() body: { passKey: string; walletID: string },
   ) {
     try {
       const NATS_URL = `${process.env.NATS_URL}`
@@ -154,7 +154,7 @@ export class MultiTenancyController extends Controller {
       const walletConfig = request.agent.wallet.walletConfig
       const msg = await nc.request(
         'wallet.export_upload_s3',
-        sc.encode(JSON.stringify({ ...walletConfig, tenantId, passKey: body.passKey })),
+        sc.encode(JSON.stringify({ ...walletConfig, tenantId, passKey: body.passKey, walletID: body.walletID })),
         {
           timeout: 6000,
         },
