@@ -9,6 +9,7 @@ import type {
 import type { Version } from '../examples'
 import type { RecipientKeyOption, SchemaMetadata } from '../types'
 import type { PolygonDidCreateOptions } from '@ayanworks/credo-polygon-w3c-module/build/dids'
+import type { EthereumDidCreateOptions } from '@bhutan-ndi/ethr-credo-module/build/dids'
 import type {
   AcceptProofRequestOptions,
   ConnectionRecordProps,
