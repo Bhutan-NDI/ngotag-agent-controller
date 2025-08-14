@@ -2,7 +2,6 @@ import type { RestAgentModules } from '../../cliAgent'
 import type { SchemaMetadata } from '../types'
 
 import { generateSecp256k1KeyPair } from '@ayanworks/credo-polygon-w3c-module'
-// import { DidOperation } from '@ayanworks/credo-polygon-w3c-module/build/ledger'
 import { Agent, CredoError } from '@credo-ts/core'
 import * as fs from 'fs'
 import { injectable } from 'tsyringe'
