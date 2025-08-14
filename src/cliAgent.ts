@@ -4,7 +4,8 @@ import type { IndyVdrPoolConfig } from '@credo-ts/indy-vdr'
 
 // eslint-disable-next-line import/no-extraneous-dependencies
 import { PolygonDidRegistrar, PolygonDidResolver, PolygonModule } from '@ayanworks/credo-polygon-w3c-module'
-import { EthereumDidRegistrar, EthereumDidResolver, EthereumModule } from '@bhutan-ndi/credo-ethr-module'
+// eslint-disable-next-line import/no-extraneous-dependencies
+import { EthereumDidRegistrar, EthereumDidResolver, EthereumModule } from '@bhutan-ndi/ethr-credo-module'
 import {
   AnonCredsCredentialFormatService,
   AnonCredsModule,
@@ -229,7 +230,7 @@ const getModules = (
           },
         ],
       },
-      schemaManagerContractAddress: '0x1930977f040844021f5C13b42AA8b296f0cb52DB',
+      schemaManagerContractAddress: '0xa95ACF3119791F65b2192267836df9A472785c15',
       serverUrl: 'https://dev-schema.ngotag.com',
       fileServerToken:
             '<FILE-SERVER-TOKEN>',
