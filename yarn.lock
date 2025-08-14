@@ -411,6 +411,20 @@
   resolved "https://registry.yarnpkg.com/@bcoe/v8-coverage/-/v8-coverage-0.2.3.tgz#75a2e8b51cb758a7553d6804a5932d7aace75c39"
   integrity sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==
 
+"@bhutan-ndi/ethr-credo-module@1.0.1":
+  version "1.0.1"
+  resolved "https://registry.yarnpkg.com/@bhutan-ndi/ethr-credo-module/-/ethr-credo-module-1.0.1.tgz#0e334acad5a768f3fa6665231d0301bef9ba7169"
+  integrity sha512-uoy0DdVh99zgDJzjmvQc+kU0J+hXMAzWfQUYAMGs2/XRZ9bLqQJ45h4i22c6JFhlDdXyfxAOacX6Yr2UVeUhGw==
+  dependencies:
+    "@credo-ts/askar" "0.5.3"
+    "@credo-ts/core" "0.5.3"
+    axios "^1.6.3"
+    did-resolver "^4.1.0"
+    ethers "^6.9.0"
+    ethr-did "^3.0.38"
+    ethr-did-resolver "^11.0.4"
+    keccak256 "^1.0.6"
+
 "@credo-ts/anoncreds@0.5.15":
   version "0.5.15"
   resolved "https://registry.yarnpkg.com/@credo-ts/anoncreds/-/anoncreds-0.5.15.tgz#38916d94670f480e4f3872deb548fccd4b7ba190"
