@@ -8,8 +8,9 @@ import type { InitConfig } from '@credo-ts/core'
 import type { IndyVdrPoolConfig } from '@credo-ts/indy-vdr'
 
 // eslint-disable-next-line import/no-extraneous-dependencies
-import { EthereumDidRegistrar, EthereumDidResolver, EthereumModule } from '@ayanworks/credo-ethr-module'
 import { PolygonDidRegistrar, PolygonDidResolver, PolygonModule } from '@ayanworks/credo-polygon-w3c-module'
+// eslint-disable-next-line import/no-extraneous-dependencies
+import { EthereumDidRegistrar, EthereumDidResolver, EthereumModule } from '@bhutan-ndi/ethr-credo-module'
 import {
   AnonCredsDidCommCredentialFormatService,
   AnonCredsModule,
@@ -273,6 +274,7 @@ const getModules = (
       rpcUrl: rpcUrl ? rpcUrl : (process.env.RPC_URL as string),
       serverUrl: fileServerUrl ? fileServerUrl : (process.env.SERVER_URL as string),
     }),
+
     sdJwtVc: new SdJwtVcModule(),
     openid4vc: new OpenId4VcModule({
       app: expressApp,
@@ -323,16 +325,15 @@ const getModules = (
           {
             name: 'sepolia',
             chainId: 11155111,
-            rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/XUo--fMnn250sIOxldOhx1J9-rput18B',
+            rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/API-KEY',
             registry: '0x485cFb9cdB84c0a5AfE69b75E2e79497Fc2256Fc',
           },
         ],
       },
-      schemaManagerContractAddress: '0x1930977f040844021f5C13b42AA8b296f0cb52DB',
+      schemaManagerContractAddress: '0xa95ACF3119791F65b2192267836df9A472785c15',
       serverUrl: 'https://dev-schema.ngotag.com',
-      fileServerToken:
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJBeWFuV29ya3MiLCJpZCI6ImU3NGFkMWQyLTY5NGYtNGI3Ny05Mjk2LWY5NTdhY2YxNGE4NSJ9.wNd6OUveLZlJoN5ys68lPOX8aSY1HwVJaMW4K36sY4k',
-      rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/XUo--fMnn250sIOxldOhx1J9-rput18B',
+      fileServerToken: 'ACCESS-TOKEN',
+      rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/API-KEY',
     }),
   }
 }
