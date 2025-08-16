@@ -182,3 +182,34 @@ So in this case when a connection event is triggered, it will be sent to: http:/
 The payload of the webhook contains the serialized record related to the topic of the event. For the `connections` topic this will be a `ConnectionRecord`, for the `credentials` topic it will be a `CredentialRecord`, and so on.
 
 For the WebSocket clients, the events are sent as JSON stringified objects
+
+## Fix node-gyp build error
+While the deployment and image build process might differ, one might encounter error related to a native module compilation, especially on `ARM64`-based linux distributions.
+
+This especially occurs when `node-gyp` is trying to compile `@2060.io/ref-napi`, and the linux distro does not have a build toolchain installed.
+
+### To fix this;
+Run the following commands as exactly in the sequence shown below:
+```
+# 1) Toolchain & headers for node-gyp and common native modules
+sudo dnf update -y
+sudo dnf groupinstall -y "Development Tools"
+sudo dnf install -y gcc-c++ make python3-devel libstdc++-devel \
+  openssl-devel pkgconf-pkg-config libffi-devel
+
+# 2) Rust toolchain — needed by (some) Hyperledger shared libs. This is RECOMMENDED.
+curl https://sh.rustup.rs -sSf | sh -s -- -y
+source "$HOME/.cargo/env"
+
+# 3) Ensure that NodeJS is active
+nvm use 18.19.0
+
+# 4) Clean previous failed builds
+cd to repo root
+yarn cache clean
+
+# 5) Reinstall and force native rebuilds
+# Yarn classic
+YARN_ENABLE_IMMUTABLE_INSTALLS=false \
+  yarn install --check-files
+```
