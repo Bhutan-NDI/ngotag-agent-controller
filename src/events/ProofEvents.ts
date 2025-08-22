@@ -15,7 +15,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
       await agent.modules.tenants.withTenantAgent(
         { tenantId: event.metadata.contextCorrelationId },
         async (tenantAgent) => {
-          const data = await tenantAgent.proofs.getFormatData(record.connectionId!)
+          const data = await tenantAgent.proofs.getFormatData(record.id)
           body.proofData = data
         }
       )
