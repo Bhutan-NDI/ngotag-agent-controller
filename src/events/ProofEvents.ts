@@ -1,3 +1,4 @@
+import type { RestMultiTenantAgentModules } from '../cliAgent'
 import type { ServerConfig } from '../utils/ServerConfig'
 import type { Agent, ProofStateChangedEvent } from '@credo-ts/core'
 
@@ -6,20 +7,21 @@ import { ProofEventTypes } from '@credo-ts/core'
 import { sendWebSocketEvent } from './WebSocketEvents'
 import { sendWebhookEvent } from './WebhookEvent'
 
-export const proofEvents = async (agent: Agent, config: ServerConfig) => {
+export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, config: ServerConfig) => {
   agent.events.on(ProofEventTypes.ProofStateChanged, async (event: ProofStateChangedEvent) => {
     const record = event.payload.proofRecord
     const body = { ...record.toJSON(), ...event.metadata } as { proofData?: any }
     if (event.metadata.contextCorrelationId !== 'default' && record.state === 'done') {
-      const tenantAgent = await agent.modules.tenants.getTenantAgent({
-        tenantId: event.metadata.contextCorrelationId,
-      })
-      const data = await tenantAgent.proofs.getFormatData(record.id)
-      body.proofData = data
+      await agent.modules.tenants.withTenantAgent(
+        { tenantId: event.metadata.contextCorrelationId },
+        async (tenantAgent) => {
+          const data = await tenantAgent.proofs.getFormatData(record.connectionId!)
+          body.proofData = data
+        }
+      )
     }
 
-    //Emit webhook for dedicated agent
-    if (event.metadata.contextCorrelationId === 'default') {
+    if (event.metadata.contextCorrelationId === 'default' && record.state === 'done') {
       const data = await agent.proofs.getFormatData(record.id)
       body.proofData = data
     }
