@@ -216,6 +216,10 @@ export interface AcceptInvitationConfig {
   mediatorId?: string
 }
 
+export interface AddConnectionType {
+  connectionType: string
+}
+
 export interface OutOfBandInvitationSchema {
   '@id'?: string
   '@type': string

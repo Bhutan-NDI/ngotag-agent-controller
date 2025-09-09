@@ -2,13 +2,14 @@ import type { ConnectionRecordProps } from '@credo-ts/core'
 
 import { DidExchangeState } from '@credo-ts/core'
 import { Request as Req } from 'express'
-import { Controller, Delete, Example, Get, Path, Post, Query, Route, Tags, Security, Request } from 'tsoa'
+import { Controller, Delete, Example, Get, Path, Post, Query, Route, Tags, Security, Request, Body } from 'tsoa'
 import { injectable } from 'tsyringe'
 
 import { SCOPES } from '../../../enums'
 import ErrorHandlingService from '../../../errorHandlingService'
 import { NotFoundError } from '../../../errors'
 import { ConnectionRecordExample, RecordId } from '../../examples'
+import { AddConnectionType } from 'src/controllers/types'
 
 @Tags('DIDComm - Connections')
 @Route()
@@ -139,6 +140,27 @@ export class ConnectionController extends Controller {
 
       const invitationJson = outOfBandRecord.outOfBandInvitation.toJSON({ useDidSovPrefixWhereAllowed: true })
       return invitationJson
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  @Example<ConnectionRecordProps>(ConnectionRecordExample)
+  @Post('/didcomm/connections/add-connection-type/:connectionId')
+  public async addConnectionType(
+    @Request() request: Req,
+    @Path('connectionId') connectionId: RecordId,
+    @Body() body: AddConnectionType
+  ) {
+    try {
+      let connectionRecord
+
+      const connection = await request.agent.connections.addConnectionType(connectionId, body.connectionType)
+
+      if (!connection) throw new NotFoundError(`connection with connection id "${connectionId}" not found.`)
+      connectionRecord = connection.toJSON()
+    
+      return connectionRecord
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }
