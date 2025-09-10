@@ -205,6 +205,7 @@ export interface ReceiveInvitationProps extends ReceiveOutOfBandInvitationProps 
 
 export interface ReceiveInvitationByUrlProps extends ReceiveOutOfBandInvitationProps {
   invitationUrl: string
+  connectionType?: string
 }
 
 export interface AcceptInvitationConfig {
