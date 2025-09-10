@@ -267,7 +267,7 @@ export class OutOfBandController extends Controller {
     @Request() request: Req,
     @Body() invitationRequest: ReceiveInvitationByUrlProps,
   ) {
-    const { invitationUrl, ...config } = invitationRequest
+    const { invitationUrl, connectionType, ...config } = invitationRequest
 
     try {
       // const linkSecretIds = await request.agent.modules.anoncreds.getLinkSecretIds()
@@ -278,9 +278,14 @@ export class OutOfBandController extends Controller {
         invitationUrl,
         config,
       )
+      let connectionRecordTemp = connectionRecord
+      if (connectionRecordTemp && connectionType) {
+        const connection = await request.agent.connections.addConnectionType(connectionRecordTemp.id, connectionType)
+        connectionRecordTemp = connection
+      }
       return {
         outOfBandRecord: outOfBandRecord.toJSON(),
-        connectionRecord: connectionRecord?.toJSON(),
+        connectionRecord: connectionRecordTemp?.toJSON(),
       }
     } catch (error) {
       throw ErrorHandlingService.handle(error)
