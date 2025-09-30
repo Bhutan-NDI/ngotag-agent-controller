@@ -16,7 +16,7 @@ import { Request as Req } from 'express'
 import { Body, Controller, Example, Get, Path, Post, Route, Tags, Security, Request } from 'tsoa'
 import { injectable } from 'tsyringe'
 
-import { DidMethod, Network, Role, SCOPES } from '../../enums'
+import { DidMethod, Network, NetworkTypes, Role, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { BadRequestError, InternalServerError } from '../../errors'
 import { AgentType } from '../../types'
@@ -487,9 +487,9 @@ export class DidController extends Controller {
     }
 
     const createDidResponse = await agent.dids.create<EthereumDidCreateOptions>({
-      method: 'ethr',
+      method: DidMethod.Ethereum,
       options: {
-        network: networkName,
+        network: networkName === NetworkTypes.Mainnet ? '' : networkName,
         endpoint,
       },
       secret: {
