@@ -197,7 +197,7 @@ export class MultiTenancyController extends Controller {
     const token = jwt.sign({ role: AgentRole.RestTenantAgent, tenantId }, key)
     return token
   }
-  
+
   @Security('apiKey')
   @Post('/credential/verify/:tenantId')
   public async verifyCredential(
@@ -223,22 +223,6 @@ export class MultiTenancyController extends Controller {
       return formattedCredential
     } catch (error) {
       return internalServerError(500, { message: `Something went wrong: ${error}` })
-    }
-  }
-
-  @Get('/checkCloudWalletExists/:tenantId')
-  public async getCloudWallet(@Request() request: Req, @Path('tenantId') tenantId: string) {
-    try {
-      const agent = request.agent as Agent<RestMultiTenantAgentModules>
-      const tenant = await agent.modules.tenants.getTenantById(tenantId)
-      if (tenant) {
-        return 'Tenant exists'
-      } else {
-        this.setStatus(404)
-        return 'Tenant does not exist'
-      }
-    } catch (error) {
-      throw ErrorHandlingService.handle(error)
     }
   }
 
