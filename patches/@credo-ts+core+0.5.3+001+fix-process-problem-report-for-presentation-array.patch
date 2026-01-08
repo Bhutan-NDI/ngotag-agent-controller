@@ -1,8 +1,13 @@
 diff --git a/node_modules/@credo-ts/core/build/modules/proofs/formats/dif-presentation-exchange/DifPresentationExchangeProofFormatService.js b/node_modules/@credo-ts/core/build/modules/proofs/formats/dif-presentation-exchange/DifPresentationExchangeProofFormatService.js
-index da56801..91fb291 100644
+index da56801..504e491 100644
 --- a/node_modules/@credo-ts/core/build/modules/proofs/formats/dif-presentation-exchange/DifPresentationExchangeProofFormatService.js
 +++ b/node_modules/@credo-ts/core/build/modules/proofs/formats/dif-presentation-exchange/DifPresentationExchangeProofFormatService.js
-@@ -141,6 +141,23 @@ class DifPresentationExchangeProofFormatService {
+@@ -136,11 +136,28 @@ class DifPresentationExchangeProofFormatService {
+         return presentation.dataIntegrityCryptosuites.includes(vc_1.ANONCREDS_DATA_INTEGRITY_CRYPTOSUITE);
+     }
+     async processPresentation(agentContext, { requestAttachment, attachment }) {
+-        var _a;
+         const ps = this.presentationExchangeService(agentContext);
          const w3cCredentialService = agentContext.dependencyManager.resolve(vc_1.W3cCredentialService);
          const request = requestAttachment.getDataAsJson();
          const presentation = attachment.getDataAsJson();
@@ -23,6 +28,7 @@ index da56801..91fb291 100644
 +        return this.verifySinglePresentation(agentContext, { request, presentation, ps, w3cCredentialService });
 +    }
 +    async verifySinglePresentation(agentContext, { request, presentation, ps, w3cCredentialService }) {
++        var _a;
          let parsedPresentation;
          let jsonPresentation;
          // TODO: we should probably move this transformation logic into the VC module, so it
