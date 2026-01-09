@@ -9,7 +9,7 @@ import { SCOPES } from '../../../enums'
 import ErrorHandlingService from '../../../errorHandlingService'
 import { NotFoundError } from '../../../errors'
 import { ConnectionRecordExample, RecordId } from '../../examples'
-import { AddConnectionType } from 'src/controllers/types'
+import { AddConnectionType } from '../../types'
 
 @Tags('DIDComm - Connections')
 @Route()

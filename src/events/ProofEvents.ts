@@ -7,12 +7,12 @@ import { ProofEventTypes } from '@credo-ts/core'
 import { sendWebSocketEvent } from './WebSocketEvents'
 import { sendWebhookEvent } from './WebhookEvent'
 
-export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, config: ServerConfig) => {
+export const proofEvents = async (agent: Agent, config: ServerConfig) => {
   agent.events.on(ProofEventTypes.ProofStateChanged, async (event: ProofStateChangedEvent) => {
     const record = event.payload.proofRecord
     const body = { ...record.toJSON(), ...event.metadata } as { proofData?: any }
     if (event.metadata.contextCorrelationId !== 'default' && record.state === 'done') {
-      await agent.modules.tenants.withTenantAgent(
+      await (agent as Agent<RestMultiTenantAgentModules>).modules.tenants.withTenantAgent(
         { tenantId: event.metadata.contextCorrelationId },
         async (tenantAgent) => {
           const data = await tenantAgent.proofs.getFormatData(record.id)

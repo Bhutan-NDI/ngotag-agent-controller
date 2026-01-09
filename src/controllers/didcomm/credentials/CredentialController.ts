@@ -39,7 +39,7 @@ import {
   selfAttestedJsonLdCredentialOptions,
 } from '../../types'
 import { OutOfBandController } from '../outofband/OutOfBandController'
-import { NotFoundError } from 'src/errors'
+import { NotFoundError } from '../../../errors'
 
 @Tags('DIDComm - Credentials')
 @Security('jwt', [SCOPES.TENANT_AGENT, SCOPES.DEDICATED_AGENT])
