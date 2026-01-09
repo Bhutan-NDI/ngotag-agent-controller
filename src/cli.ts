@@ -210,9 +210,6 @@ export async function runCliServer() {
     fileServerUrl: parsed.fileServerUrl,
     fileServerToken: parsed.fileServerToken,
     apiKey: parsed['apiKey'],
-    chainId: parsed['chainId'],
-    name: parsed['chainName'],
-    registry: parsed['registry'],
     updateJwtSecret: parsed['updateJwtSecret'],
   } as AriesRestConfig)
 }

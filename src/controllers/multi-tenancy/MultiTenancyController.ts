@@ -1,72 +1,29 @@
-import type { RestAgentModules, RestMultiTenantAgentModules } from '../../cliAgent'
-import type {
-  CustomW3cJsonLdSignCredentialOptions,
-  RecipientKeyOption,
-  SafeW3cJsonLdVerifyCredentialOptions,
-  SchemaMetadata,
-  SignDataOptions,
-} from '../types'
-import type { Version } from '../examples'
-import type { RecipientKeyOption, SchemaMetadata } from '../types'
-import type { PolygonDidCreateOptions } from '@ayanworks/credo-polygon-w3c-module/build/dids'
-import type { EthereumDidCreateOptions } from '@bhutan-ndi/ethr-credo-module/build/dids'
-import type {
-  AcceptProofRequestOptions,
-  ConnectionRecordProps,
-  CreateOutOfBandInvitationConfig,
-  CredentialProtocolVersionType,
-  KeyDidCreateOptions,
-  OutOfBandRecord,
-  PeerDidNumAlgo2CreateOptions,
-  ProofExchangeRecordProps,
-  ProofsProtocolVersionType,
-  Routing,
-} from '@credo-ts/core'
-import type { IndyVdrDidCreateOptions, IndyVdrDidCreateResult } from '@credo-ts/indy-vdr'
-import type { QuestionAnswerRecord, ValidResponse } from '@credo-ts/question-answer'
+import type { RestMultiTenantAgentModules } from '../../cliAgent'
 import type { TenantRecord } from '@credo-ts/tenants'
 
 import { Agent, JsonTransformer, injectable, RecordNotFoundError } from '@credo-ts/core'
 import { Request as Req } from 'express'
 import jwt from 'jsonwebtoken'
-import { Body, Controller, Delete, Post, Route, Tags, Path, Security, Request, Res, TsoaResponse, Get } from 'tsoa'
 import { connect, StringCodec } from 'nats'
-import { CredentialEnum, DidMethod, Network, Role } from '../../enums/enum'
-import { BCOVRIN_REGISTER_URL, INDICIO_NYM_URL } from '../../utils/util'
-import { W3cJsonLdVerifiableCredential } from '@credo-ts/core'
-import { SchemaId, CredentialDefinitionId, RecordId, ProofRecordExample, ConnectionRecordExample } from '../examples'
 import {
-  RequestProofOptions,
-  CreateOfferOptions,
   CreateTenantOptions,
-  DidCreate,
-  DidNymTransaction,
-  EndorserTransaction,
-  ReceiveInvitationByUrlProps,
-  ReceiveInvitationProps,
-  WriteTransaction,
-  CreateProofRequestOobOptions,
-  CreateOfferOobOptions,
-  SignDataOptions,
-  VerifyDataOptions,
 } from '../types'
-
+import { AgentRole, SCOPES } from '../../enums'
 import {
   Body,
   Controller,
   Delete,
   Get,
   Post,
-  Query,
   Res,
   Route,
   Tags,
   TsoaResponse,
   Path,
-  Example,
   Security,
+  Request,
 } from 'tsoa'
-import ErrorHandlingService from 'src/errorHandlingService'
+import ErrorHandlingService from '../../errorHandlingService'
 
 @Tags('MultiTenancy')
 @Security('jwt', [SCOPES.MULTITENANT_BASE_AGENT])
@@ -196,34 +153,6 @@ export class MultiTenancyController extends Controller {
     }
     const token = jwt.sign({ role: AgentRole.RestTenantAgent, tenantId }, key)
     return token
-  }
-
-  @Security('apiKey')
-  @Post('/credential/verify/:tenantId')
-  public async verifyCredential(
-    @Path('tenantId') tenantId: string,
-    @Body() credentialToVerify: SafeW3cJsonLdVerifyCredentialOptions | any,
-    @Res() internalServerError: TsoaResponse<500, { message: string }>
-  ) {
-    let formattedCredential
-    try {
-      await this.agent.modules.tenants.withTenantAgent({ tenantId }, async (tenantAgent) => {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { credential, ...credentialOptions } = credentialToVerify
-        const transformedCredential = JsonTransformer.fromJSON(
-          credentialToVerify?.credential,
-          W3cJsonLdVerifiableCredential
-        )
-        const signedCred = await tenantAgent.w3cCredentials.verifyCredential({
-          credential: transformedCredential,
-          ...credentialOptions,
-        })
-        formattedCredential = signedCred
-      })
-      return formattedCredential
-    } catch (error) {
-      return internalServerError(500, { message: `Something went wrong: ${error}` })
-    }
   }
 
   @Security('apiKey')
