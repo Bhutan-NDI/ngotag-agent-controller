@@ -6,15 +6,7 @@ import {  fetchMiddlewares, ExpressTemplateService } from '@tsoa/runtime';
 // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
 import { Polygon } from './../controllers/polygon/PolygonController';
 // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-import { EndorserTransactionController } from './../controllers/anoncreds/endorser-transaction/EndorserTransactionController';
-// WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-import { DidController } from './../controllers/did/DidController';
-// WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-import { SchemaController } from './../controllers/anoncreds/schema/SchemaController';
-// WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-import { CredentialDefinitionController } from './../controllers/anoncreds/cred-def/CredentialDefinitionController';
-// WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-import { AgentController } from './../controllers/agent/AgentController';
+import { Ethereum } from './../controllers/ethereum/EthereumController';
 // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
 import { QuestionAnswerController } from './../controllers/didcomm/question-answer/QuestionAnswerController';
 // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
@@ -26,9 +18,17 @@ import { CredentialController } from './../controllers/didcomm/credentials/Crede
 // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
 import { ConnectionController } from './../controllers/didcomm/connections/ConnectionController';
 // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-import { Ethereum } from './../controllers/ethereum/EthereumController';
-// WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
 import { BasicMessageController } from './../controllers/didcomm/basic-messages/BasicMessageController';
+// WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+import { DidController } from './../controllers/did/DidController';
+// WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+import { SchemaController } from './../controllers/anoncreds/schema/SchemaController';
+// WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+import { EndorserTransactionController } from './../controllers/anoncreds/endorser-transaction/EndorserTransactionController';
+// WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+import { CredentialDefinitionController } from './../controllers/anoncreds/cred-def/CredentialDefinitionController';
+// WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+import { AgentController } from './../controllers/agent/AgentController';
 // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
 import { MultiTenancyController } from './../controllers/multi-tenancy/MultiTenancyController';
 import { expressAuthentication } from './../authentication';
@@ -101,614 +101,6 @@ const models: TsoaRoute.Models = {
     "DidOperationOptions": {
         "dataType": "refAlias",
         "type": {"dataType":"union","subSchemas":[{"ref":"CreateDidOperationOptions"},{"ref":"UpdateDidOperationOptions"},{"ref":"DeactivateDidOperationOptions"},{"ref":"AddResourceDidOperationOptions"}],"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "EndorserTransaction": {
-        "dataType": "refObject",
-        "properties": {
-            "transaction": {"dataType":"union","subSchemas":[{"dataType":"string"},{"ref":"Record_string.unknown_"}],"required":true},
-            "endorserDid": {"dataType":"string","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DidRegistrationSecretOptions": {
-        "dataType": "refAlias",
-        "type": {"ref":"Record_string.unknown_","validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DidOperationStateWait": {
-        "dataType": "refObject",
-        "properties": {
-            "state": {"dataType":"enum","enums":["wait"],"required":true},
-            "did": {"dataType":"string"},
-            "secret": {"ref":"DidRegistrationSecretOptions"},
-            "didDocument": {"ref":"DidDocument"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DidOperationStateActionBase": {
-        "dataType": "refObject",
-        "properties": {
-            "state": {"dataType":"enum","enums":["action"],"required":true},
-            "action": {"dataType":"string","required":true},
-            "did": {"dataType":"string"},
-            "secret": {"ref":"DidRegistrationSecretOptions"},
-            "didDocument": {"ref":"DidDocument"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DidOperationStateFinished": {
-        "dataType": "refObject",
-        "properties": {
-            "state": {"dataType":"enum","enums":["finished"],"required":true},
-            "did": {"dataType":"string","required":true},
-            "secret": {"ref":"DidRegistrationSecretOptions"},
-            "didDocument": {"ref":"DidDocument","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DidOperationStateFailed": {
-        "dataType": "refObject",
-        "properties": {
-            "state": {"dataType":"enum","enums":["failed"],"required":true},
-            "did": {"dataType":"string"},
-            "secret": {"ref":"DidRegistrationSecretOptions"},
-            "didDocument": {"ref":"DidDocument"},
-            "reason": {"dataType":"string","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DidRegistrationMetadata": {
-        "dataType": "refAlias",
-        "type": {"ref":"Record_string.unknown_","validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DidResolutionMetadata": {
-        "dataType": "refObject",
-        "properties": {
-            "contentType": {"dataType":"string"},
-            "error": {"dataType":"union","subSchemas":[{"dataType":"enum","enums":["invalidDid"]},{"dataType":"enum","enums":["notFound"]},{"dataType":"enum","enums":["representationNotSupported"]},{"dataType":"enum","enums":["unsupportedDidMethod"]},{"dataType":"string"}]},
-            "message": {"dataType":"string"},
-            "servedFromCache": {"dataType":"boolean"},
-            "servedFromDidRecord": {"dataType":"boolean"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DidCreateResult_DidOperationStateActionBase_": {
-        "dataType": "refObject",
-        "properties": {
-            "jobId": {"dataType":"string"},
-            "didState": {"dataType":"union","subSchemas":[{"ref":"DidOperationStateWait"},{"ref":"DidOperationStateActionBase"},{"ref":"DidOperationStateFinished"},{"ref":"DidOperationStateFailed"}],"required":true},
-            "didRegistrationMetadata": {"ref":"DidRegistrationMetadata","required":true},
-            "didDocumentMetadata": {"ref":"DidResolutionMetadata","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DidNymTransaction": {
-        "dataType": "refObject",
-        "properties": {
-            "did": {"dataType":"string","required":true},
-            "nymRequest": {"dataType":"string","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "AnonCredsSchema": {
-        "dataType": "refObject",
-        "properties": {
-            "issuerId": {"dataType":"string","required":true},
-            "name": {"dataType":"string","required":true},
-            "version": {"dataType":"string","required":true},
-            "attrNames": {"dataType":"array","array":{"dataType":"string"},"required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "RegisterSchemaReturnStateWait": {
-        "dataType": "refObject",
-        "properties": {
-            "state": {"dataType":"enum","enums":["wait"],"required":true},
-            "schema": {"ref":"AnonCredsSchema"},
-            "schemaId": {"dataType":"string"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "RegisterSchemaReturnStateAction": {
-        "dataType": "refObject",
-        "properties": {
-            "state": {"dataType":"enum","enums":["action"],"required":true},
-            "action": {"dataType":"string","required":true},
-            "schema": {"ref":"AnonCredsSchema","required":true},
-            "schemaId": {"dataType":"string","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "RegisterSchemaReturnStateFinished": {
-        "dataType": "refObject",
-        "properties": {
-            "state": {"dataType":"enum","enums":["finished"],"required":true},
-            "schema": {"ref":"AnonCredsSchema","required":true},
-            "schemaId": {"dataType":"string","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "RegisterSchemaReturnStateFailed": {
-        "dataType": "refObject",
-        "properties": {
-            "state": {"dataType":"enum","enums":["failed"],"required":true},
-            "reason": {"dataType":"string","required":true},
-            "schema": {"ref":"AnonCredsSchema"},
-            "schemaId": {"dataType":"string"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "AnonCredsCredentialDefinition": {
-        "dataType": "refObject",
-        "properties": {
-            "issuerId": {"dataType":"string","required":true},
-            "schemaId": {"dataType":"string","required":true},
-            "type": {"dataType":"enum","enums":["CL"],"required":true},
-            "tag": {"dataType":"string","required":true},
-            "value": {"dataType":"nestedObjectLiteral","nestedProperties":{"revocation":{"dataType":"any"},"primary":{"ref":"Record_string.unknown_","required":true}},"required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "RegisterCredentialDefinitionReturnStateWait": {
-        "dataType": "refObject",
-        "properties": {
-            "state": {"dataType":"enum","enums":["wait"],"required":true},
-            "credentialDefinition": {"ref":"AnonCredsCredentialDefinition"},
-            "credentialDefinitionId": {"dataType":"string"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "RegisterCredentialDefinitionReturnStateAction": {
-        "dataType": "refObject",
-        "properties": {
-            "state": {"dataType":"enum","enums":["action"],"required":true},
-            "action": {"dataType":"string","required":true},
-            "credentialDefinitionId": {"dataType":"string","required":true},
-            "credentialDefinition": {"ref":"AnonCredsCredentialDefinition","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "RegisterCredentialDefinitionReturnStateFinished": {
-        "dataType": "refObject",
-        "properties": {
-            "state": {"dataType":"enum","enums":["finished"],"required":true},
-            "credentialDefinition": {"ref":"AnonCredsCredentialDefinition","required":true},
-            "credentialDefinitionId": {"dataType":"string","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "RegisterCredentialDefinitionReturnStateFailed": {
-        "dataType": "refObject",
-        "properties": {
-            "state": {"dataType":"enum","enums":["failed"],"required":true},
-            "reason": {"dataType":"string","required":true},
-            "credentialDefinition": {"ref":"AnonCredsCredentialDefinition"},
-            "credentialDefinitionId": {"dataType":"string"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "WriteTransaction": {
-        "dataType": "refObject",
-        "properties": {
-            "endorsedTransaction": {"dataType":"string","required":true},
-            "endorserDid": {"dataType":"string"},
-            "schema": {"dataType":"nestedObjectLiteral","nestedProperties":{"attributes":{"dataType":"array","array":{"dataType":"string"},"required":true},"version":{"dataType":"string","required":true},"name":{"dataType":"string","required":true},"issuerId":{"dataType":"string","required":true}}},
-            "credentialDefinition": {"dataType":"nestedObjectLiteral","nestedProperties":{"type":{"dataType":"string","required":true},"value":{"dataType":"any","required":true},"tag":{"dataType":"string","required":true},"issuerId":{"dataType":"string","required":true},"schemaId":{"dataType":"string","required":true}}},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DIDDocumentMetadata": {
-        "dataType": "refObject",
-        "properties": {
-            "created": {"dataType":"string"},
-            "updated": {"dataType":"string"},
-            "deactivated": {"dataType":"boolean"},
-            "versionId": {"dataType":"string"},
-            "nextUpdate": {"dataType":"string"},
-            "nextVersionId": {"dataType":"string"},
-            "equivalentId": {"dataType":"string"},
-            "canonicalId": {"dataType":"string"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "Did": {
-        "dataType": "refAlias",
-        "type": {"dataType":"string","validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "KeyType": {
-        "dataType": "refEnum",
-        "enums": ["ed25519","bls12381g1g2","bls12381g1","bls12381g2","x25519","p256","p384","p521","k256"],
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DidCreate": {
-        "dataType": "refObject",
-        "properties": {
-            "keyType": {"ref":"KeyType"},
-            "seed": {"dataType":"string"},
-            "domain": {"dataType":"string"},
-            "method": {"dataType":"string","required":true},
-            "network": {"dataType":"string"},
-            "did": {"dataType":"string"},
-            "role": {"dataType":"string"},
-            "endorserDid": {"dataType":"string"},
-            "didDocument": {"ref":"DidDocument"},
-            "privatekey": {"dataType":"string"},
-            "endpoint": {"dataType":"string"},
-            "isDefault": {"dataType":"boolean"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DidRecord": {
-        "dataType": "refAlias",
-        "type": {"ref":"Record_string.unknown_","validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "AnonCredsResolutionMetadata": {
-        "dataType": "refObject",
-        "properties": {
-            "error": {"dataType":"union","subSchemas":[{"dataType":"enum","enums":["invalid"]},{"dataType":"enum","enums":["notFound"]},{"dataType":"enum","enums":["unsupportedAnonCredsMethod"]},{"dataType":"string"}]},
-            "message": {"dataType":"string"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "CredoExtensible": {
-        "dataType": "refAlias",
-        "type": {"ref":"Record_string.unknown_","validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "GetSchemaReturn": {
-        "dataType": "refObject",
-        "properties": {
-            "schema": {"ref":"AnonCredsSchema"},
-            "schemaId": {"dataType":"string","required":true},
-            "resolutionMetadata": {"ref":"AnonCredsResolutionMetadata","required":true},
-            "schemaMetadata": {"ref":"CredoExtensible","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "SchemaId": {
-        "dataType": "refAlias",
-        "type": {"dataType":"string","validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "RegisterSchemaReturn": {
-        "dataType": "refObject",
-        "properties": {
-            "jobId": {"dataType":"string"},
-            "schemaState": {"dataType":"union","subSchemas":[{"ref":"RegisterSchemaReturnStateWait"},{"ref":"RegisterSchemaReturnStateAction"},{"ref":"RegisterSchemaReturnStateFinished"},{"ref":"RegisterSchemaReturnStateFailed"}],"required":true},
-            "schemaMetadata": {"ref":"CredoExtensible","required":true},
-            "registrationMetadata": {"ref":"CredoExtensible","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "CreateSchemaInput": {
-        "dataType": "refObject",
-        "properties": {
-            "issuerId": {"dataType":"string","required":true},
-            "name": {"dataType":"string","required":true},
-            "version": {"dataType":"string","required":true},
-            "attributes": {"dataType":"array","array":{"dataType":"string"},"required":true},
-            "endorse": {"dataType":"boolean"},
-            "endorserDid": {"dataType":"string"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "GetCredentialDefinitionReturn": {
-        "dataType": "refObject",
-        "properties": {
-            "credentialDefinition": {"ref":"AnonCredsCredentialDefinition"},
-            "credentialDefinitionId": {"dataType":"string","required":true},
-            "resolutionMetadata": {"ref":"AnonCredsResolutionMetadata","required":true},
-            "credentialDefinitionMetadata": {"ref":"CredoExtensible","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "CredentialDefinitionId": {
-        "dataType": "refAlias",
-        "type": {"dataType":"string","validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "RegisterCredentialDefinitionReturn": {
-        "dataType": "refObject",
-        "properties": {
-            "jobId": {"dataType":"string"},
-            "credentialDefinitionState": {"dataType":"union","subSchemas":[{"ref":"RegisterCredentialDefinitionReturnStateWait"},{"ref":"RegisterCredentialDefinitionReturnStateAction"},{"ref":"RegisterCredentialDefinitionReturnStateFinished"},{"ref":"RegisterCredentialDefinitionReturnStateFailed"}],"required":true},
-            "credentialDefinitionMetadata": {"ref":"CredoExtensible","required":true},
-            "registrationMetadata": {"ref":"CredoExtensible","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "AgentInfo": {
-        "dataType": "refObject",
-        "properties": {
-            "label": {"dataType":"string","required":true},
-            "endpoints": {"dataType":"array","array":{"dataType":"string"},"required":true},
-            "isInitialized": {"dataType":"boolean","required":true},
-            "publicDid": {"dataType":"void","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "AgentToken": {
-        "dataType": "refObject",
-        "properties": {
-            "token": {"dataType":"string","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "VerifyDataOptions": {
-        "dataType": "refAlias",
-        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"signature":{"dataType":"string","required":true},"publicKeyBase58":{"dataType":"string","required":true},"keyType":{"ref":"KeyType","required":true},"data":{"dataType":"string","required":true}},"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "W3cCredentialRecord": {
-        "dataType": "refAlias",
-        "type": {"ref":"Record_string.unknown_","validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "JsonObject": {
-        "dataType": "refObject",
-        "properties": {
-        },
-        "additionalProperties": {"ref":"JsonValue"},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "JsonValue": {
-        "dataType": "refAlias",
-        "type": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"double"},{"dataType":"boolean"},{"dataType":"enum","enums":[null]},{"ref":"JsonObject"},{"ref":"JsonArray"}],"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "JsonArray": {
-        "dataType": "refAlias",
-        "type": {"dataType":"array","array":{"dataType":"refAlias","ref":"JsonValue"},"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "W3cIssuer": {
-        "dataType": "refObject",
-        "properties": {
-            "id": {"dataType":"string","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "W3cCredentialSubject": {
-        "dataType": "refObject",
-        "properties": {
-            "id": {"dataType":"string"},
-            "claims": {"ref":"Record_string.unknown_"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "SingleOrArray_W3cCredentialSubject_": {
-        "dataType": "refAlias",
-        "type": {"dataType":"union","subSchemas":[{"ref":"W3cCredentialSubject"},{"dataType":"array","array":{"dataType":"refObject","ref":"W3cCredentialSubject"}}],"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "W3cCredentialSchema": {
-        "dataType": "refObject",
-        "properties": {
-            "id": {"dataType":"string","required":true},
-            "type": {"dataType":"string","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "SingleOrArray_W3cCredentialSchema_": {
-        "dataType": "refAlias",
-        "type": {"dataType":"union","subSchemas":[{"ref":"W3cCredentialSchema"},{"dataType":"array","array":{"dataType":"refObject","ref":"W3cCredentialSchema"}}],"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "W3cCredentialStatus": {
-        "dataType": "refObject",
-        "properties": {
-            "id": {"dataType":"string","required":true},
-            "type": {"dataType":"string","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "W3cCredential": {
-        "dataType": "refObject",
-        "properties": {
-            "context": {"dataType":"array","array":{"dataType":"union","subSchemas":[{"dataType":"string"},{"ref":"JsonObject"}]},"required":true},
-            "id": {"dataType":"string"},
-            "type": {"dataType":"array","array":{"dataType":"string"},"required":true},
-            "issuer": {"dataType":"union","subSchemas":[{"dataType":"string"},{"ref":"W3cIssuer"}],"required":true},
-            "issuanceDate": {"dataType":"string","required":true},
-            "expirationDate": {"dataType":"string"},
-            "credentialSubject": {"ref":"SingleOrArray_W3cCredentialSubject_","required":true},
-            "credentialSchema": {"ref":"SingleOrArray_W3cCredentialSchema_"},
-            "credentialStatus": {"ref":"W3cCredentialStatus"},
-            "prettyVc": {"dataType":"any"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "Pick_W3cJsonLdSignCredentialOptions.Exclude_keyofW3cJsonLdSignCredentialOptions.format__": {
-        "dataType": "refAlias",
-        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"credential":{"ref":"W3cCredential","required":true},"proofType":{"dataType":"string","required":true},"proofPurpose":{"dataType":"any"},"created":{"dataType":"string"},"verificationMethod":{"dataType":"string","required":true}},"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "Omit_W3cJsonLdSignCredentialOptions.format_": {
-        "dataType": "refAlias",
-        "type": {"ref":"Pick_W3cJsonLdSignCredentialOptions.Exclude_keyofW3cJsonLdSignCredentialOptions.format__","validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "CustomW3cJsonLdSignCredentialOptions": {
-        "dataType": "refAlias",
-        "type": {"dataType":"intersection","subSchemas":[{"ref":"Omit_W3cJsonLdSignCredentialOptions.format_"},{"dataType":"nestedObjectLiteral","nestedProperties":{},"additionalProperties":{"dataType":"any"}}],"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "SignDataOptions": {
-        "dataType": "refAlias",
-        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"method":{"dataType":"string"},"did":{"dataType":"string"},"publicKeyBase58":{"dataType":"string","required":true},"keyType":{"ref":"KeyType","required":true},"data":{"dataType":"string","required":true}},"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "Partial_W3cCredentialValidations_": {
-        "dataType": "refAlias",
-        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{},"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "Error": {
-        "dataType": "refObject",
-        "properties": {
-            "name": {"dataType":"string","required":true},
-            "message": {"dataType":"string","required":true},
-            "stack": {"dataType":"string"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "W3cVerifyResult_W3cCredentialValidations_": {
-        "dataType": "refObject",
-        "properties": {
-            "isValid": {"dataType":"boolean","required":true},
-            "validations": {"ref":"Partial_W3cCredentialValidations_","required":true},
-            "error": {"ref":"Error"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "W3cVerifyCredentialResult": {
-        "dataType": "refAlias",
-        "type": {"ref":"W3cVerifyResult_W3cCredentialValidations_","validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "Pick_LinkedDataProofOptions.Exclude_keyofLinkedDataProofOptions.cryptosuite__": {
-        "dataType": "refAlias",
-        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"proofPurpose":{"dataType":"string","required":true},"created":{"dataType":"string","required":true},"verificationMethod":{"dataType":"string","required":true},"type":{"dataType":"string","required":true},"domain":{"dataType":"string"},"challenge":{"dataType":"string"},"jws":{"dataType":"string"},"proofValue":{"dataType":"string"},"nonce":{"dataType":"string"}},"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "Omit_LinkedDataProofOptions.cryptosuite_": {
-        "dataType": "refAlias",
-        "type": {"ref":"Pick_LinkedDataProofOptions.Exclude_keyofLinkedDataProofOptions.cryptosuite__","validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DataIntegrityProofOptions": {
-        "dataType": "refObject",
-        "properties": {
-            "type": {"dataType":"string","required":true},
-            "cryptosuite": {"dataType":"string","required":true},
-            "verificationMethod": {"dataType":"string","required":true},
-            "proofPurpose": {"dataType":"string","required":true},
-            "domain": {"dataType":"string"},
-            "challenge": {"dataType":"string"},
-            "nonce": {"dataType":"string"},
-            "created": {"dataType":"string"},
-            "expires": {"dataType":"string"},
-            "proofValue": {"dataType":"string"},
-            "previousProof": {"dataType":"string"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "SingleOrArray_Omit_LinkedDataProofOptions.cryptosuite_-or-DataIntegrityProofOptions_": {
-        "dataType": "refAlias",
-        "type": {"dataType":"union","subSchemas":[{"dataType":"union","subSchemas":[{"ref":"Omit_LinkedDataProofOptions.cryptosuite_"},{"ref":"DataIntegrityProofOptions"}]},{"dataType":"array","array":{"dataType":"union","subSchemas":[{"ref":"Omit_LinkedDataProofOptions.cryptosuite_"},{"ref":"DataIntegrityProofOptions"}]}}],"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "LinkedDataProof": {
-        "dataType": "refObject",
-        "properties": {
-            "type": {"dataType":"string","required":true},
-            "proofPurpose": {"dataType":"string","required":true},
-            "verificationMethod": {"dataType":"string","required":true},
-            "created": {"dataType":"string","required":true},
-            "domain": {"dataType":"string"},
-            "challenge": {"dataType":"string"},
-            "jws": {"dataType":"string"},
-            "proofValue": {"dataType":"string"},
-            "nonce": {"dataType":"string"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DataIntegrityProof": {
-        "dataType": "refObject",
-        "properties": {
-            "type": {"dataType":"string","required":true},
-            "cryptosuite": {"dataType":"string","required":true},
-            "proofPurpose": {"dataType":"string","required":true},
-            "verificationMethod": {"dataType":"string","required":true},
-            "domain": {"dataType":"string"},
-            "challenge": {"dataType":"string"},
-            "nonce": {"dataType":"string"},
-            "created": {"dataType":"string"},
-            "expires": {"dataType":"string"},
-            "proofValue": {"dataType":"string"},
-            "previousProof": {"dataType":"string"},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "SingleOrArray_LinkedDataProof-or-DataIntegrityProof_": {
-        "dataType": "refAlias",
-        "type": {"dataType":"union","subSchemas":[{"dataType":"union","subSchemas":[{"ref":"LinkedDataProof"},{"ref":"DataIntegrityProof"}]},{"dataType":"array","array":{"dataType":"union","subSchemas":[{"ref":"LinkedDataProof"},{"ref":"DataIntegrityProof"}]}}],"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "W3cJsonLdVerifiableCredential": {
-        "dataType": "refObject",
-        "properties": {
-            "context": {"dataType":"array","array":{"dataType":"union","subSchemas":[{"dataType":"string"},{"ref":"JsonObject"}]},"required":true},
-            "id": {"dataType":"string"},
-            "type": {"dataType":"array","array":{"dataType":"string"},"required":true},
-            "issuer": {"dataType":"union","subSchemas":[{"dataType":"string"},{"ref":"W3cIssuer"}],"required":true},
-            "issuanceDate": {"dataType":"string","required":true},
-            "expirationDate": {"dataType":"string"},
-            "credentialSubject": {"ref":"SingleOrArray_W3cCredentialSubject_","required":true},
-            "credentialSchema": {"ref":"SingleOrArray_W3cCredentialSchema_"},
-            "credentialStatus": {"ref":"W3cCredentialStatus"},
-            "proof": {"ref":"SingleOrArray_LinkedDataProof-or-DataIntegrityProof_","required":true},
-        },
-        "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "ProofPurpose": {
-        "dataType": "refAlias",
-        "type": {"dataType":"any","validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "SafeW3cJsonLdVerifyCredentialOptions": {
-        "dataType": "refObject",
-        "properties": {
-            "credential": {"ref":"W3cJsonLdVerifiableCredential","required":true},
-            "verifyCredentialStatus": {"dataType":"boolean"},
-            "proofPurpose": {"ref":"ProofPurpose"},
-            "proof": {"ref":"SingleOrArray_Omit_LinkedDataProofOptions.cryptosuite_-or-DataIntegrityProofOptions_","required":true},
-        },
-        "additionalProperties": false,
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "QuestionAnswerRole": {
@@ -839,6 +231,24 @@ const models: TsoaRoute.Models = {
         "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"presentation":{"ref":"ProofFormatDataMessagePayload__40_LegacyIndyProofFormat-or-AnonCredsProofFormat-or-DifPresentationExchangeProofFormat_41_-Array.presentation_"},"request":{"ref":"ProofFormatDataMessagePayload__40_LegacyIndyProofFormat-or-AnonCredsProofFormat-or-DifPresentationExchangeProofFormat_41_-Array.request_"},"proposal":{"ref":"ProofFormatDataMessagePayload__40_LegacyIndyProofFormat-or-AnonCredsProofFormat-or-DifPresentationExchangeProofFormat_41_-Array.proposal_"}},"validators":{}},
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "ProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_V1ProofProtocol-or-V2ProofProtocol__40_LegacyIndyProofFormatService-or-AnonCredsProofFormatService-or-DifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_": {
+        "dataType": "refAlias",
+        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{},"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "GetCredentialsForProofRequestReturn__40_V1ProofProtocol-or-V2ProofProtocol__40_LegacyIndyProofFormatService-or-AnonCredsProofFormatService-or-DifPresentationExchangeProofFormatService_41_-Array__41_-Array_": {
+        "dataType": "refObject",
+        "properties": {
+            "proofFormats": {"ref":"ProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_V1ProofProtocol-or-V2ProofProtocol__40_LegacyIndyProofFormatService-or-AnonCredsProofFormatService-or-DifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "Record_string.string_": {
+        "dataType": "refAlias",
+        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{},"additionalProperties":{"dataType":"string"},"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "HandshakeProtocol": {
         "dataType": "refEnum",
         "enums": ["https://didcomm.org/didexchange/1.x","https://didcomm.org/connections/1.x"],
@@ -847,6 +257,11 @@ const models: TsoaRoute.Models = {
     "AgentMessage": {
         "dataType": "refAlias",
         "type": {"ref":"PlaintextMessage","validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "KeyType": {
+        "dataType": "refEnum",
+        "enums": ["ed25519","bls12381g1g2","bls12381g1","bls12381g2","x25519","p256","p384","p521","k256"],
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "Key": {
@@ -867,6 +282,23 @@ const models: TsoaRoute.Models = {
             "mediatorId": {"dataType":"string"},
         },
         "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "JsonValue": {
+        "dataType": "refAlias",
+        "type": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"double"},{"dataType":"boolean"},{"dataType":"enum","enums":[null]},{"ref":"JsonObject"},{"ref":"JsonArray"}],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "JsonObject": {
+        "dataType": "refObject",
+        "properties": {
+        },
+        "additionalProperties": {"ref":"JsonValue"},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "JsonArray": {
+        "dataType": "refAlias",
+        "type": {"dataType":"array","array":{"dataType":"refAlias","ref":"JsonValue"},"validators":{}},
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "Pick_JwsGeneralFormat.Exclude_keyofJwsGeneralFormat.payload__": {
@@ -1080,6 +512,27 @@ const models: TsoaRoute.Models = {
         "enums": ["issuer","holder"],
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "W3cCredentialRecord": {
+        "dataType": "refAlias",
+        "type": {"ref":"Record_string.unknown_","validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "SingleOrArray_JsonObject_": {
+        "dataType": "refAlias",
+        "type": {"dataType":"union","subSchemas":[{"ref":"JsonObject"},{"dataType":"array","array":{"dataType":"refObject","ref":"JsonObject"}}],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "selfAttestedJsonLdCredentialOptions": {
+        "dataType": "refObject",
+        "properties": {
+            "@context": {"dataType":"array","array":{"dataType":"union","subSchemas":[{"dataType":"string"},{"ref":"JsonObject"}]},"required":true},
+            "type": {"dataType":"array","array":{"dataType":"string"},"required":true},
+            "credentialSubject": {"ref":"SingleOrArray_JsonObject_","required":true},
+            "proofType": {"dataType":"string","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "CredentialExchangeRecord": {
         "dataType": "refAlias",
         "type": {"ref":"Record_string.unknown_","validators":{}},
@@ -1096,7 +549,6 @@ const models: TsoaRoute.Models = {
             "name": {"dataType":"string","required":true},
             "mimeType": {"dataType":"string"},
             "value": {"dataType":"string","required":true},
-            "address": {"dataType":"string"},
         },
         "additionalProperties": false,
     },
@@ -1131,11 +583,6 @@ const models: TsoaRoute.Models = {
             "id": {"dataType":"string","required":true},
         },
         "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "SingleOrArray_JsonObject_": {
-        "dataType": "refAlias",
-        "type": {"dataType":"union","subSchemas":[{"ref":"JsonObject"},{"dataType":"array","array":{"dataType":"refObject","ref":"JsonObject"}}],"validators":{}},
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "JsonCredential": {
@@ -1335,21 +782,6 @@ const models: TsoaRoute.Models = {
         "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"indy":{"ref":"AnonCredsAcceptRequestFormat"},"jsonld":{"ref":"JsonLdAcceptRequestFormat"},"anoncreds":{"ref":"AnonCredsAcceptRequestFormat"}},"validators":{}},
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "Record_content.string_": {
-        "dataType": "refAlias",
-        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"content":{"dataType":"string","required":true}},"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "SignDataOptions": {
-        "dataType": "refAlias",
-        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"publicKeyBase58":{"dataType":"string","required":true},"keyType":{"ref":"KeyType","required":true},"data":{"dataType":"string","required":true}},"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "VerifyDataOptions": {
-        "dataType": "refAlias",
-        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"signature":{"dataType":"string","required":true},"publicKeyBase58":{"dataType":"string","required":true},"keyType":{"ref":"KeyType","required":true},"data":{"dataType":"string","required":true}},"validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "AcceptCredentialRequestOptions": {
         "dataType": "refObject",
         "properties": {
@@ -1399,6 +831,14 @@ const models: TsoaRoute.Models = {
         "enums": ["start","invitation-sent","invitation-received","request-sent","request-received","response-sent","response-received","abandoned","completed"],
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "AddConnectionType": {
+        "dataType": "refObject",
+        "properties": {
+            "connectionType": {"dataType":"string","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "BasicMessageRecord": {
         "dataType": "refAlias",
         "type": {"ref":"Record_string.unknown_","validators":{}},
@@ -1407,6 +847,582 @@ const models: TsoaRoute.Models = {
     "Record_content.string_": {
         "dataType": "refAlias",
         "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"content":{"dataType":"string","required":true}},"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "DidResolutionMetadata": {
+        "dataType": "refObject",
+        "properties": {
+            "contentType": {"dataType":"string"},
+            "error": {"dataType":"union","subSchemas":[{"dataType":"enum","enums":["invalidDid"]},{"dataType":"enum","enums":["notFound"]},{"dataType":"enum","enums":["representationNotSupported"]},{"dataType":"enum","enums":["unsupportedDidMethod"]},{"dataType":"string"}]},
+            "message": {"dataType":"string"},
+            "servedFromCache": {"dataType":"boolean"},
+            "servedFromDidRecord": {"dataType":"boolean"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "DIDDocumentMetadata": {
+        "dataType": "refObject",
+        "properties": {
+            "created": {"dataType":"string"},
+            "updated": {"dataType":"string"},
+            "deactivated": {"dataType":"boolean"},
+            "versionId": {"dataType":"string"},
+            "nextUpdate": {"dataType":"string"},
+            "nextVersionId": {"dataType":"string"},
+            "equivalentId": {"dataType":"string"},
+            "canonicalId": {"dataType":"string"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "Did": {
+        "dataType": "refAlias",
+        "type": {"dataType":"string","validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "DidCreate": {
+        "dataType": "refObject",
+        "properties": {
+            "keyType": {"ref":"KeyType"},
+            "seed": {"dataType":"string"},
+            "domain": {"dataType":"string"},
+            "method": {"dataType":"string","required":true},
+            "network": {"dataType":"string"},
+            "did": {"dataType":"string"},
+            "role": {"dataType":"string"},
+            "endorserDid": {"dataType":"string"},
+            "didDocument": {"ref":"DidDocument"},
+            "privatekey": {"dataType":"string"},
+            "endpoint": {"dataType":"string"},
+            "isDefault": {"dataType":"boolean"},
+            "address": {"dataType":"string"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "AnonCredsSchema": {
+        "dataType": "refObject",
+        "properties": {
+            "issuerId": {"dataType":"string","required":true},
+            "name": {"dataType":"string","required":true},
+            "version": {"dataType":"string","required":true},
+            "attrNames": {"dataType":"array","array":{"dataType":"string"},"required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "AnonCredsResolutionMetadata": {
+        "dataType": "refObject",
+        "properties": {
+            "error": {"dataType":"union","subSchemas":[{"dataType":"enum","enums":["invalid"]},{"dataType":"enum","enums":["notFound"]},{"dataType":"enum","enums":["unsupportedAnonCredsMethod"]},{"dataType":"string"}]},
+            "message": {"dataType":"string"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "CredoExtensible": {
+        "dataType": "refAlias",
+        "type": {"ref":"Record_string.unknown_","validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "GetSchemaReturn": {
+        "dataType": "refObject",
+        "properties": {
+            "schema": {"ref":"AnonCredsSchema"},
+            "schemaId": {"dataType":"string","required":true},
+            "resolutionMetadata": {"ref":"AnonCredsResolutionMetadata","required":true},
+            "schemaMetadata": {"ref":"CredoExtensible","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "SchemaId": {
+        "dataType": "refAlias",
+        "type": {"dataType":"string","validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RegisterSchemaReturnStateWait": {
+        "dataType": "refObject",
+        "properties": {
+            "state": {"dataType":"enum","enums":["wait"],"required":true},
+            "schema": {"ref":"AnonCredsSchema"},
+            "schemaId": {"dataType":"string"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RegisterSchemaReturnStateAction": {
+        "dataType": "refObject",
+        "properties": {
+            "state": {"dataType":"enum","enums":["action"],"required":true},
+            "action": {"dataType":"string","required":true},
+            "schema": {"ref":"AnonCredsSchema","required":true},
+            "schemaId": {"dataType":"string","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RegisterSchemaReturnStateFinished": {
+        "dataType": "refObject",
+        "properties": {
+            "state": {"dataType":"enum","enums":["finished"],"required":true},
+            "schema": {"ref":"AnonCredsSchema","required":true},
+            "schemaId": {"dataType":"string","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RegisterSchemaReturnStateFailed": {
+        "dataType": "refObject",
+        "properties": {
+            "state": {"dataType":"enum","enums":["failed"],"required":true},
+            "reason": {"dataType":"string","required":true},
+            "schema": {"ref":"AnonCredsSchema"},
+            "schemaId": {"dataType":"string"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RegisterSchemaReturn": {
+        "dataType": "refObject",
+        "properties": {
+            "jobId": {"dataType":"string"},
+            "schemaState": {"dataType":"union","subSchemas":[{"ref":"RegisterSchemaReturnStateWait"},{"ref":"RegisterSchemaReturnStateAction"},{"ref":"RegisterSchemaReturnStateFinished"},{"ref":"RegisterSchemaReturnStateFailed"}],"required":true},
+            "schemaMetadata": {"ref":"CredoExtensible","required":true},
+            "registrationMetadata": {"ref":"CredoExtensible","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "CreateSchemaInput": {
+        "dataType": "refObject",
+        "properties": {
+            "issuerId": {"dataType":"string","required":true},
+            "name": {"dataType":"string","required":true},
+            "version": {"dataType":"string","required":true},
+            "attributes": {"dataType":"array","array":{"dataType":"string"},"required":true},
+            "endorse": {"dataType":"boolean"},
+            "endorserDid": {"dataType":"string"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "EndorserTransaction": {
+        "dataType": "refObject",
+        "properties": {
+            "transaction": {"dataType":"union","subSchemas":[{"dataType":"string"},{"ref":"Record_string.unknown_"}],"required":true},
+            "endorserDid": {"dataType":"string","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "DidRegistrationSecretOptions": {
+        "dataType": "refAlias",
+        "type": {"ref":"Record_string.unknown_","validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "DidOperationStateWait": {
+        "dataType": "refObject",
+        "properties": {
+            "state": {"dataType":"enum","enums":["wait"],"required":true},
+            "did": {"dataType":"string"},
+            "secret": {"ref":"DidRegistrationSecretOptions"},
+            "didDocument": {"ref":"DidDocument"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "DidOperationStateActionBase": {
+        "dataType": "refObject",
+        "properties": {
+            "state": {"dataType":"enum","enums":["action"],"required":true},
+            "action": {"dataType":"string","required":true},
+            "did": {"dataType":"string"},
+            "secret": {"ref":"DidRegistrationSecretOptions"},
+            "didDocument": {"ref":"DidDocument"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "DidOperationStateFinished": {
+        "dataType": "refObject",
+        "properties": {
+            "state": {"dataType":"enum","enums":["finished"],"required":true},
+            "did": {"dataType":"string","required":true},
+            "secret": {"ref":"DidRegistrationSecretOptions"},
+            "didDocument": {"ref":"DidDocument","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "DidOperationStateFailed": {
+        "dataType": "refObject",
+        "properties": {
+            "state": {"dataType":"enum","enums":["failed"],"required":true},
+            "did": {"dataType":"string"},
+            "secret": {"ref":"DidRegistrationSecretOptions"},
+            "didDocument": {"ref":"DidDocument"},
+            "reason": {"dataType":"string","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "DidRegistrationMetadata": {
+        "dataType": "refAlias",
+        "type": {"ref":"Record_string.unknown_","validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "DidCreateResult_DidOperationStateActionBase_": {
+        "dataType": "refObject",
+        "properties": {
+            "jobId": {"dataType":"string"},
+            "didState": {"dataType":"union","subSchemas":[{"ref":"DidOperationStateWait"},{"ref":"DidOperationStateActionBase"},{"ref":"DidOperationStateFinished"},{"ref":"DidOperationStateFailed"}],"required":true},
+            "didRegistrationMetadata": {"ref":"DidRegistrationMetadata","required":true},
+            "didDocumentMetadata": {"ref":"DidResolutionMetadata","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "DidNymTransaction": {
+        "dataType": "refObject",
+        "properties": {
+            "did": {"dataType":"string","required":true},
+            "nymRequest": {"dataType":"string","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "AnonCredsCredentialDefinition": {
+        "dataType": "refObject",
+        "properties": {
+            "issuerId": {"dataType":"string","required":true},
+            "schemaId": {"dataType":"string","required":true},
+            "type": {"dataType":"enum","enums":["CL"],"required":true},
+            "tag": {"dataType":"string","required":true},
+            "value": {"dataType":"nestedObjectLiteral","nestedProperties":{"revocation":{"dataType":"any"},"primary":{"ref":"Record_string.unknown_","required":true}},"required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RegisterCredentialDefinitionReturnStateWait": {
+        "dataType": "refObject",
+        "properties": {
+            "state": {"dataType":"enum","enums":["wait"],"required":true},
+            "credentialDefinition": {"ref":"AnonCredsCredentialDefinition"},
+            "credentialDefinitionId": {"dataType":"string"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RegisterCredentialDefinitionReturnStateAction": {
+        "dataType": "refObject",
+        "properties": {
+            "state": {"dataType":"enum","enums":["action"],"required":true},
+            "action": {"dataType":"string","required":true},
+            "credentialDefinitionId": {"dataType":"string","required":true},
+            "credentialDefinition": {"ref":"AnonCredsCredentialDefinition","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RegisterCredentialDefinitionReturnStateFinished": {
+        "dataType": "refObject",
+        "properties": {
+            "state": {"dataType":"enum","enums":["finished"],"required":true},
+            "credentialDefinition": {"ref":"AnonCredsCredentialDefinition","required":true},
+            "credentialDefinitionId": {"dataType":"string","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RegisterCredentialDefinitionReturnStateFailed": {
+        "dataType": "refObject",
+        "properties": {
+            "state": {"dataType":"enum","enums":["failed"],"required":true},
+            "reason": {"dataType":"string","required":true},
+            "credentialDefinition": {"ref":"AnonCredsCredentialDefinition"},
+            "credentialDefinitionId": {"dataType":"string"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "WriteTransaction": {
+        "dataType": "refObject",
+        "properties": {
+            "endorsedTransaction": {"dataType":"string","required":true},
+            "endorserDid": {"dataType":"string"},
+            "schema": {"dataType":"nestedObjectLiteral","nestedProperties":{"attributes":{"dataType":"array","array":{"dataType":"string"},"required":true},"version":{"dataType":"string","required":true},"name":{"dataType":"string","required":true},"issuerId":{"dataType":"string","required":true}}},
+            "credentialDefinition": {"dataType":"nestedObjectLiteral","nestedProperties":{"type":{"dataType":"string","required":true},"value":{"dataType":"any","required":true},"tag":{"dataType":"string","required":true},"issuerId":{"dataType":"string","required":true},"schemaId":{"dataType":"string","required":true}}},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "GetCredentialDefinitionReturn": {
+        "dataType": "refObject",
+        "properties": {
+            "credentialDefinition": {"ref":"AnonCredsCredentialDefinition"},
+            "credentialDefinitionId": {"dataType":"string","required":true},
+            "resolutionMetadata": {"ref":"AnonCredsResolutionMetadata","required":true},
+            "credentialDefinitionMetadata": {"ref":"CredoExtensible","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "CredentialDefinitionId": {
+        "dataType": "refAlias",
+        "type": {"dataType":"string","validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RegisterCredentialDefinitionReturn": {
+        "dataType": "refObject",
+        "properties": {
+            "jobId": {"dataType":"string"},
+            "credentialDefinitionState": {"dataType":"union","subSchemas":[{"ref":"RegisterCredentialDefinitionReturnStateWait"},{"ref":"RegisterCredentialDefinitionReturnStateAction"},{"ref":"RegisterCredentialDefinitionReturnStateFinished"},{"ref":"RegisterCredentialDefinitionReturnStateFailed"}],"required":true},
+            "credentialDefinitionMetadata": {"ref":"CredoExtensible","required":true},
+            "registrationMetadata": {"ref":"CredoExtensible","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "AgentInfo": {
+        "dataType": "refObject",
+        "properties": {
+            "label": {"dataType":"string","required":true},
+            "endpoints": {"dataType":"array","array":{"dataType":"string"},"required":true},
+            "isInitialized": {"dataType":"boolean","required":true},
+            "publicDid": {"dataType":"void","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "AgentToken": {
+        "dataType": "refObject",
+        "properties": {
+            "token": {"dataType":"string","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "VerifyDataOptions": {
+        "dataType": "refAlias",
+        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"method":{"dataType":"string"},"did":{"dataType":"string"},"signature":{"dataType":"string","required":true},"publicKeyBase58":{"dataType":"string","required":true},"keyType":{"ref":"KeyType","required":true},"data":{"dataType":"string","required":true}},"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "W3cIssuer": {
+        "dataType": "refObject",
+        "properties": {
+            "id": {"dataType":"string","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "W3cCredentialSubject": {
+        "dataType": "refObject",
+        "properties": {
+            "id": {"dataType":"string"},
+            "claims": {"ref":"Record_string.unknown_"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "SingleOrArray_W3cCredentialSubject_": {
+        "dataType": "refAlias",
+        "type": {"dataType":"union","subSchemas":[{"ref":"W3cCredentialSubject"},{"dataType":"array","array":{"dataType":"refObject","ref":"W3cCredentialSubject"}}],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "W3cCredentialSchema": {
+        "dataType": "refObject",
+        "properties": {
+            "id": {"dataType":"string","required":true},
+            "type": {"dataType":"string","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "SingleOrArray_W3cCredentialSchema_": {
+        "dataType": "refAlias",
+        "type": {"dataType":"union","subSchemas":[{"ref":"W3cCredentialSchema"},{"dataType":"array","array":{"dataType":"refObject","ref":"W3cCredentialSchema"}}],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "W3cCredentialStatus": {
+        "dataType": "refObject",
+        "properties": {
+            "id": {"dataType":"string","required":true},
+            "type": {"dataType":"string","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "W3cCredential": {
+        "dataType": "refObject",
+        "properties": {
+            "context": {"dataType":"array","array":{"dataType":"union","subSchemas":[{"dataType":"string"},{"ref":"JsonObject"}]},"required":true},
+            "id": {"dataType":"string"},
+            "type": {"dataType":"array","array":{"dataType":"string"},"required":true},
+            "issuer": {"dataType":"union","subSchemas":[{"dataType":"string"},{"ref":"W3cIssuer"}],"required":true},
+            "issuanceDate": {"dataType":"string","required":true},
+            "expirationDate": {"dataType":"string"},
+            "credentialSubject": {"ref":"SingleOrArray_W3cCredentialSubject_","required":true},
+            "credentialSchema": {"ref":"SingleOrArray_W3cCredentialSchema_"},
+            "credentialStatus": {"ref":"W3cCredentialStatus"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "Pick_W3cJsonLdSignCredentialOptions.Exclude_keyofW3cJsonLdSignCredentialOptions.format__": {
+        "dataType": "refAlias",
+        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"credential":{"ref":"W3cCredential","required":true},"proofType":{"dataType":"string","required":true},"proofPurpose":{"dataType":"any"},"created":{"dataType":"string"},"verificationMethod":{"dataType":"string","required":true}},"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "Omit_W3cJsonLdSignCredentialOptions.format_": {
+        "dataType": "refAlias",
+        "type": {"ref":"Pick_W3cJsonLdSignCredentialOptions.Exclude_keyofW3cJsonLdSignCredentialOptions.format__","validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "CustomW3cJsonLdSignCredentialOptions": {
+        "dataType": "refAlias",
+        "type": {"dataType":"intersection","subSchemas":[{"ref":"Omit_W3cJsonLdSignCredentialOptions.format_"},{"dataType":"nestedObjectLiteral","nestedProperties":{},"additionalProperties":{"dataType":"any"}}],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "SignDataOptions": {
+        "dataType": "refAlias",
+        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"method":{"dataType":"string"},"did":{"dataType":"string"},"publicKeyBase58":{"dataType":"string","required":true},"keyType":{"ref":"KeyType","required":true},"data":{"dataType":"string","required":true}},"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "Partial_W3cCredentialValidations_": {
+        "dataType": "refAlias",
+        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{},"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "Error": {
+        "dataType": "refObject",
+        "properties": {
+            "name": {"dataType":"string","required":true},
+            "message": {"dataType":"string","required":true},
+            "stack": {"dataType":"string"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "W3cVerifyResult_W3cCredentialValidations_": {
+        "dataType": "refObject",
+        "properties": {
+            "isValid": {"dataType":"boolean","required":true},
+            "validations": {"ref":"Partial_W3cCredentialValidations_","required":true},
+            "error": {"ref":"Error"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "W3cVerifyCredentialResult": {
+        "dataType": "refAlias",
+        "type": {"ref":"W3cVerifyResult_W3cCredentialValidations_","validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "Pick_LinkedDataProofOptions.Exclude_keyofLinkedDataProofOptions.cryptosuite__": {
+        "dataType": "refAlias",
+        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"proofPurpose":{"dataType":"string","required":true},"created":{"dataType":"string","required":true},"verificationMethod":{"dataType":"string","required":true},"type":{"dataType":"string","required":true},"domain":{"dataType":"string"},"challenge":{"dataType":"string"},"jws":{"dataType":"string"},"proofValue":{"dataType":"string"},"nonce":{"dataType":"string"}},"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "Omit_LinkedDataProofOptions.cryptosuite_": {
+        "dataType": "refAlias",
+        "type": {"ref":"Pick_LinkedDataProofOptions.Exclude_keyofLinkedDataProofOptions.cryptosuite__","validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "DataIntegrityProofOptions": {
+        "dataType": "refObject",
+        "properties": {
+            "type": {"dataType":"string","required":true},
+            "cryptosuite": {"dataType":"string","required":true},
+            "verificationMethod": {"dataType":"string","required":true},
+            "proofPurpose": {"dataType":"string","required":true},
+            "domain": {"dataType":"string"},
+            "challenge": {"dataType":"string"},
+            "nonce": {"dataType":"string"},
+            "created": {"dataType":"string"},
+            "expires": {"dataType":"string"},
+            "proofValue": {"dataType":"string"},
+            "previousProof": {"dataType":"string"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "SingleOrArray_Omit_LinkedDataProofOptions.cryptosuite_-or-DataIntegrityProofOptions_": {
+        "dataType": "refAlias",
+        "type": {"dataType":"union","subSchemas":[{"dataType":"union","subSchemas":[{"ref":"Omit_LinkedDataProofOptions.cryptosuite_"},{"ref":"DataIntegrityProofOptions"}]},{"dataType":"array","array":{"dataType":"union","subSchemas":[{"ref":"Omit_LinkedDataProofOptions.cryptosuite_"},{"ref":"DataIntegrityProofOptions"}]}}],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "LinkedDataProof": {
+        "dataType": "refObject",
+        "properties": {
+            "type": {"dataType":"string","required":true},
+            "proofPurpose": {"dataType":"string","required":true},
+            "verificationMethod": {"dataType":"string","required":true},
+            "created": {"dataType":"string","required":true},
+            "domain": {"dataType":"string"},
+            "challenge": {"dataType":"string"},
+            "jws": {"dataType":"string"},
+            "proofValue": {"dataType":"string"},
+            "nonce": {"dataType":"string"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "DataIntegrityProof": {
+        "dataType": "refObject",
+        "properties": {
+            "type": {"dataType":"string","required":true},
+            "cryptosuite": {"dataType":"string","required":true},
+            "proofPurpose": {"dataType":"string","required":true},
+            "verificationMethod": {"dataType":"string","required":true},
+            "domain": {"dataType":"string"},
+            "challenge": {"dataType":"string"},
+            "nonce": {"dataType":"string"},
+            "created": {"dataType":"string"},
+            "expires": {"dataType":"string"},
+            "proofValue": {"dataType":"string"},
+            "previousProof": {"dataType":"string"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "SingleOrArray_LinkedDataProof-or-DataIntegrityProof_": {
+        "dataType": "refAlias",
+        "type": {"dataType":"union","subSchemas":[{"dataType":"union","subSchemas":[{"ref":"LinkedDataProof"},{"ref":"DataIntegrityProof"}]},{"dataType":"array","array":{"dataType":"union","subSchemas":[{"ref":"LinkedDataProof"},{"ref":"DataIntegrityProof"}]}}],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "W3cJsonLdVerifiableCredential": {
+        "dataType": "refObject",
+        "properties": {
+            "context": {"dataType":"array","array":{"dataType":"union","subSchemas":[{"dataType":"string"},{"ref":"JsonObject"}]},"required":true},
+            "id": {"dataType":"string"},
+            "type": {"dataType":"array","array":{"dataType":"string"},"required":true},
+            "issuer": {"dataType":"union","subSchemas":[{"dataType":"string"},{"ref":"W3cIssuer"}],"required":true},
+            "issuanceDate": {"dataType":"string","required":true},
+            "expirationDate": {"dataType":"string"},
+            "credentialSubject": {"ref":"SingleOrArray_W3cCredentialSubject_","required":true},
+            "credentialSchema": {"ref":"SingleOrArray_W3cCredentialSchema_"},
+            "credentialStatus": {"ref":"W3cCredentialStatus"},
+            "proof": {"ref":"SingleOrArray_LinkedDataProof-or-DataIntegrityProof_","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "ProofPurpose": {
+        "dataType": "refAlias",
+        "type": {"dataType":"any","validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "SafeW3cJsonLdVerifyCredentialOptions": {
+        "dataType": "refObject",
+        "properties": {
+            "credential": {"ref":"W3cJsonLdVerifiableCredential","required":true},
+            "verifyCredentialStatus": {"dataType":"boolean"},
+            "proofPurpose": {"ref":"ProofPurpose"},
+            "proof": {"ref":"SingleOrArray_Omit_LinkedDataProofOptions.cryptosuite_-or-DataIntegrityProofOptions_","required":true},
+        },
+        "additionalProperties": false,
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "Pick_InitConfig.label-or-connectionImageUrl_": {
@@ -1629,32 +1645,31 @@ export function RegisterRoutes(app: Router) {
             }
         });
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsEndorserTransactionController_endorserTransaction: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-                endorserTransaction: {"in":"body","name":"endorserTransaction","required":true,"ref":"EndorserTransaction"},
+        const argsEthereum_createKeyPair: Record<string, TsoaRoute.ParameterSchema> = {
+                internalServerError: {"in":"res","name":"500","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"message":{"dataType":"string","required":true}}},
         };
-        app.post('/anoncreds/transactions/endorse',
-            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
-            ...(fetchMiddlewares<RequestHandler>(EndorserTransactionController)),
-            ...(fetchMiddlewares<RequestHandler>(EndorserTransactionController.prototype.endorserTransaction)),
+        app.post('/ethereum/create-keys',
+            authenticateMiddleware([{"apiKey":[]}]),
+            ...(fetchMiddlewares<RequestHandler>(Ethereum)),
+            ...(fetchMiddlewares<RequestHandler>(Ethereum.prototype.createKeyPair)),
 
-            async function EndorserTransactionController_endorserTransaction(request: ExRequest, response: ExResponse, next: any) {
+            async function Ethereum_createKeyPair(request: ExRequest, response: ExResponse, next: any) {
 
             // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
 
             let validatedArgs: any[] = [];
             try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsEndorserTransactionController_endorserTransaction, request, response });
+                validatedArgs = templateService.getValidatedArgs({ args: argsEthereum_createKeyPair, request, response });
 
                 const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
 
-                const controller: any = await container.get<EndorserTransactionController>(EndorserTransactionController);
+                const controller: any = await container.get<Ethereum>(Ethereum);
                 if (typeof controller['setStatus'] === 'function') {
                 controller.setStatus(undefined);
                 }
 
               await templateService.apiHandler({
-                methodName: 'endorserTransaction',
+                methodName: 'createKeyPair',
                 controller,
                 response,
                 next,
@@ -1666,247 +1681,27 @@ export function RegisterRoutes(app: Router) {
             }
         });
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsEndorserTransactionController_didNymTransaction: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-                didNymTransaction: {"in":"body","name":"didNymTransaction","required":true,"ref":"DidNymTransaction"},
+        const argsEthereum_createSchema: Record<string, TsoaRoute.ParameterSchema> = {
+                createSchemaRequest: {"in":"body","name":"createSchemaRequest","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"schema":{"dataType":"nestedObjectLiteral","nestedProperties":{},"additionalProperties":{"dataType":"any"},"required":true},"schemaName":{"dataType":"string","required":true},"did":{"dataType":"string","required":true}}},
+                internalServerError: {"in":"res","name":"500","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"message":{"dataType":"string","required":true}}},
+                badRequestError: {"in":"res","name":"400","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true}}},
         };
-        app.post('/anoncreds/transactions/set-endorser-role',
-            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
-            ...(fetchMiddlewares<RequestHandler>(EndorserTransactionController)),
-            ...(fetchMiddlewares<RequestHandler>(EndorserTransactionController.prototype.didNymTransaction)),
+        app.post('/ethereum/create-schema',
+            authenticateMiddleware([{"apiKey":[]}]),
+            ...(fetchMiddlewares<RequestHandler>(Ethereum)),
+            ...(fetchMiddlewares<RequestHandler>(Ethereum.prototype.createSchema)),
 
-            async function EndorserTransactionController_didNymTransaction(request: ExRequest, response: ExResponse, next: any) {
+            async function Ethereum_createSchema(request: ExRequest, response: ExResponse, next: any) {
 
             // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
 
             let validatedArgs: any[] = [];
             try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsEndorserTransactionController_didNymTransaction, request, response });
+                validatedArgs = templateService.getValidatedArgs({ args: argsEthereum_createSchema, request, response });
 
                 const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
 
-                const controller: any = await container.get<EndorserTransactionController>(EndorserTransactionController);
-                if (typeof controller['setStatus'] === 'function') {
-                controller.setStatus(undefined);
-                }
-
-              await templateService.apiHandler({
-                methodName: 'didNymTransaction',
-                controller,
-                response,
-                next,
-                validatedArgs,
-                successStatus: undefined,
-              });
-            } catch (err) {
-                return next(err);
-            }
-        });
-        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsEndorserTransactionController_writeSchemaAndCredDefOnLedger: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-                writeTransaction: {"in":"body","name":"writeTransaction","required":true,"ref":"WriteTransaction"},
-        };
-        app.post('/anoncreds/transactions/write',
-            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
-            ...(fetchMiddlewares<RequestHandler>(EndorserTransactionController)),
-            ...(fetchMiddlewares<RequestHandler>(EndorserTransactionController.prototype.writeSchemaAndCredDefOnLedger)),
-
-            async function EndorserTransactionController_writeSchemaAndCredDefOnLedger(request: ExRequest, response: ExResponse, next: any) {
-
-            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-
-            let validatedArgs: any[] = [];
-            try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsEndorserTransactionController_writeSchemaAndCredDefOnLedger, request, response });
-
-                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
-
-                const controller: any = await container.get<EndorserTransactionController>(EndorserTransactionController);
-                if (typeof controller['setStatus'] === 'function') {
-                controller.setStatus(undefined);
-                }
-
-              await templateService.apiHandler({
-                methodName: 'writeSchemaAndCredDefOnLedger',
-                controller,
-                response,
-                next,
-                validatedArgs,
-                successStatus: undefined,
-              });
-            } catch (err) {
-                return next(err);
-            }
-        });
-        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsDidController_getDidRecordByDid: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-                did: {"in":"path","name":"did","required":true,"ref":"Did"},
-        };
-        app.get('/dids/:did',
-            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
-            ...(fetchMiddlewares<RequestHandler>(DidController)),
-            ...(fetchMiddlewares<RequestHandler>(DidController.prototype.getDidRecordByDid)),
-
-            async function DidController_getDidRecordByDid(request: ExRequest, response: ExResponse, next: any) {
-
-            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-
-            let validatedArgs: any[] = [];
-            try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsDidController_getDidRecordByDid, request, response });
-
-                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
-
-                const controller: any = await container.get<DidController>(DidController);
-                if (typeof controller['setStatus'] === 'function') {
-                controller.setStatus(undefined);
-                }
-
-              await templateService.apiHandler({
-                methodName: 'getDidRecordByDid',
-                controller,
-                response,
-                next,
-                validatedArgs,
-                successStatus: undefined,
-              });
-            } catch (err) {
-                return next(err);
-            }
-        });
-        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsDidController_writeDid: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-                createDidOptions: {"in":"body","name":"createDidOptions","required":true,"ref":"DidCreate"},
-        };
-        app.post('/dids/write',
-            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
-            ...(fetchMiddlewares<RequestHandler>(DidController)),
-            ...(fetchMiddlewares<RequestHandler>(DidController.prototype.writeDid)),
-
-            async function DidController_writeDid(request: ExRequest, response: ExResponse, next: any) {
-
-            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-
-            let validatedArgs: any[] = [];
-            try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsDidController_writeDid, request, response });
-
-                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
-
-                const controller: any = await container.get<DidController>(DidController);
-                if (typeof controller['setStatus'] === 'function') {
-                controller.setStatus(undefined);
-                }
-
-              await templateService.apiHandler({
-                methodName: 'writeDid',
-                controller,
-                response,
-                next,
-                validatedArgs,
-                successStatus: undefined,
-              });
-            } catch (err) {
-                return next(err);
-            }
-        });
-        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsDidController_getDids: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-        };
-        app.get('/dids',
-            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
-            ...(fetchMiddlewares<RequestHandler>(DidController)),
-            ...(fetchMiddlewares<RequestHandler>(DidController.prototype.getDids)),
-
-            async function DidController_getDids(request: ExRequest, response: ExResponse, next: any) {
-
-            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-
-            let validatedArgs: any[] = [];
-            try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsDidController_getDids, request, response });
-
-                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
-
-                const controller: any = await container.get<DidController>(DidController);
-                if (typeof controller['setStatus'] === 'function') {
-                controller.setStatus(undefined);
-                }
-
-              await templateService.apiHandler({
-                methodName: 'getDids',
-                controller,
-                response,
-                next,
-                validatedArgs,
-                successStatus: undefined,
-              });
-            } catch (err) {
-                return next(err);
-            }
-        });
-        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsSchemaController_getSchemaById: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-                schemaId: {"in":"path","name":"schemaId","required":true,"ref":"SchemaId"},
-        };
-        app.get('/anoncreds/schemas/:schemaId',
-            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
-            ...(fetchMiddlewares<RequestHandler>(SchemaController)),
-            ...(fetchMiddlewares<RequestHandler>(SchemaController.prototype.getSchemaById)),
-
-            async function SchemaController_getSchemaById(request: ExRequest, response: ExResponse, next: any) {
-
-            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-
-            let validatedArgs: any[] = [];
-            try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsSchemaController_getSchemaById, request, response });
-
-                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
-
-                const controller: any = await container.get<SchemaController>(SchemaController);
-                if (typeof controller['setStatus'] === 'function') {
-                controller.setStatus(undefined);
-                }
-
-              await templateService.apiHandler({
-                methodName: 'getSchemaById',
-                controller,
-                response,
-                next,
-                validatedArgs,
-                successStatus: undefined,
-              });
-            } catch (err) {
-                return next(err);
-            }
-        });
-        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsSchemaController_createSchema: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-                schema: {"in":"body","name":"schema","required":true,"ref":"CreateSchemaInput"},
-        };
-        app.post('/anoncreds/schemas',
-            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
-            ...(fetchMiddlewares<RequestHandler>(SchemaController)),
-            ...(fetchMiddlewares<RequestHandler>(SchemaController.prototype.createSchema)),
-
-            async function SchemaController_createSchema(request: ExRequest, response: ExResponse, next: any) {
-
-            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-
-            let validatedArgs: any[] = [];
-            try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsSchemaController_createSchema, request, response });
-
-                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
-
-                const controller: any = await container.get<SchemaController>(SchemaController);
+                const controller: any = await container.get<Ethereum>(Ethereum);
                 if (typeof controller['setStatus'] === 'function') {
                 controller.setStatus(undefined);
                 }
@@ -1924,290 +1719,34 @@ export function RegisterRoutes(app: Router) {
             }
         });
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsCredentialDefinitionController_getCredentialDefinitionById: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-                credentialDefinitionId: {"in":"path","name":"credentialDefinitionId","required":true,"ref":"CredentialDefinitionId"},
+        const argsEthereum_getSchemaById: Record<string, TsoaRoute.ParameterSchema> = {
+                did: {"in":"path","name":"did","required":true,"dataType":"string"},
+                schemaId: {"in":"path","name":"schemaId","required":true,"dataType":"string"},
+                internalServerError: {"in":"res","name":"500","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"message":{"dataType":"string","required":true}}},
+                forbiddenError: {"in":"res","name":"401","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true}}},
         };
-        app.get('/anoncreds/credential-definitions/:credentialDefinitionId',
-            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
-            ...(fetchMiddlewares<RequestHandler>(CredentialDefinitionController)),
-            ...(fetchMiddlewares<RequestHandler>(CredentialDefinitionController.prototype.getCredentialDefinitionById)),
-
-            async function CredentialDefinitionController_getCredentialDefinitionById(request: ExRequest, response: ExResponse, next: any) {
-
-            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-
-            let validatedArgs: any[] = [];
-            try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsCredentialDefinitionController_getCredentialDefinitionById, request, response });
-
-                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
-
-                const controller: any = await container.get<CredentialDefinitionController>(CredentialDefinitionController);
-                if (typeof controller['setStatus'] === 'function') {
-                controller.setStatus(undefined);
-                }
-
-              await templateService.apiHandler({
-                methodName: 'getCredentialDefinitionById',
-                controller,
-                response,
-                next,
-                validatedArgs,
-                successStatus: undefined,
-              });
-            } catch (err) {
-                return next(err);
-            }
-        });
-        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsCredentialDefinitionController_createCredentialDefinition: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-                credentialDefinitionRequest: {"in":"body","name":"credentialDefinitionRequest","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"endorserDid":{"dataType":"string"},"endorse":{"dataType":"boolean"},"tag":{"dataType":"string","required":true},"schemaId":{"ref":"SchemaId","required":true},"issuerId":{"dataType":"string","required":true}}},
-        };
-        app.post('/anoncreds/credential-definitions',
-            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
-            ...(fetchMiddlewares<RequestHandler>(CredentialDefinitionController)),
-            ...(fetchMiddlewares<RequestHandler>(CredentialDefinitionController.prototype.createCredentialDefinition)),
-
-            async function CredentialDefinitionController_createCredentialDefinition(request: ExRequest, response: ExResponse, next: any) {
-
-            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-
-            let validatedArgs: any[] = [];
-            try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsCredentialDefinitionController_createCredentialDefinition, request, response });
-
-                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
-
-                const controller: any = await container.get<CredentialDefinitionController>(CredentialDefinitionController);
-                if (typeof controller['setStatus'] === 'function') {
-                controller.setStatus(undefined);
-                }
-
-              await templateService.apiHandler({
-                methodName: 'createCredentialDefinition',
-                controller,
-                response,
-                next,
-                validatedArgs,
-                successStatus: undefined,
-              });
-            } catch (err) {
-                return next(err);
-            }
-        });
-        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsAgentController_getAgentInfo: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-        };
-        app.get('/agent',
-            authenticateMiddleware([{"jwt":["tenant","dedicated","Basewallet"]}]),
-            ...(fetchMiddlewares<RequestHandler>(AgentController)),
-            ...(fetchMiddlewares<RequestHandler>(AgentController.prototype.getAgentInfo)),
-
-            async function AgentController_getAgentInfo(request: ExRequest, response: ExResponse, next: any) {
-
-            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-
-            let validatedArgs: any[] = [];
-            try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsAgentController_getAgentInfo, request, response });
-
-                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
-
-                const controller: any = await container.get<AgentController>(AgentController);
-                if (typeof controller['setStatus'] === 'function') {
-                controller.setStatus(undefined);
-                }
-
-              await templateService.apiHandler({
-                methodName: 'getAgentInfo',
-                controller,
-                response,
-                next,
-                validatedArgs,
-                successStatus: undefined,
-              });
-            } catch (err) {
-                return next(err);
-            }
-        });
-        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsAgentController_getAgentToken: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-        };
-        app.post('/agent/token',
+        app.get('/ethereum/:did/:schemaId',
             authenticateMiddleware([{"apiKey":[]}]),
-            ...(fetchMiddlewares<RequestHandler>(AgentController)),
-            ...(fetchMiddlewares<RequestHandler>(AgentController.prototype.getAgentToken)),
+            ...(fetchMiddlewares<RequestHandler>(Ethereum)),
+            ...(fetchMiddlewares<RequestHandler>(Ethereum.prototype.getSchemaById)),
 
-            async function AgentController_getAgentToken(request: ExRequest, response: ExResponse, next: any) {
-
-            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-
-            let validatedArgs: any[] = [];
-            try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsAgentController_getAgentToken, request, response });
-
-                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
-
-                const controller: any = await container.get<AgentController>(AgentController);
-                if (typeof controller['setStatus'] === 'function') {
-                controller.setStatus(undefined);
-                }
-
-              await templateService.apiHandler({
-                methodName: 'getAgentToken',
-                controller,
-                response,
-                next,
-                validatedArgs,
-                successStatus: undefined,
-              });
-            } catch (err) {
-                return next(err);
-            }
-        });
-        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsAgentController_deleteWallet: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-        };
-        app.delete('/agent/wallet',
-            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
-            ...(fetchMiddlewares<RequestHandler>(AgentController)),
-            ...(fetchMiddlewares<RequestHandler>(AgentController.prototype.deleteWallet)),
-
-            async function AgentController_deleteWallet(request: ExRequest, response: ExResponse, next: any) {
+            async function Ethereum_getSchemaById(request: ExRequest, response: ExResponse, next: any) {
 
             // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
 
             let validatedArgs: any[] = [];
             try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsAgentController_deleteWallet, request, response });
+                validatedArgs = templateService.getValidatedArgs({ args: argsEthereum_getSchemaById, request, response });
 
                 const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
 
-                const controller: any = await container.get<AgentController>(AgentController);
+                const controller: any = await container.get<Ethereum>(Ethereum);
                 if (typeof controller['setStatus'] === 'function') {
                 controller.setStatus(undefined);
                 }
 
               await templateService.apiHandler({
-                methodName: 'deleteWallet',
-                controller,
-                response,
-                next,
-                validatedArgs,
-                successStatus: undefined,
-              });
-            } catch (err) {
-                return next(err);
-            }
-        });
-        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsAgentController_verify: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-                body: {"in":"body","name":"body","required":true,"ref":"VerifyDataOptions"},
-        };
-        app.post('/agent/verify',
-            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
-            ...(fetchMiddlewares<RequestHandler>(AgentController)),
-            ...(fetchMiddlewares<RequestHandler>(AgentController.prototype.verify)),
-
-            async function AgentController_verify(request: ExRequest, response: ExResponse, next: any) {
-
-            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-
-            let validatedArgs: any[] = [];
-            try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsAgentController_verify, request, response });
-
-                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
-
-                const controller: any = await container.get<AgentController>(AgentController);
-                if (typeof controller['setStatus'] === 'function') {
-                controller.setStatus(undefined);
-                }
-
-              await templateService.apiHandler({
-                methodName: 'verify',
-                controller,
-                response,
-                next,
-                validatedArgs,
-                successStatus: undefined,
-              });
-            } catch (err) {
-                return next(err);
-            }
-        });
-        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsAgentController_signCredential: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-                storeCredential: {"in":"query","name":"storeCredential","required":true,"dataType":"boolean"},
-                dataTypeToSign: {"in":"query","name":"dataTypeToSign","required":true,"dataType":"union","subSchemas":[{"dataType":"enum","enums":["rawData"]},{"dataType":"enum","enums":["jsonLd"]}]},
-                data: {"in":"body","name":"data","required":true,"dataType":"union","subSchemas":[{"ref":"CustomW3cJsonLdSignCredentialOptions"},{"ref":"SignDataOptions"}]},
-        };
-        app.post('/agent/credential/sign',
-            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
-            ...(fetchMiddlewares<RequestHandler>(AgentController)),
-            ...(fetchMiddlewares<RequestHandler>(AgentController.prototype.signCredential)),
-
-            async function AgentController_signCredential(request: ExRequest, response: ExResponse, next: any) {
-
-            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-
-            let validatedArgs: any[] = [];
-            try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsAgentController_signCredential, request, response });
-
-                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
-
-                const controller: any = await container.get<AgentController>(AgentController);
-                if (typeof controller['setStatus'] === 'function') {
-                controller.setStatus(undefined);
-                }
-
-              await templateService.apiHandler({
-                methodName: 'signCredential',
-                controller,
-                response,
-                next,
-                validatedArgs,
-                successStatus: undefined,
-              });
-            } catch (err) {
-                return next(err);
-            }
-        });
-        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-        const argsAgentController_verifyCredential: Record<string, TsoaRoute.ParameterSchema> = {
-                request: {"in":"request","name":"request","required":true,"dataType":"object"},
-                credentialToVerify: {"in":"body","name":"credentialToVerify","required":true,"ref":"SafeW3cJsonLdVerifyCredentialOptions"},
-        };
-        app.post('/agent/credential/verify',
-            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
-            ...(fetchMiddlewares<RequestHandler>(AgentController)),
-            ...(fetchMiddlewares<RequestHandler>(AgentController.prototype.verifyCredential)),
-
-            async function AgentController_verifyCredential(request: ExRequest, response: ExResponse, next: any) {
-
-            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-
-            let validatedArgs: any[] = [];
-            try {
-                validatedArgs = templateService.getValidatedArgs({ args: argsAgentController_verifyCredential, request, response });
-
-                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
-
-                const controller: any = await container.get<AgentController>(AgentController);
-                if (typeof controller['setStatus'] === 'function') {
-                controller.setStatus(undefined);
-                }
-
-              await templateService.apiHandler({
-                methodName: 'verifyCredential',
+                methodName: 'getSchemaById',
                 controller,
                 response,
                 next,
@@ -2706,6 +2245,118 @@ export function RegisterRoutes(app: Router) {
             }
         });
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsProofController_getCredentialsForRequest: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                proofRecordId: {"in":"path","name":"proofRecordId","required":true,"ref":"RecordId"},
+        };
+        app.get('/didcomm/proofs/credentialsForRequest/:proofRecordId',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(ProofController)),
+            ...(fetchMiddlewares<RequestHandler>(ProofController.prototype.getCredentialsForRequest)),
+
+            async function ProofController_getCredentialsForRequest(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsProofController_getCredentialsForRequest, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<ProofController>(ProofController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'getCredentialsForRequest',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsProofController_acceptRequestWithProofFormatInput: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                acceptRequestWithProofFormatInput: {"in":"body","name":"acceptRequestWithProofFormatInput","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"proofFormats":{"dataType":"nestedObjectLiteral","nestedProperties":{"presentationExchange":{"dataType":"nestedObjectLiteral","nestedProperties":{"credentials":{"ref":"Record_string.string_","required":true}},"required":true}},"required":true},"comment":{"dataType":"string"},"proofRecordId":{"dataType":"string","required":true}}},
+        };
+        app.post('/didcomm/proofs/proofs/accept-request-with-cred',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(ProofController)),
+            ...(fetchMiddlewares<RequestHandler>(ProofController.prototype.acceptRequestWithProofFormatInput)),
+
+            async function ProofController_acceptRequestWithProofFormatInput(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsProofController_acceptRequestWithProofFormatInput, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<ProofController>(ProofController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'acceptRequestWithProofFormatInput',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsProofController_declineRequest: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                proofRecordId: {"in":"path","name":"proofRecordId","required":true,"dataType":"string"},
+                req: {"in":"body","name":"req","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"problemReportDescription":{"dataType":"string"},"sendProblemReport":{"dataType":"boolean"}}},
+        };
+        app.post('/didcomm/proofs/proofs/:proofRecordId/decline-request',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(ProofController)),
+            ...(fetchMiddlewares<RequestHandler>(ProofController.prototype.declineRequest)),
+
+            async function ProofController_declineRequest(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsProofController_declineRequest, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<ProofController>(ProofController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'declineRequest',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
         const argsOutOfBandController_getAllOutOfBandRecords: Record<string, TsoaRoute.ParameterSchema> = {
                 request: {"in":"request","name":"request","required":true,"dataType":"object"},
                 invitationId: {"in":"query","name":"invitationId","ref":"RecordId"},
@@ -3154,6 +2805,80 @@ export function RegisterRoutes(app: Router) {
             }
         });
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsCredentialController_createW3cSelfAttestedCredential: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                selfAttestedCredentialOptions: {"in":"body","name":"selfAttestedCredentialOptions","required":true,"ref":"selfAttestedJsonLdCredentialOptions"},
+        };
+        app.post('/didcomm/credentials/w3c/self-attested',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(CredentialController)),
+            ...(fetchMiddlewares<RequestHandler>(CredentialController.prototype.createW3cSelfAttestedCredential)),
+
+            async function CredentialController_createW3cSelfAttestedCredential(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsCredentialController_createW3cSelfAttestedCredential, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<CredentialController>(CredentialController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'createW3cSelfAttestedCredential',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsCredentialController_deleteW3cCredentialById: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                credentialRecordId: {"in":"path","name":"credentialRecordId","required":true,"ref":"RecordId"},
+        };
+        app.delete('/didcomm/credentials/w3c/:credentialRecordId',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(CredentialController)),
+            ...(fetchMiddlewares<RequestHandler>(CredentialController.prototype.deleteW3cCredentialById)),
+
+            async function CredentialController_deleteW3cCredentialById(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsCredentialController_deleteW3cCredentialById, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<CredentialController>(CredentialController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'deleteW3cCredentialById',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
         const argsCredentialController_getCredentialById: Record<string, TsoaRoute.ParameterSchema> = {
                 request: {"in":"request","name":"request","required":true,"dataType":"object"},
                 credentialRecordId: {"in":"path","name":"credentialRecordId","required":true,"ref":"RecordId"},
@@ -3487,6 +3212,43 @@ export function RegisterRoutes(app: Router) {
             }
         });
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsCredentialController_deleteCredentialById: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                credentialRecordId: {"in":"path","name":"credentialRecordId","required":true,"ref":"RecordId"},
+        };
+        app.delete('/didcomm/credentials/credential/:credentialRecordId',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(CredentialController)),
+            ...(fetchMiddlewares<RequestHandler>(CredentialController.prototype.deleteCredentialById)),
+
+            async function CredentialController_deleteCredentialById(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsCredentialController_deleteCredentialById, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<CredentialController>(CredentialController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'deleteCredentialById',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
         const argsConnectionController_getAllConnections: Record<string, TsoaRoute.ParameterSchema> = {
                 request: {"in":"request","name":"request","required":true,"dataType":"object"},
                 outOfBandId: {"in":"query","name":"outOfBandId","dataType":"string"},
@@ -3713,6 +3475,43 @@ export function RegisterRoutes(app: Router) {
             }
         });
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsConnectionController_addConnectionType: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                connectionId: {"in":"path","name":"connectionId","required":true,"ref":"RecordId"},
+                body: {"in":"body","name":"body","required":true,"ref":"AddConnectionType"},
+        };
+        app.post('/didcomm/connections/add-connection-type/:connectionId',
+            ...(fetchMiddlewares<RequestHandler>(ConnectionController)),
+            ...(fetchMiddlewares<RequestHandler>(ConnectionController.prototype.addConnectionType)),
+
+            async function ConnectionController_addConnectionType(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsConnectionController_addConnectionType, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<ConnectionController>(ConnectionController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'addConnectionType',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
         const argsBasicMessageController_getBasicMessages: Record<string, TsoaRoute.ParameterSchema> = {
                 request: {"in":"request","name":"request","required":true,"dataType":"object"},
                 connectionId: {"in":"path","name":"connectionId","required":true,"ref":"RecordId"},
@@ -3777,6 +3576,597 @@ export function RegisterRoutes(app: Router) {
 
               await templateService.apiHandler({
                 methodName: 'sendMessage',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsDidController_getDidRecordByDid: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                did: {"in":"path","name":"did","required":true,"ref":"Did"},
+        };
+        app.get('/dids/:did',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(DidController)),
+            ...(fetchMiddlewares<RequestHandler>(DidController.prototype.getDidRecordByDid)),
+
+            async function DidController_getDidRecordByDid(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsDidController_getDidRecordByDid, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<DidController>(DidController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'getDidRecordByDid',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsDidController_writeDid: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                createDidOptions: {"in":"body","name":"createDidOptions","required":true,"ref":"DidCreate"},
+        };
+        app.post('/dids/write',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(DidController)),
+            ...(fetchMiddlewares<RequestHandler>(DidController.prototype.writeDid)),
+
+            async function DidController_writeDid(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsDidController_writeDid, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<DidController>(DidController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'writeDid',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsDidController_getDids: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                isDefault: {"default":false,"in":"query","name":"isDefault","dataType":"boolean"},
+        };
+        app.get('/dids',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(DidController)),
+            ...(fetchMiddlewares<RequestHandler>(DidController.prototype.getDids)),
+
+            async function DidController_getDids(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsDidController_getDids, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<DidController>(DidController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'getDids',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsSchemaController_getSchemaById: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                schemaId: {"in":"path","name":"schemaId","required":true,"ref":"SchemaId"},
+        };
+        app.get('/anoncreds/schemas/:schemaId',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(SchemaController)),
+            ...(fetchMiddlewares<RequestHandler>(SchemaController.prototype.getSchemaById)),
+
+            async function SchemaController_getSchemaById(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsSchemaController_getSchemaById, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<SchemaController>(SchemaController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'getSchemaById',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsSchemaController_createSchema: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                schema: {"in":"body","name":"schema","required":true,"ref":"CreateSchemaInput"},
+        };
+        app.post('/anoncreds/schemas',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(SchemaController)),
+            ...(fetchMiddlewares<RequestHandler>(SchemaController.prototype.createSchema)),
+
+            async function SchemaController_createSchema(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsSchemaController_createSchema, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<SchemaController>(SchemaController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'createSchema',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsEndorserTransactionController_endorserTransaction: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                endorserTransaction: {"in":"body","name":"endorserTransaction","required":true,"ref":"EndorserTransaction"},
+        };
+        app.post('/anoncreds/transactions/endorse',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(EndorserTransactionController)),
+            ...(fetchMiddlewares<RequestHandler>(EndorserTransactionController.prototype.endorserTransaction)),
+
+            async function EndorserTransactionController_endorserTransaction(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsEndorserTransactionController_endorserTransaction, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<EndorserTransactionController>(EndorserTransactionController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'endorserTransaction',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsEndorserTransactionController_didNymTransaction: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                didNymTransaction: {"in":"body","name":"didNymTransaction","required":true,"ref":"DidNymTransaction"},
+        };
+        app.post('/anoncreds/transactions/set-endorser-role',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(EndorserTransactionController)),
+            ...(fetchMiddlewares<RequestHandler>(EndorserTransactionController.prototype.didNymTransaction)),
+
+            async function EndorserTransactionController_didNymTransaction(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsEndorserTransactionController_didNymTransaction, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<EndorserTransactionController>(EndorserTransactionController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'didNymTransaction',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsEndorserTransactionController_writeSchemaAndCredDefOnLedger: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                writeTransaction: {"in":"body","name":"writeTransaction","required":true,"ref":"WriteTransaction"},
+        };
+        app.post('/anoncreds/transactions/write',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(EndorserTransactionController)),
+            ...(fetchMiddlewares<RequestHandler>(EndorserTransactionController.prototype.writeSchemaAndCredDefOnLedger)),
+
+            async function EndorserTransactionController_writeSchemaAndCredDefOnLedger(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsEndorserTransactionController_writeSchemaAndCredDefOnLedger, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<EndorserTransactionController>(EndorserTransactionController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'writeSchemaAndCredDefOnLedger',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsCredentialDefinitionController_getCredentialDefinitionById: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                credentialDefinitionId: {"in":"path","name":"credentialDefinitionId","required":true,"ref":"CredentialDefinitionId"},
+        };
+        app.get('/anoncreds/credential-definitions/:credentialDefinitionId',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(CredentialDefinitionController)),
+            ...(fetchMiddlewares<RequestHandler>(CredentialDefinitionController.prototype.getCredentialDefinitionById)),
+
+            async function CredentialDefinitionController_getCredentialDefinitionById(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsCredentialDefinitionController_getCredentialDefinitionById, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<CredentialDefinitionController>(CredentialDefinitionController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'getCredentialDefinitionById',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsCredentialDefinitionController_createCredentialDefinition: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                credentialDefinitionRequest: {"in":"body","name":"credentialDefinitionRequest","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"endorserDid":{"dataType":"string"},"endorse":{"dataType":"boolean"},"tag":{"dataType":"string","required":true},"schemaId":{"ref":"SchemaId","required":true},"issuerId":{"dataType":"string","required":true}}},
+        };
+        app.post('/anoncreds/credential-definitions',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(CredentialDefinitionController)),
+            ...(fetchMiddlewares<RequestHandler>(CredentialDefinitionController.prototype.createCredentialDefinition)),
+
+            async function CredentialDefinitionController_createCredentialDefinition(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsCredentialDefinitionController_createCredentialDefinition, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<CredentialDefinitionController>(CredentialDefinitionController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'createCredentialDefinition',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsAgentController_getAgentInfo: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+        };
+        app.get('/agent',
+            authenticateMiddleware([{"jwt":["tenant","dedicated","Basewallet"]}]),
+            ...(fetchMiddlewares<RequestHandler>(AgentController)),
+            ...(fetchMiddlewares<RequestHandler>(AgentController.prototype.getAgentInfo)),
+
+            async function AgentController_getAgentInfo(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsAgentController_getAgentInfo, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<AgentController>(AgentController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'getAgentInfo',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsAgentController_getAgentToken: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+        };
+        app.post('/agent/token',
+            authenticateMiddleware([{"apiKey":[]}]),
+            ...(fetchMiddlewares<RequestHandler>(AgentController)),
+            ...(fetchMiddlewares<RequestHandler>(AgentController.prototype.getAgentToken)),
+
+            async function AgentController_getAgentToken(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsAgentController_getAgentToken, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<AgentController>(AgentController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'getAgentToken',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsAgentController_deleteWallet: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+        };
+        app.delete('/agent/wallet',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(AgentController)),
+            ...(fetchMiddlewares<RequestHandler>(AgentController.prototype.deleteWallet)),
+
+            async function AgentController_deleteWallet(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsAgentController_deleteWallet, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<AgentController>(AgentController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'deleteWallet',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsAgentController_verify: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                body: {"in":"body","name":"body","required":true,"ref":"VerifyDataOptions"},
+        };
+        app.post('/agent/verify',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(AgentController)),
+            ...(fetchMiddlewares<RequestHandler>(AgentController.prototype.verify)),
+
+            async function AgentController_verify(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsAgentController_verify, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<AgentController>(AgentController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'verify',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsAgentController_signCredential: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                storeCredential: {"in":"query","name":"storeCredential","required":true,"dataType":"boolean"},
+                dataTypeToSign: {"in":"query","name":"dataTypeToSign","required":true,"dataType":"union","subSchemas":[{"dataType":"enum","enums":["rawData"]},{"dataType":"enum","enums":["jsonLd"]}]},
+                data: {"in":"body","name":"data","required":true,"dataType":"union","subSchemas":[{"ref":"CustomW3cJsonLdSignCredentialOptions"},{"ref":"SignDataOptions"},{"dataType":"any"}]},
+        };
+        app.post('/agent/credential/sign',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(AgentController)),
+            ...(fetchMiddlewares<RequestHandler>(AgentController.prototype.signCredential)),
+
+            async function AgentController_signCredential(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsAgentController_signCredential, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<AgentController>(AgentController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'signCredential',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsAgentController_verifyCredential: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                credentialToVerify: {"in":"body","name":"credentialToVerify","required":true,"dataType":"union","subSchemas":[{"ref":"SafeW3cJsonLdVerifyCredentialOptions"},{"dataType":"any"}]},
+        };
+        app.post('/agent/credential/verify',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(AgentController)),
+            ...(fetchMiddlewares<RequestHandler>(AgentController.prototype.verifyCredential)),
+
+            async function AgentController_verifyCredential(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsAgentController_verifyCredential, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<AgentController>(AgentController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'verifyCredential',
                 controller,
                 response,
                 next,
@@ -3931,6 +4321,44 @@ export function RegisterRoutes(app: Router) {
 
               await templateService.apiHandler({
                 methodName: 'deleteTenantById',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsMultiTenancyController_exportTenant: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                tenantId: {"in":"path","name":"tenantId","required":true,"dataType":"string"},
+                body: {"in":"body","name":"body","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"walletID":{"dataType":"string","required":true},"passKey":{"dataType":"string","required":true}}},
+        };
+        app.post('/multi-tenancy/export/:tenantId',
+            authenticateMiddleware([{"apiKey":[]}]),
+            ...(fetchMiddlewares<RequestHandler>(MultiTenancyController)),
+            ...(fetchMiddlewares<RequestHandler>(MultiTenancyController.prototype.exportTenant)),
+
+            async function MultiTenancyController_exportTenant(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsMultiTenancyController_exportTenant, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<MultiTenancyController>(MultiTenancyController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'exportTenant',
                 controller,
                 response,
                 next,
