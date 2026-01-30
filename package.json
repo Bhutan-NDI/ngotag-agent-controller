@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "@ayanworks/credo-polygon-w3c-module": "1.0.0",
-    "@bhutan-ndi/ethr-credo-module": "1.0.2",
+    "@bhutan-ndi/ethr-credo-module": "1.0.3-alpha-20251226092637",
     "@credo-ts/anoncreds": "0.5.3",
     "@credo-ts/askar": "0.5.3",
     "@credo-ts/core": "0.5.3",
@@ -106,5 +106,6 @@
   },
   "engines": {
     "node": "18.19.0"
-  }
+  },
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }

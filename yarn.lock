@@ -521,10 +521,10 @@
   resolved "https://registry.yarnpkg.com/@bcoe/v8-coverage/-/v8-coverage-0.2.3.tgz#75a2e8b51cb758a7553d6804a5932d7aace75c39"
   integrity sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==
 
-"@bhutan-ndi/ethr-credo-module@1.0.2":
-  version "1.0.2"
-  resolved "https://registry.yarnpkg.com/@bhutan-ndi/ethr-credo-module/-/ethr-credo-module-1.0.2.tgz#b694c0bbe83867579eef92f34fd6c9e05b884683"
-  integrity sha512-ymYyhTOGYfnmi3Ke80DD9+x1rJS1U5RsBopMXxoaQpumwC77pMx0Ocv9e/AZ5y4QVLVrJzXjBhZlZBmFAhJtUw==
+"@bhutan-ndi/ethr-credo-module@1.0.3-alpha-20251226092637":
+  version "1.0.3-alpha-20251226092637"
+  resolved "https://registry.yarnpkg.com/@bhutan-ndi/ethr-credo-module/-/ethr-credo-module-1.0.3-alpha-20251226092637.tgz#82cb8bab9a9ad32fbf77a00bd09c098a5c855208"
+  integrity sha512-CQEkzTEwLdxQVcYxvzUdNVwjj3+WKo75LvyGu57mGb0R82J2naHVdIuWb1OthATgNRW5OuA2+IzaaHCBOzmrzg==
   dependencies:
     "@credo-ts/askar" "0.5.3"
     "@credo-ts/core" "0.5.3"
