@@ -7,7 +7,7 @@ index 0ddbfa0..807688f 100644
      },
      mainnet: {
 -        URL: 'https://polygon-rpc.com',
-+        URL: 'https://polygon.drpc.org',
++        URL: process.env.RPC_URL || 'https://polygon-grpc.org',
          CONTRACT_ADDRESS: '0x0C16958c4246271622201101C83B9F0Fc7180d15',
      },
  };
