@@ -97,9 +97,14 @@ export interface AriesRestConfig {
   connectionImageUrl?: string
   tenancy?: boolean
   webhookUrl?: string
-  didRegistryContractAddress?: string
-  schemaManagerContractAddress?: string
-  rpcUrl?: string
+  polygonDidRegistryContractAddress?: string
+  polygonSchemaManagerContractAddress?: string
+  polygonRpcUrl?: string
+  ethereumDidRegistryContractAddress?: string
+  ethereumSchemaManagerContractAddress?: string
+  ethereumRpcUrl?: string,
+  ethereumChainName: string,
+  ethereumChainId: number,
   fileServerUrl?: string
   fileServerToken?: string
   walletScheme?: AskarMultiWalletDatabaseScheme
@@ -122,11 +127,16 @@ export type RestAgentModules = Awaited<ReturnType<typeof getModules>>
 // TODO: add object
 const getModules = (
   networkConfig: [IndyVdrPoolConfig, ...IndyVdrPoolConfig[]],
-  didRegistryContractAddress: string,
+  polygonDidRegistryContractAddress: string,
+  polygonRpcUrl: string,
+  polygonSchemaManagerContractAddress: string,
+  ethereumDidRegistryContractAddress: string,
+  ethereumSchemaManagerContractAddress: string,
+  ethereumRpcUrl: string,
+  ethereumChainName: string,
+  ethereumChainId: number,
   fileServerToken: string,
   fileServerUrl: string,
-  rpcUrl: string,
-  schemaManagerContractAddress: string,
   autoAcceptConnections: boolean,
   autoAcceptCredentials: AutoAcceptCredential,
   autoAcceptProofs: AutoAcceptProof,
@@ -210,31 +220,30 @@ const getModules = (
 
     questionAnswer: new QuestionAnswerModule(),
     polygon: new PolygonModule({
-      didContractAddress: didRegistryContractAddress
-        ? didRegistryContractAddress
-        : (process.env.DID_CONTRACT_ADDRESS as string),
+      didContractAddress: polygonDidRegistryContractAddress
+        ? polygonDidRegistryContractAddress
+        : (process.env.POLYGON_DID_CONTRACT_ADDRESS as string),
       schemaManagerContractAddress:
-        schemaManagerContractAddress || (process.env.SCHEMA_MANAGER_CONTRACT_ADDRESS as string),
+        polygonSchemaManagerContractAddress || (process.env.POLYGON_SCHEMA_MANAGER_CONTRACT_ADDRESS as string),
       fileServerToken: fileServerToken ? fileServerToken : (process.env.FILE_SERVER_TOKEN as string),
-      rpcUrl: rpcUrl ? rpcUrl : (process.env.RPC_URL as string),
+      rpcUrl: polygonRpcUrl ? polygonRpcUrl : (process.env.POLYGON_RPC_URL as string),
       serverUrl: fileServerUrl ? fileServerUrl : (process.env.SERVER_URL as string),
     }),
     ethereum: new EthereumModule({
       config: {
         networks: [
           {
-            name: 'sepolia',
-            chainId: 11155111,
-            rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/<API-KEY>',
-            registry: '0x485cFb9cdB84c0a5AfE69b75E2e79497Fc2256Fc',
+            name: ethereumChainName ? ethereumChainName : (process.env.ETHEREUM_CHAIN_NAME as string),
+            chainId: ethereumChainId ? ethereumChainId : parseInt(process.env.ETHEREUM_CHAIN_ID as string),
+            rpcUrl: ethereumRpcUrl ? ethereumRpcUrl : (process.env.ETHEREUM_RPC_URL as string),
+            registry: ethereumDidRegistryContractAddress ? ethereumDidRegistryContractAddress : (process.env.ETHEREUM_DID_CONTRACT_ADDRESS as string),
           },
         ],
       },
-      schemaManagerContractAddress: '0xa95ACF3119791F65b2192267836df9A472785c15',
-      serverUrl: 'https://dev-schema.ngotag.com',
-      fileServerToken:
-            '<FILE-SERVER-TOKEN>',
-      rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/<API-KEY>',
+      schemaManagerContractAddress: ethereumSchemaManagerContractAddress || (process.env.ETHEREUM_SCHEMA_MANAGER_CONTRACT_ADDRESS as string),
+      serverUrl: fileServerUrl ? fileServerUrl : (process.env.SERVER_URL as string),
+      fileServerToken: fileServerToken ? fileServerToken : (process.env.FILE_SERVER_TOKEN as string),
+      rpcUrl: ethereumRpcUrl ? ethereumRpcUrl : (process.env.ETHEREUM_RPC_URL as string),
     }),
   }
 }
@@ -242,11 +251,16 @@ const getModules = (
 // TODO: add object
 const getWithTenantModules = (
   networkConfig: [IndyVdrPoolConfig, ...IndyVdrPoolConfig[]],
-  didRegistryContractAddress: string,
+  polygonDidRegistryContractAddress: string,
+  polygonRpcUrl: string,
+  polygonSchemaManagerContractAddress: string,
+  ethereumDidRegistryContractAddress: string,
+  ethereumSchemaManagerContractAddress: string,
+  ethereumRpcUrl: string,
+  ethereumChainName: string,
+  ethereumChainId: number,
   fileServerToken: string,
   fileServerUrl: string,
-  rpcUrl: string,
-  schemaManagerContractAddress: string,
   autoAcceptConnections: boolean,
   autoAcceptCredentials: AutoAcceptCredential,
   autoAcceptProofs: AutoAcceptProof,
@@ -254,11 +268,16 @@ const getWithTenantModules = (
 ) => {
   const modules = getModules(
     networkConfig,
-    didRegistryContractAddress,
+    polygonDidRegistryContractAddress,
+    polygonRpcUrl,
+    polygonSchemaManagerContractAddress,
+    ethereumDidRegistryContractAddress,
+    ethereumSchemaManagerContractAddress,
+    ethereumRpcUrl,
+    ethereumChainName,
+    ethereumChainId,
     fileServerToken,
     fileServerUrl,
-    rpcUrl,
-    schemaManagerContractAddress,
     autoAcceptConnections,
     autoAcceptCredentials,
     autoAcceptProofs,
@@ -299,11 +318,16 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     outboundTransports = [],
     webhookUrl,
     adminPort,
-    didRegistryContractAddress,
+    polygonDidRegistryContractAddress,
+    polygonSchemaManagerContractAddress,
+    polygonRpcUrl,
     fileServerToken,
     fileServerUrl,
-    rpcUrl,
-    schemaManagerContractAddress,
+    ethereumDidRegistryContractAddress,
+    ethereumSchemaManagerContractAddress,
+    ethereumRpcUrl,
+    ethereumChainName,
+    ethereumChainId,
     walletConfig,
     autoAcceptConnections,
     autoAcceptCredentials,
@@ -313,7 +337,6 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     updateJwtSecret,
     ...afjConfig
   } = restConfig
-
   const logger = new TsLogger(logLevel ?? LogLevel.error)
 
   const agentConfig: InitConfig = {
@@ -391,11 +414,16 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
 
   const tenantModule = await getWithTenantModules(
     networkConfig,
-    didRegistryContractAddress || '',
+    polygonDidRegistryContractAddress || '',
+    polygonRpcUrl || '',
+    polygonSchemaManagerContractAddress || '',
+    ethereumDidRegistryContractAddress || '',
+    ethereumSchemaManagerContractAddress || '',
+    ethereumRpcUrl || '',
+    ethereumChainName,
+    ethereumChainId,
     fileServerToken || '',
     fileServerUrl || '',
-    rpcUrl || '',
-    schemaManagerContractAddress || '',
     autoAcceptConnections || true,
     autoAcceptCredentials || AutoAcceptCredential.Always,
     autoAcceptProofs || AutoAcceptProof.ContentApproved,
@@ -403,11 +431,16 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   )
   const modules = getModules(
     networkConfig,
-    didRegistryContractAddress || '',
+    polygonDidRegistryContractAddress || '',
+    polygonRpcUrl || '',
+    polygonSchemaManagerContractAddress || '',
+    ethereumDidRegistryContractAddress || '',
+    ethereumSchemaManagerContractAddress || '',
+    ethereumRpcUrl || '',
+    ethereumChainName,
+    ethereumChainId,
     fileServerToken || '',
     fileServerUrl || '',
-    rpcUrl || '',
-    schemaManagerContractAddress || '',
     autoAcceptConnections || true,
     autoAcceptCredentials || AutoAcceptCredential.Always,
     autoAcceptProofs || AutoAcceptProof.ContentApproved,
@@ -425,7 +458,6 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     },
     dependencies: agentDependencies,
   })
-
   // Register outbound transports
   for (const outboundTransport of outboundTransports) {
     const OutboundTransport = outboundTransportMapping[outboundTransport]

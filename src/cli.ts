@@ -32,15 +32,18 @@ interface Parsed {
   'webhook-url'?: string
   'admin-port': number
   tenancy: boolean
-  'did-registry-contract-address'?: string
-  'schema-manager-contract-address'?: string
+  'polygon-did-registry-contract-address'?: string
+  'polygon-schema-manager-contract-address'?: string
+  'polygon-rpc-url'?: string
+  'ethereum-did-registry-contract-address'?: string
+  'ethereum-schema-manager-contract-address'?: string
+  'ethereum-rpc-url'?: string
+  'ethereum-chain-name'?: string
+  'ethereum-chain-id'?: number
   'wallet-connect-timeout'?: number
   'wallet-max-connections'?: number
   'wallet-idle-timeout'?: number
   schemaFileServerURL?: string
-  didRegistryContractAddress?: string
-  schemaManagerContractAddress?: string
-  rpcUrl?: string
   fileServerUrl?: string
   fileServerToken?: string
   apiKey?: string
@@ -144,8 +147,14 @@ async function parseArguments(): Promise<Parsed> {
     .option('webhook-url', { string: true })
     .option('admin-port', { number: true, demandOption: true })
     .option('tenancy', { boolean: true, default: false })
-    .option('did-registry-contract-address', { string: true })
-    .option('schema-manager-contract-address', { string: true })
+    .option('polygon-did-registry-contract-address', { string: true })
+    .option('polygon-schema-manager-contract-address', { string: true })
+    .option('polygon-rpc-url', { string: true })
+    .option('ethereum-did-registry-contract-address', { string: true })
+    .option('ethereum-schema-manager-contract-address', { string: true })
+    .option('ethereum-rpc-url', { string: true })
+    .option('ethereum-chain-id', { number: true })
+    .option('ethereum-chain-name', { string: true })
     .option('wallet-connect-timeout', { number: true })
     .option('wallet-max-connections', { number: true })
     .option('wallet-idle-timeout', { number: true })
@@ -204,15 +213,17 @@ export async function runCliServer() {
     adminPort: parsed['admin-port'],
     tenancy: parsed.tenancy,
     schemaFileServerURL: parsed.schemaFileServerURL,
-    didRegistryContractAddress: parsed.didRegistryContractAddress,
-    schemaManagerContractAddress: parsed.schemaManagerContractAddress,
-    rpcUrl: parsed.rpcUrl,
+    polygonDidRegistryContractAddress: parsed['polygon-did-registry-contract-address'],
+    polygonSchemaManagerContractAddress: parsed['polygon-schema-manager-contract-address'],
+    polygonRpcUrl: parsed['polygon-rpc-url'],
+    ethereumDidRegistryContractAddress: parsed['ethereum-did-registry-contract-address'],
+    ethereumSchemaManagerContractAddress: parsed['ethereum-schema-manager-contract-address'],
+    ethereumRpcUrl: parsed['ethereum-rpc-url'],
+    ethereumChainId: parsed['ethereum-chain-id'],
+    ethereumChainName: parsed['ethereum-chain-name'],
     fileServerUrl: parsed.fileServerUrl,
     fileServerToken: parsed.fileServerToken,
     apiKey: parsed['apiKey'],
-    chainId: parsed['chainId'],
-    name: parsed['chainName'],
-    registry: parsed['registry'],
     updateJwtSecret: parsed['updateJwtSecret'],
   } as AriesRestConfig)
 }
