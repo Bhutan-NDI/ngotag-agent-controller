@@ -180,9 +180,9 @@ export async function runCliServer() {
         type: parsed['wallet-type'],
         config: {
           host: parsed['wallet-url'],
-          connectTimeout: parsed['wallet-connect-timeout'] || Number(process.env.CONNECT_TIMEOUT),
-          maxConnections: parsed['wallet-max-connections'] || Number(process.env.MAX_CONNECTIONS),
-          idleTimeout: parsed['wallet-idle-timeout'] || Number(process.env.IDLE_TIMEOUT),
+          connectTimeout: parsed['wallet-connect-timeout'] || Number(process.env.CONNECT_TIMEOUT) || 10000,
+          maxConnections: parsed['wallet-max-connections'] || Number(process.env.MAX_CONNECTIONS) || 25,
+          idleTimeout: parsed['wallet-idle-timeout'] || Number(process.env.IDLE_TIMEOUT) || 30000,
         },
         credentials: {
           account: parsed['wallet-account'],
@@ -209,6 +209,7 @@ export async function runCliServer() {
     rpcUrl: parsed.rpcUrl,
     fileServerUrl: parsed.fileServerUrl,
     fileServerToken: parsed.fileServerToken,
+    walletScheme: parsed['wallet-scheme'],
     apiKey: parsed['apiKey'],
     updateJwtSecret: parsed['updateJwtSecret'],
   } as AriesRestConfig)

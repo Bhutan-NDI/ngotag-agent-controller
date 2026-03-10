@@ -18,13 +18,17 @@ export const credentialEvents = async (agent: Agent, config: ServerConfig) => {
       credentialData: null,
     }
 
-    if (record?.connectionId) {
-      const connectionRecord = await agent.connections.findById(record.connectionId!)
-      body.outOfBandId = connectionRecord?.outOfBandId
-    }
+    try {
+      if (record?.connectionId) {
+        const connectionRecord = await agent.connections.findById(record.connectionId!)
+        body.outOfBandId = connectionRecord?.outOfBandId
+      }
 
-    const data = await agent.credentials.getFormatData(record.id)
-    body.credentialData = data
+      const data = await agent.credentials.getFormatData(record.id)
+      body.credentialData = data
+    } catch (error) {
+      agent.config.logger.warn('Failed to enrich credential event data', { error })
+    }
 
     if (config.webhookUrl) {
       await sendWebhookEvent(config.webhookUrl + '/credentials', body, agent.config.logger)

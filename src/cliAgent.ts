@@ -191,7 +191,7 @@ const getModules = (
         })
       : new W3cCredentialsModule(),
     cache: new CacheModule({
-      cache: new InMemoryLruCache({ limit: Number(process.env.INMEMORY_LRU_CACHE_LIMIT) || Infinity }),
+      cache: new InMemoryLruCache({ limit: Number(process.env.INMEMORY_LRU_CACHE_LIMIT) || 500 }),
     }),
 
     questionAnswer: new QuestionAnswerModule(),
@@ -235,8 +235,8 @@ const getWithTenantModules = (
   )
   return {
     tenants: new TenantsModule<typeof modules>({
-      sessionAcquireTimeout: Number(process.env.SESSION_ACQUIRE_TIMEOUT) || Infinity,
-      sessionLimit: Number(process.env.SESSION_LIMIT) || Infinity,
+      sessionAcquireTimeout: Number(process.env.SESSION_ACQUIRE_TIMEOUT) || 30000,
+      sessionLimit: Number(process.env.SESSION_LIMIT) || 100,
     }),
     ...modules,
   }

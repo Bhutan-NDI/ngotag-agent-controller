@@ -14,8 +14,12 @@ export const proofEvents = async (agent: Agent, config: ServerConfig) => {
       const tenantAgent = await agent.modules.tenants.getTenantAgent({
         tenantId: event.metadata.contextCorrelationId,
       })
-      const data = await tenantAgent.proofs.getFormatData(record.id)
-      body.proofData = data
+      try {
+        const data = await tenantAgent.proofs.getFormatData(record.id)
+        body.proofData = data
+      } finally {
+        await tenantAgent.endSession()
+      }
     }
 
     //Emit webhook for dedicated agent
