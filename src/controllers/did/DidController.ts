@@ -14,7 +14,7 @@ import {
 import axios from 'axios'
 import { injectable } from 'tsyringe'
 
-import { DidMethod, Network, Role } from '../../enums/enum'
+import { DidMethod, Network, NetworkTypes, Role } from '../../enums/enum'
 import ErrorHandlingService from '../../errorHandlingService'
 import { BadRequestError, InternalServerError } from '../../errors'
 import { CreateDidResponse, Did, DidRecordExample } from '../examples'
@@ -452,9 +452,9 @@ export class DidController extends Controller {
     }
 
     const createDidResponse = await this.agent.dids.create<EthereumDidCreateOptions>({
-      method: 'ethr',
+      method: DidMethod.Ethereum,
       options: {
-        network: networkName,
+        network: networkName === NetworkTypes.Mainnet ? '' : networkName,
         endpoint,
       },
       secret: {

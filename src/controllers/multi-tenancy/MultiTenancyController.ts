@@ -600,7 +600,7 @@ export class MultiTenancyController extends Controller {
       createDidResponse = await tenantAgent.dids.create<EthereumDidCreateOptions>({
         method: DidMethod.Ethereum,
         options: {
-          network: networkName,
+          network: networkName === NetworkTypes.Mainnet ? '' : networkName,
           endpoint,
         },
         secret: {
