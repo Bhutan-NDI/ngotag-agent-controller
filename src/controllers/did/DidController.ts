@@ -24,7 +24,7 @@ import { injectable } from 'tsyringe'
 import { container } from 'tsyringe'
 
 import { RestMultiTenantAgentModules } from '../../cliAgent'
-import { DidMethod, KeyAlgorithmCurve, Network, Role, SCOPES } from '../../enums'
+import { DidMethod, KeyAlgorithmCurve, Network, NetworkTypes, Role, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { BadRequestError, InternalServerError } from '../../errors'
 import { AgentType } from '../../types'
@@ -634,9 +634,9 @@ export class DidController extends Controller {
     }
 
     const createDidResponse = await this.agent.dids.create<EthereumDidCreateOptions>({
-      method: 'ethr',
+      method: DidMethod.Ethereum,
       options: {
-        network: networkName,
+        network: networkName === NetworkTypes.Mainnet ? '' : networkName,
         endpoint,
       },
       secret: {
