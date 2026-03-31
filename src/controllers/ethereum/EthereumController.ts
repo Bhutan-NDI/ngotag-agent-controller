@@ -90,6 +90,60 @@ export class Ethereum extends Controller {
   }
 
   /**
+   * Migrate W3C based schema to ethereum
+   *
+   * @returns Schema JSON
+   */
+  @Post('migrate-schema')
+  public async migrateSchema(
+    @Body()
+    migrateSchemaRequest: {
+      did: string
+      schemaId: string
+    },
+    @Res() internalServerError: TsoaResponse<500, { message: string }>,
+    @Res() badRequestError: TsoaResponse<400, { reason: string }>
+  ): Promise<unknown> {
+    try {
+      const { did, schemaId } = migrateSchemaRequest
+      if (!did) {
+        return badRequestError(400, {
+          reason: `DID is required.`,
+        })
+      }
+
+      if (!schemaId) {
+        return badRequestError(400, {
+          reason: `Existing Schema Id is required.`,
+        })
+      }
+
+      const schemaResponse = await this.agent.modules.ethereum.createExistingSchema({
+        did,
+        schemaId,
+      })
+
+      const schemaServerConfig = fs.readFileSync('config.json', 'utf-8')
+      const configJson = JSON.parse(schemaServerConfig)
+      if (!configJson.schemaFileServerURL) {
+        throw new Error('Please provide valid schema file server URL')
+      }
+
+      if (!schemaResponse?.schemaId) {
+        throw new Error('Invalid schema response')
+      }
+      const schemaPayload: SchemaMetadata = {
+        schemaUrl: configJson.schemaFileServerURL + schemaResponse?.schemaId,
+        did: schemaResponse?.did,
+        schemaId: schemaResponse?.schemaId,
+      }
+      return schemaPayload
+    } catch (error) {
+      return internalServerError(500, { message: `something went wrong: ${error}` })
+    }
+  }
+
+  /**
    * Estimate transaction
    *
    * @returns Transaction Object

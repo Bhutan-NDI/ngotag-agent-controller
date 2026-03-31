@@ -71,6 +71,7 @@ import ErrorHandlingService from '../../errorHandlingService'
 import { ENDORSER_DID_NOT_PRESENT } from '../../errorMessages'
 import {
   BadRequestError,
+  ConflictError,
   InternalServerError,
   NotFoundError,
   PaymentRequiredError,
@@ -1164,6 +1165,61 @@ export class MultiTenancyController extends Controller {
       return schemaPayload
     } catch (error) {
       throw new InternalServerError(`something went wrong: ${error}`)
+    }
+  }
+
+  @Security('apiKey')
+  @Post('/ethereum-wc3/migrate-schema/:tenantId')
+  public async migrateEthereumW3CSchema(
+    @Body()
+    createSchemaRequest: {
+      did: string
+      schemaId: string
+    },
+    @Path('tenantId') tenantId: string,
+  ): Promise<SchemaMetadata> {
+    try {
+      const { did, schemaId } = createSchemaRequest
+      if (!did ) {
+        throw new BadRequestError('DID is required.')
+      }
+      if (!schemaId ) {
+        throw new BadRequestError('Existing Schema Id is required.')
+      }
+
+      const schemaResponse = await this.agent.modules.tenants.withTenantAgent({ tenantId }, async (tenantAgent) => {
+        return await tenantAgent.modules.ethereum.createExistingSchema({
+          did,
+          schemaId
+        })
+      })
+
+      if (!schemaResponse?.schemaId) {
+        throw new BadRequestError('Invalid schema response')
+      }
+      const response: SchemaMetadata = {
+        did: schemaResponse?.did,
+        schemaId: schemaResponse?.schemaId,
+        schemaTxnHash: schemaResponse?.schemaTxnHash
+      }
+
+      return response
+    } catch (error: any) {
+      if (error?.message?.includes('Schema already exists')) {
+        throw new ConflictError(error.message)
+      }
+    
+      if (error?.message?.includes('Insufficient funds')) {
+        throw new BadRequestError(error.message)
+      }
+    
+      if (error?.message?.includes('not found')) {
+        throw new NotFoundError(error.message)
+      }
+    
+      throw new InternalServerError(
+        error?.message || 'Unexpected error during schema migration'
+      )
     }
   }
 
