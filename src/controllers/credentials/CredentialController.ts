@@ -220,6 +220,7 @@ export class CredentialController extends Controller {
         messages: [credentialMessage],
         autoAcceptConnection: true,
         imageUrl: outOfBandOption?.imageUrl,
+        goalCode: outOfBandOption?.goalCode,
         invitationDid,
       })
       return {
@@ -231,6 +232,7 @@ export class CredentialController extends Controller {
         }),
         outOfBandRecord: outOfBandRecord.toJSON(),
         invitationDid: outOfBandOption?.invitationDid ? '' : invitationDid,
+        credentialRequestThId: offerOob.credentialRecord.threadId,
         credentialRequestParentThId: offerOob.message.thread?.parentThreadId,
       }
     } catch (error) {
