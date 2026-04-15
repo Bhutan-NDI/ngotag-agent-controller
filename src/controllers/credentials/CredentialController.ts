@@ -211,6 +211,7 @@ export class CredentialController extends Controller {
         credentialFormats: outOfBandOption.credentialFormats,
         autoAcceptCredential: outOfBandOption.autoAcceptCredential,
         comment: outOfBandOption.comment,
+        parentThreadId: outOfBandOption.parentThreadId,
       })
 
       const credentialMessage = offerOob.message
@@ -230,6 +231,7 @@ export class CredentialController extends Controller {
         }),
         outOfBandRecord: outOfBandRecord.toJSON(),
         invitationDid: outOfBandOption?.invitationDid ? '' : invitationDid,
+        credentialRequestParentThId: offerOob.message.thread?.parentThreadId,
       }
     } catch (error) {
       throw ErrorHandlingService.handle(error)

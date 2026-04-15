@@ -1520,6 +1520,7 @@ export class MultiTenancyController extends Controller {
           protocolVersion: createOfferOptions.protocolVersion as CredentialProtocolVersionType<[]>,
           credentialFormats: createOfferOptions.credentialFormats,
           autoAcceptCredential: createOfferOptions.autoAcceptCredential,
+          parentThreadId: createOfferOptions.parentThreadId,
         })
       })
 
@@ -1569,6 +1570,7 @@ export class MultiTenancyController extends Controller {
           credentialFormats: createOfferOptions.credentialFormats,
           autoAcceptCredential: createOfferOptions.autoAcceptCredential,
           comment: createOfferOptions.comment,
+          parentThreadId: createOfferOptions.parentThreadId,
         })
 
         const credentialMessage = offerOob.message
@@ -1591,6 +1593,7 @@ export class MultiTenancyController extends Controller {
           outOfBandRecord: outOfBandRecord.toJSON(),
           outOfBandRecordId: outOfBandRecord.id,
           credentialRequestThId: offerOob.credentialRecord.threadId,
+          credentialRequestParentThId: offerOob.message.thread?.parentThreadId,
           invitationDid: createOfferOptions?.invitationDid ? '' : invitationDid,
         }
       })
