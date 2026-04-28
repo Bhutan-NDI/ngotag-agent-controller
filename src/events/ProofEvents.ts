@@ -16,24 +16,16 @@ export const proofEvents = async (agent: Agent, config: ServerConfig) => {
       })
       const data = await tenantAgent.proofs.getFormatData(record.id)
       body.proofData = data
-      console.log(`body:`,JSON.stringify(body,null,2));
     }
 
-    if (event.metadata.contextCorrelationId === 'default' && record.state === 'done')
-    {
-      const data = await agent.proofs.getFormatData(record.id);
-      body.proofData = data
-    }
-
-    //Emit webhook for dedicated agent
-    if (event.metadata.contextCorrelationId === 'default') {
+    if (event.metadata.contextCorrelationId === 'default' && record.state === 'done') {
       const data = await agent.proofs.getFormatData(record.id)
       body.proofData = data
     }
 
     // Only send webhook if webhook url is configured
     if (config.webhookUrl) {
-      await sendWebhookEvent(config.webhookUrl + '/proofs', body, agent.config.logger)
+      sendWebhookEvent(config.webhookUrl + '/proofs', body, agent.config.logger)
     }
 
     if (config.socketServer) {
