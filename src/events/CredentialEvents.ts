@@ -36,7 +36,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
     }
     // Only send webhook if webhook url is configured
     if (config.webhookUrl) {
-      await sendWebhookEvent(config.webhookUrl + '/credentials', body, agent.config.logger)
+      sendWebhookEvent(config.webhookUrl + '/credentials', body, agent.config.logger)
     }
 
     if (config.socketServer) {

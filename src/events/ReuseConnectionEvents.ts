@@ -19,7 +19,7 @@ export const reuseConnectionEvents = async (agent: Agent, config: ServerConfig) 
     // Only send webhook if webhook url is configured
     if (config.webhookUrl) {
       agent.config.logger.debug('sending webhook event ::::::::')
-      await sendWebhookEvent(config.webhookUrl + '/connections', body, agent.config.logger)
+      sendWebhookEvent(config.webhookUrl + '/connections', body, agent.config.logger)
     }
 
     if (config.socketServer) {
