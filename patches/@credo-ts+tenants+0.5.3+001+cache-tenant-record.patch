@@ -1,0 +1,65 @@
+diff --git a/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.js b/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.js
+index d491d4e..d12b4dd 100644
+--- a/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.js
++++ b/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.js
+@@ -24,16 +24,38 @@ let TenantAgentContextProvider = class TenantAgentContextProvider {
+         this.eventEmitter = eventEmitter;
+         this.tenantSessionCoordinator = tenantSessionCoordinator;
+         this.logger = logger;
++        this.cache = null
+         // Start listener for newly created routing keys, so we can register a mapping for each new key for the tenant
+         this.listenForRoutingKeyCreatedEvents();
+     }
+     async getAgentContextForContextCorrelationId(contextCorrelationId) {
++        this.logger.debug('========= Inside getAgentContextForContextCorrelationId')
+         // It could be that the root agent context is requested, in that case we return the root agent context
+         if (contextCorrelationId === this.rootAgentContext.contextCorrelationId) {
+             return this.rootAgentContext;
+         }
+-        // TODO: maybe we can look at not having to retrieve the tenant record if there's already a context available.
+-        const tenantRecord = await this.tenantRecordService.getTenantById(this.rootAgentContext, contextCorrelationId);
++
++        const cacheKey = `contextCorrelationId:${contextCorrelationId}`
++        const cache = this.getCache()
++
++        let tenantRecord;
++        
++        if (cache) {
++            this.logger.debug('Get tenantRecord from cache')
++            tenantRecord = await cache.get(this.rootAgentContext, cacheKey)
++            if (!tenantRecord) {
++                this.logger.debug('TenantRecord not found in cache')
++                tenantRecord = await this.tenantRecordService
++                    .getTenantById(this.rootAgentContext, contextCorrelationId)
++                await cache.set(this.rootAgentContext, cacheKey, tenantRecord)
++                this.logger.debug(`Cached tenant agent context for tenant '${contextCorrelationId}'`)
++            }
++        } else {
++            // Cache unavailable — fall back to DB directly
++            this.logger.warn('Cache not available, falling back to DB lookup')
++            tenantRecord = await this.tenantRecordService
++            .getTenantById(this.rootAgentContext, contextCorrelationId)
++        }
+         const shouldUpdate = !(0, core_1.isStorageUpToDate)(tenantRecord.storageVersion);
+         // If the tenant storage is not up to date, and autoUpdate is disabled we throw an error
+         if (shouldUpdate && !this.rootAgentContext.config.autoUpdateStorageOnStartup) {
+@@ -48,6 +70,19 @@ let TenantAgentContextProvider = class TenantAgentContextProvider {
+         this.logger.debug(`Created tenant agent context for tenant '${contextCorrelationId}'`);
+         return agentContext;
+     }
++
++    getCache() {
++        if (!this.cache) {
++            const registeredModules = this.rootAgentContext.dependencyManager.registeredModules
++            const cacheModule = Object.values(registeredModules).find(
++                m => m?.config?.options?.cache !== undefined
++            )
++            this.cache = cacheModule?.config?.options?.cache?.cache
++            this.logger.debug('Cache initialized: ' + (this.cache ? 'success' : 'failed'))
++        }
++        return this.cache
++    }
++
+     async getContextForInboundMessage(inboundMessage, options) {
+         this.logger.debug('Getting context for inbound message in tenant agent context provider', {
+             contextCorrelationId: options === null || options === void 0 ? void 0 : options.contextCorrelationId,
