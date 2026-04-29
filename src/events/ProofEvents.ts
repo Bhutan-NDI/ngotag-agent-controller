@@ -13,17 +13,25 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
     const body = { ...record.toJSON(), ...event.metadata } as { proofData?: any }
 
     if (record.state === ProofState.Done) {
-      if (event.metadata.contextCorrelationId !== 'default') {
-        await agent.modules.tenants.withTenantAgent(
-          { tenantId: event.metadata.contextCorrelationId },
-          async (tenantAgent) => {
-            const data = await tenantAgent.proofs.getFormatData(record.id)
-            body.proofData = data
-          }
+      try {
+        if (event.metadata.contextCorrelationId !== 'default') {
+          await agent.modules.tenants.withTenantAgent(
+            { tenantId: event.metadata.contextCorrelationId },
+            async (tenantAgent) => {
+              const data = await tenantAgent.proofs.getFormatData(record.id)
+              body.proofData = data
+            }
+          )
+        } else {
+          const data = await agent.proofs.getFormatData(record.id)
+          body.proofData = data
+        }
+      } catch (error) {
+        agent.config.logger.error(
+          `Failed to get proof format data for record ${record.id}, continuing with base record`,
+          { cause: error }
         )
-      } else {
-        const data = await agent.proofs.getFormatData(record.id)
-        body.proofData = data
+        body.proofData = null
       }
     }
 

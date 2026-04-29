@@ -19,25 +19,34 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
     }
 
     if (record.state === CredentialState.Done) {
-      if (event.metadata.contextCorrelationId !== 'default') {
-        await agent.modules.tenants.withTenantAgent(
-          { tenantId: event.metadata.contextCorrelationId },
-          async (tenantAgent) => {
-            const [data, connectionRecord] = await Promise.all([
-              tenantAgent.credentials.getFormatData(record.id),
-              record.connectionId ? tenantAgent.connections.findById(record.connectionId) : Promise.resolve(null),
-            ])
-            body.credentialData = data
-            body.outOfBandId = connectionRecord?.outOfBandId ?? null
-          }
+      try {
+        if (event.metadata.contextCorrelationId !== 'default') {
+          await agent.modules.tenants.withTenantAgent(
+            { tenantId: event.metadata.contextCorrelationId },
+            async (tenantAgent) => {
+              const [data, connectionRecord] = await Promise.all([
+                tenantAgent.credentials.getFormatData(record.id),
+                record.connectionId ? tenantAgent.connections.findById(record.connectionId) : Promise.resolve(null),
+              ])
+              body.credentialData = data
+              body.outOfBandId = connectionRecord?.outOfBandId ?? null
+            }
+          )
+        } else {
+          const [data, connectionRecord] = await Promise.all([
+            agent.credentials.getFormatData(record.id),
+            record.connectionId ? agent.connections.findById(record.connectionId) : Promise.resolve(null),
+          ])
+          body.credentialData = data
+          body.outOfBandId = connectionRecord?.outOfBandId ?? null
+        }
+      } catch (error) {
+        agent.config.logger.error(
+          `Failed to get credential format data for record ${record.id}, continuing with base record`,
+          { cause: error }
         )
-      } else {
-        const [data, connectionRecord] = await Promise.all([
-          agent.credentials.getFormatData(record.id),
-          record.connectionId ? agent.connections.findById(record.connectionId) : Promise.resolve(null),
-        ])
-        body.credentialData = data
-        body.outOfBandId = connectionRecord?.outOfBandId ?? null
+        body.credentialData = null
+        body.outOfBandId = null
       }
     }
 
