@@ -10,30 +10,16 @@ export const proofEvents = async (agent: Agent, config: ServerConfig) => {
   agent.events.on(ProofEventTypes.ProofStateChanged, async (event: ProofStateChangedEvent) => {
     const record = event.payload.proofRecord
     const body = { ...record.toJSON(), ...event.metadata } as { proofData?: any }
-    if (event.metadata.contextCorrelationId !== 'default' && record.state === 'done') {
-      const tenantAgent = await agent.modules.tenants.getTenantAgent({
-        tenantId: event.metadata.contextCorrelationId,
-      })
-      const data = await tenantAgent.proofs.getFormatData(record.id)
-      body.proofData = data
-      console.log(`body:`,JSON.stringify(body,null,2));
-    }
 
-    if (event.metadata.contextCorrelationId === 'default' && record.state === 'done')
-    {
-      const data = await agent.proofs.getFormatData(record.id);
-      body.proofData = data
-    }
-
-    //Emit webhook for dedicated agent
-    if (event.metadata.contextCorrelationId === 'default') {
-      const data = await agent.proofs.getFormatData(record.id)
-      body.proofData = data
-    }
-
-    // Only send webhook if webhook url is configured
-    if (config.webhookUrl) {
-      await sendWebhookEvent(config.webhookUrl + '/proofs', body, agent.config.logger)
+    if (record.state === 'done') {
+      if (event.metadata.contextCorrelationId !== 'default') {
+        const tenantAgent = await agent.modules.tenants.getTenantAgent({
+          tenantId: event.metadata.contextCorrelationId,
+        })
+        body.proofData = await tenantAgent.proofs.getFormatData(record.id)
+      } else {
+        body.proofData = await agent.proofs.getFormatData(record.id)
+      }
     }
 
     if (config.socketServer) {
@@ -45,6 +31,11 @@ export const proofEvents = async (agent: Agent, config: ServerConfig) => {
           proofRecord: body,
         },
       })
+    }
+
+    // Only send webhook if webhook url is configured. Do not block proof state handling on webhook delivery.
+    if (config.webhookUrl) {
+      void sendWebhookEvent(config.webhookUrl + '/proofs', body, agent.config.logger)
     }
   })
 }
