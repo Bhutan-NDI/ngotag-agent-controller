@@ -276,8 +276,8 @@ const getWithTenantModules = (
   )
   return {
     tenants: new TenantsModule<typeof modules>({
-      sessionAcquireTimeout: Number(process.env.SESSION_ACQUIRE_TIMEOUT) || Infinity,
-      sessionLimit: Number(process.env.SESSION_LIMIT) || Infinity,
+      sessionAcquireTimeout: Number(process.env.SESSION_ACQUIRE_TIMEOUT) || 10000,
+      sessionLimit: Number(process.env.SESSION_LIMIT) || 10,
     }),
     ...modules,
   }

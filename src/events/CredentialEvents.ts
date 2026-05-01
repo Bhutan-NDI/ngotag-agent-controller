@@ -2,7 +2,7 @@ import type { RestMultiTenantAgentModules } from '../cliAgent'
 import type { ServerConfig } from '../utils/ServerConfig'
 import type { Agent, CredentialStateChangedEvent } from '@credo-ts/core'
 
-import { CredentialEventTypes } from '@credo-ts/core'
+import { CredentialEventTypes, CredentialState } from '@credo-ts/core'
 
 import { sendWebSocketEvent } from './WebSocketEvents'
 import { sendWebhookEvent } from './WebhookEvent'
@@ -18,25 +18,41 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
       credentialData: null,
     }
 
-    if (event.metadata.contextCorrelationId !== 'default' && record?.connectionId) {
-      await agent.modules.tenants.withTenantAgent(
-        { tenantId: event.metadata.contextCorrelationId },
-        async (tenantAgent) => {
-          const connectionRecord = await tenantAgent.connections.findById(record.connectionId!)
-          const data = await tenantAgent.credentials.getFormatData(record.id)
+    if (record.state === CredentialState.Done) {
+      try {
+        if (event.metadata.contextCorrelationId !== 'default') {
+          await agent.modules.tenants.withTenantAgent(
+            { tenantId: event.metadata.contextCorrelationId },
+            async (tenantAgent) => {
+              const [data, connectionRecord] = await Promise.all([
+                tenantAgent.credentials.getFormatData(record.id),
+                record.connectionId ? tenantAgent.connections.findById(record.connectionId) : Promise.resolve(null),
+              ])
+              body.credentialData = data
+              body.outOfBandId = connectionRecord?.outOfBandId ?? null
+            }
+          )
+        } else {
+          const [data, connectionRecord] = await Promise.all([
+            agent.credentials.getFormatData(record.id),
+            record.connectionId ? agent.connections.findById(record.connectionId) : Promise.resolve(null),
+          ])
           body.credentialData = data
-          body.outOfBandId = connectionRecord?.outOfBandId
+          body.outOfBandId = connectionRecord?.outOfBandId ?? null
         }
-      )
+      } catch (error) {
+        agent.config.logger.error(
+          `Failed to get credential format data for record ${record.id}, continuing with base record`,
+          { cause: error }
+        )
+        body.credentialData = null
+        body.outOfBandId = null
+      }
     }
 
-    if (event.metadata.contextCorrelationId === 'default') {
-      const data = await agent.credentials.getFormatData(record.id)
-      body.credentialData = data
-    }
     // Only send webhook if webhook url is configured
     if (config.webhookUrl) {
-      await sendWebhookEvent(config.webhookUrl + '/credentials', body, agent.config.logger)
+      sendWebhookEvent(config.webhookUrl + '/credentials', body, agent.config.logger)
     }
 
     if (config.socketServer) {
