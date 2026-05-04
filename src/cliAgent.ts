@@ -57,6 +57,7 @@ import jwt from 'jsonwebtoken'
 
 import { IndicioAcceptanceMechanism, IndicioTransactionAuthorAgreement, Network, NetworkName } from './enums/enum'
 import { setupServer } from './server'
+import { buildCachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
 import { TsLogger } from './utils/logger'
 
@@ -212,7 +213,9 @@ const getModules = (
         }),
       ],
     }),
-    w3cCredentials: new W3cCredentialsModule(),
+    w3cCredentials: new W3cCredentialsModule({
+      documentLoader: buildCachedDocumentLoader(logger),
+    }),
     cache: new CacheModule({
       cache: initializeCache(logger),
     }),
@@ -234,7 +237,7 @@ const getModules = (
           {
             name: 'sepolia',
             chainId: 11155111,
-            rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/API-KEY',
+            rpcUrl: 'https://ethereum-sepolia-rpc.publicnode.com',
             registry: '0x485cFb9cdB84c0a5AfE69b75E2e79497Fc2256Fc',
           },
         ],
