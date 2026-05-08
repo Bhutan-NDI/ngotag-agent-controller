@@ -7,7 +7,10 @@ import { CacheModuleConfig } from '@credo-ts/core'
 import { defaultDocumentLoader } from '@credo-ts/core/build/modules/vc/data-integrity/libraries/documentLoader'
 
 const DOCUMENT_LOADER_CACHE_PREFIX = 'jsonld:document:'
-const DOCUMENT_CACHE_TTL_SECONDS = 86400 // 24 hours
+const DOCUMENT_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7 // 7 days
+const SCHEMA_SERVER_URL = process.env.SERVER_URL ?? 'https://dev-schema.ngotag.com'
+
+const NGOTAG_SCHEMA_PREFIX = `${SCHEMA_SERVER_URL}/schemas/`
 
 export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithContext => {
   // Return a factory function that Credo calls with agentContext
@@ -18,8 +21,8 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
 
     return async (url: string): Promise<DocumentLoaderResult> => {
       // Let Credo handle bundled contexts and DIDs natively
-      const isExternalUrl = url.startsWith('http://') || url.startsWith('https://')
-      if (!isExternalUrl) {
+      const shouldCache = url.startsWith(NGOTAG_SCHEMA_PREFIX)
+      if (!shouldCache) {
         return defaultLoader(url)
       }
 
@@ -56,7 +59,16 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
       try {
         const cache = agentContext.dependencyManager.resolve(CacheModuleConfig).cache
 
-        await cache.set(agentContext, cacheKey, document, DOCUMENT_CACHE_TTL_SECONDS)
+        await cache.set(
+          agentContext,
+          cacheKey,
+          {
+            contextUrl: document.contextUrl,
+            documentUrl: document.documentUrl,
+            document: document.document,
+          },
+          DOCUMENT_CACHE_TTL_SECONDS
+        )
         logger.debug(`Document loader cached successfully: ${url}`)
       } catch (err) {
         logger.warn(`Failed to cache document for ${url}: ${err}`)
