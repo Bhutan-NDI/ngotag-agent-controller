@@ -1,7 +1,9 @@
-import type { TsLogger } from './logger'
 import type { AgentContext } from '@credo-ts/core'
+import type { RedisOptions } from 'ioredis'
 
 import { Redis } from 'ioredis'
+
+import type { TsLogger } from './logger'
 
 enum RedisCacheConnectionState {
   Connecting = 'connecting',
@@ -9,59 +11,91 @@ enum RedisCacheConnectionState {
   Reconnecting = 'reconnecting',
   Closed = 'closed',
 }
+
+const RECONNECT_BASE_DELAY_MS = 500
+const RECONNECT_MAX_DELAY_MS = 30000
+const CONNECT_TIMEOUT_MS = 5000
+const COMMAND_TIMEOUT_MS = 3000
+const KEEP_ALIVE_MS = 10000
+const MAX_RETRIES_PER_REQUEST = null
+
+
 export class RedisCache {
   private client: Redis
-  private ttlSeconds: number
-  private isConnected: boolean = false
-  private logger: TsLogger
+  private readonly ttlSeconds: number
+  private readonly logger: TsLogger
+  private readonly redisUrl: string
   private connectionState: RedisCacheConnectionState = RedisCacheConnectionState.Connecting
 
   public constructor(redisUrl: string, logger: TsLogger, ttlSeconds: number = 600) {
     this.ttlSeconds = ttlSeconds
     this.logger = logger
+    this.redisUrl = redisUrl
 
-    this.client = new Redis(redisUrl, {
-      connectTimeout: 3000, // fail fast on connect
-      commandTimeout: 2000, // fail fast on commands
-      maxRetriesPerRequest: 1, // one retry then fail — fall back to DB
-      keepAlive: 5000,
-      family: 4, // IPv4 — appropriate for AWS VPC
-      enableOfflineQueue: false, // don't queue while disconnected
-      lazyConnect: true,
-      retryStrategy(times) {
-        if (times > 5) {
-          return null // stop retrying — circuit open
-        }
-        return Math.min(times * 500, 3000)
+    this.client = this.createClient()
+  }
+
+  private createClient(): Redis {
+    const options: RedisOptions = {
+      connectTimeout: CONNECT_TIMEOUT_MS,
+      commandTimeout: COMMAND_TIMEOUT_MS,
+      keepAlive: KEEP_ALIVE_MS,
+      family: 4, 
+
+      enableOfflineQueue: false,
+
+      maxRetriesPerRequest: MAX_RETRIES_PER_REQUEST,
+
+      lazyConnect: false,
+
+      retryStrategy(times: number): number {
+        // Exponential backoff: 500ms, 1000ms, 2000ms, 4000ms ... capped at 30s
+        const delay = Math.min(RECONNECT_BASE_DELAY_MS * Math.pow(2, times - 1), RECONNECT_MAX_DELAY_MS)
+        return delay
       },
-    })
 
-    this.client.on('connect', () => {
+      // Reconnect on specific Redis errors (e.g. READONLY during failover)
+      reconnectOnError(err: Error): boolean {
+        const targetErrors = ['READONLY', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT']
+        return targetErrors.some((e) => err.message.includes(e))
+      },
+    }
+
+    const client = new Redis(this.redisUrl, options)
+    this.attachEventHandlers(client)
+    return client
+  }
+
+  private attachEventHandlers(client: Redis): void {
+    client.on('connect', () => {
       this.connectionState = RedisCacheConnectionState.Connecting
-      this.logger.info('RedisCache connecting')
+      this.logger.info('RedisCache TCP connection established — waiting for ready')
     })
 
-    this.client.on('ready', () => {
+    client.on('ready', () => {
       this.connectionState = RedisCacheConnectionState.Ready
-      this.logger.info('RedisCache ready')
+      this.logger.info('RedisCache ready — accepting commands')
     })
 
-    this.client.on('reconnecting', () => {
-      this.connectionState = RedisCacheConnectionState.Connecting
-      this.logger.warn('RedisCache reconnecting')
+    client.on('reconnecting', () => {
+      this.connectionState = RedisCacheConnectionState.Reconnecting
+      this.logger.warn('RedisCache reconnecting — falling back to DB until restored')
     })
 
-    this.client.on('error', (err) => {
+    client.on('error', (err: Error) => {
       this.logger.error(`RedisCache error: ${err.message}`)
     })
 
-    this.client.on('end', () => {
-      this.connectionState = RedisCacheConnectionState.Closed
-      this.logger.warn('RedisCache connection closed — falling back to DB for all requests')
+    client.on('close', () => {
+      if (this.connectionState !== RedisCacheConnectionState.Reconnecting) {
+        this.connectionState = RedisCacheConnectionState.Closed
+        this.logger.warn('RedisCache connection closed')
+      }
     })
 
-    this.client.connect().catch((err) => {
-      this.logger.error(`RedisCache initial connection failed: ${err.message}`)
+    client.on('end', () => {
+      this.connectionState = RedisCacheConnectionState.Closed
+      this.logger.warn('RedisCache client ended — no further reconnection attempts')
     })
   }
 
@@ -69,9 +103,15 @@ export class RedisCache {
     return this.connectionState === RedisCacheConnectionState.Ready
   }
 
+  public connect(): void {
+    this.client.connect().catch((err: Error) => {
+      this.logger.error(`RedisCache initial connection attempt failed: ${err.message}`)
+    })
+  }
+
   public async get<T>(_agentContext: AgentContext, key: string): Promise<T | null> {
     if (!this.isReady()) {
-      this.logger.warn(`RedisCache not ready (${this.connectionState})`)
+      this.logger.debug(`RedisCache not ready (${this.connectionState}) — cache miss for key ${key}`)
       return null
     }
     try {
@@ -101,6 +141,16 @@ export class RedisCache {
       await this.client.del(key)
     } catch (err) {
       this.logger.error(`RedisCache remove error for key ${key}: ${err}`)
+    }
+  }
+
+  public async disconnect(): Promise<void> {
+    this.logger.info('RedisCache disconnecting gracefully')
+    try {
+      await this.client.quit()
+    } catch (err) {
+      this.logger.error(`RedisCache graceful disconnect failed: ${err}`)
+      this.client.disconnect()
     }
   }
 }
