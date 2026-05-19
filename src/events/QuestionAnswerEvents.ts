@@ -16,7 +16,7 @@ export const questionAnswerEvents = async (agent: Agent, config: ServerConfig) =
 
       // Only send webhook if webhook url is configured
       if (config.webhookUrl) {
-        await sendWebhookEvent(config.webhookUrl + '/question-answer', body, agent.config.logger)
+        sendWebhookEvent(config.webhookUrl + '/question-answer', body, agent.config.logger)
       }
 
       if (config.socketServer) {

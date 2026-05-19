@@ -29,7 +29,6 @@ import {
   KeyDidRegistrar,
   KeyDidResolver,
   CacheModule,
-  InMemoryLruCache,
   WebDidResolver,
   HttpOutboundTransport,
   WsOutboundTransport,
@@ -37,6 +36,7 @@ import {
   Agent,
   JsonLdCredentialFormatService,
   DifPresentationExchangeProofFormatService,
+  InMemoryLruCache,
 } from '@credo-ts/core'
 import {
   IndyVdrAnonCredsRegistry,
@@ -57,6 +57,8 @@ import jwt from 'jsonwebtoken'
 
 import { IndicioAcceptanceMechanism, IndicioTransactionAuthorAgreement, Network, NetworkName } from './enums/enum'
 import { setupServer } from './server'
+import { buildCachedDocumentLoader } from './utils/CachedDocumentLoader'
+import { RedisCache } from './utils/RedisCache'
 import { TsLogger } from './utils/logger'
 
 export type Transports = 'ws' | 'http'
@@ -116,6 +118,20 @@ export type RestMultiTenantAgentModules = Awaited<ReturnType<typeof getWithTenan
 
 export type RestAgentModules = Awaited<ReturnType<typeof getModules>>
 
+const initializeCache = (logger: TsLogger) => {
+  const redisUrl = process.env.REDIS_URL
+
+  if (redisUrl) {
+    logger.info('Redis URL found — initializing RedisCache')
+    return new RedisCache(redisUrl, logger, Number(process.env.REDIS_CACHE_TTL_SECONDS) || 600)
+  }
+
+  logger.warn('Redis URL not found — falling back to InMemoryLruCache')
+  return new InMemoryLruCache({
+    limit: Number(process.env.INMEMORY_LRU_CACHE_LIMIT) || 1000,
+  })
+}
+
 // TODO: add object
 const getModules = (
   networkConfig: [IndyVdrPoolConfig, ...IndyVdrPoolConfig[]],
@@ -127,7 +143,8 @@ const getModules = (
   autoAcceptConnections: boolean,
   autoAcceptCredentials: AutoAcceptCredential,
   autoAcceptProofs: AutoAcceptProof,
-  walletScheme: AskarMultiWalletDatabaseScheme
+  walletScheme: AskarMultiWalletDatabaseScheme,
+  logger: TsLogger
 ) => {
   const legacyIndyCredentialFormat = new LegacyIndyCredentialFormatService()
   const legacyIndyProofFormat = new LegacyIndyProofFormatService()
@@ -196,9 +213,11 @@ const getModules = (
         }),
       ],
     }),
-    w3cCredentials: new W3cCredentialsModule(),
+    w3cCredentials: new W3cCredentialsModule({
+      documentLoader: buildCachedDocumentLoader(logger),
+    }),
     cache: new CacheModule({
-      cache: new InMemoryLruCache({ limit: Number(process.env.INMEMORY_LRU_CACHE_LIMIT) || Infinity }),
+      cache: initializeCache(logger),
     }),
 
     questionAnswer: new QuestionAnswerModule(),
@@ -218,7 +237,7 @@ const getModules = (
           {
             name: 'sepolia',
             chainId: 11155111,
-            rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/API-KEY',
+            rpcUrl: 'https://ethereum-sepolia-rpc.publicnode.com',
             registry: '0x485cFb9cdB84c0a5AfE69b75E2e79497Fc2256Fc',
           },
         ],
@@ -242,7 +261,8 @@ const getWithTenantModules = (
   autoAcceptConnections: boolean,
   autoAcceptCredentials: AutoAcceptCredential,
   autoAcceptProofs: AutoAcceptProof,
-  walletScheme: AskarMultiWalletDatabaseScheme
+  walletScheme: AskarMultiWalletDatabaseScheme,
+  logger: TsLogger
 ) => {
   const modules = getModules(
     networkConfig,
@@ -254,12 +274,13 @@ const getWithTenantModules = (
     autoAcceptConnections,
     autoAcceptCredentials,
     autoAcceptProofs,
-    walletScheme
+    walletScheme,
+    logger
   )
   return {
     tenants: new TenantsModule<typeof modules>({
-      sessionAcquireTimeout: Number(process.env.SESSION_ACQUIRE_TIMEOUT) || Infinity,
-      sessionLimit: Number(process.env.SESSION_LIMIT) || Infinity,
+      sessionAcquireTimeout: Number(process.env.SESSION_ACQUIRE_TIMEOUT) || 10000,
+      sessionLimit: Number(process.env.SESSION_LIMIT) || 10,
     }),
     ...modules,
   }
@@ -385,7 +406,8 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     autoAcceptConnections || true,
     autoAcceptCredentials || AutoAcceptCredential.Always,
     autoAcceptProofs || AutoAcceptProof.ContentApproved,
-    walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet
+    walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet,
+    logger
   )
   const modules = getModules(
     networkConfig,
@@ -397,18 +419,12 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     autoAcceptConnections || true,
     autoAcceptCredentials || AutoAcceptCredential.Always,
     autoAcceptProofs || AutoAcceptProof.ContentApproved,
-    walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet
+    walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet,
+    logger
   )
   const agent = new Agent({
     config: agentConfig,
-    modules: {
-      ...(afjConfig.tenancy
-        ? {
-            ...tenantModule,
-          }
-        : {}),
-      ...modules,
-    },
+    modules: afjConfig.tenancy ? tenantModule : modules,
     dependencies: agentDependencies,
   })
 
