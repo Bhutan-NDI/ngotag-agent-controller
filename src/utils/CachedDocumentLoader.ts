@@ -5,6 +5,9 @@ import type { DocumentLoaderResult } from '@credo-ts/core/build/modules/vc/data-
 
 import { CacheModuleConfig } from '@credo-ts/core'
 import { defaultDocumentLoader } from '@credo-ts/core/build/modules/vc/data-integrity/libraries/documentLoader'
+import { LogLevel } from '@credo-ts/core'
+
+import { emitStructured, makeSpanId, monoNow, durationMs } from './StructuredLogger'
 
 const DOCUMENT_LOADER_CACHE_PREFIX = 'jsonld:document:'
 const DOCUMENT_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7 // 7 days
@@ -36,6 +39,16 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
 
         if (cached) {
           logger.debug(`Document loader cache hit for: ${url}`)
+          emitStructured(LogLevel.info, {
+            hop: 'controller.jsonld.context.fetch.end',
+            flow: 'verification',
+            span_id: makeSpanId(),
+            outer_msg_id: '',
+            tenant_id: '',
+            duration_ms: 0,
+            cache_hit: true,
+            url,
+          })
           return cached
         }
       } catch (err) {
@@ -46,11 +59,44 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
       // Cache miss — fetch via default loader
       logger.debug(`Document loader cache miss — fetching: ${url}`)
 
+      const _fetchSpanId = makeSpanId()
+      const _fetchStart = monoNow()
+      emitStructured(LogLevel.info, {
+        hop: 'controller.jsonld.context.fetch.start',
+        flow: 'verification',
+        span_id: _fetchSpanId,
+        outer_msg_id: '',
+        tenant_id: '',
+        cache_hit: false,
+        url,
+      })
+
       let document: DocumentLoaderResult
 
       try {
         document = await defaultLoader(url)
+        emitStructured(LogLevel.info, {
+          hop: 'controller.jsonld.context.fetch.end',
+          flow: 'verification',
+          span_id: _fetchSpanId,
+          outer_msg_id: '',
+          tenant_id: '',
+          duration_ms: durationMs(_fetchStart),
+          cache_hit: false,
+          url,
+        })
       } catch (err) {
+        emitStructured(LogLevel.info, {
+          hop: 'controller.jsonld.context.fetch.end',
+          flow: 'verification',
+          span_id: _fetchSpanId,
+          outer_msg_id: '',
+          tenant_id: '',
+          duration_ms: durationMs(_fetchStart),
+          cache_hit: false,
+          url,
+          notes: `fetch_error: ${String(err)}`,
+        })
         logger.error(`Document loader failed to fetch ${url}: ${err}`)
         throw err
       }
