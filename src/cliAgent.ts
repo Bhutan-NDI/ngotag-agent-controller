@@ -60,6 +60,8 @@ import { setupServer } from './server'
 import { buildCachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
 import { TsLogger } from './utils/logger'
+import { emitStructured, makeSpanId, monoNow, tryExtractFromJwe } from './utils/StructuredLogger'
+import { startGauges } from './instrumentation/gauges'
 
 export type Transports = 'ws' | 'http'
 export type InboundTransport = {
@@ -437,10 +439,52 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   // Register inbound transports
   for (const inboundTransport of inboundTransports) {
     const InboundTransport = inboundTransportMapping[inboundTransport.transport]
-    agent.registerInboundTransport(new InboundTransport({ port: inboundTransport.port }))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const transport: any = new (InboundTransport as any)({ port: inboundTransport.port })
+    // Add instrumentation middleware to the HTTP inbound transport's express app.
+    // express.text() body parser is added in the transport constructor so req.body is
+    // available as a string when our middleware fires.
+    if (inboundTransport.transport === 'http' && transport.app) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      transport.app.use((req: any, res: any, next: any) => {
+        if (req.method === 'POST') {
+          const raw: string = typeof req.body === 'string' ? req.body : ''
+          const { recipientKeyShort, outerMsgId } = raw
+            ? tryExtractFromJwe(raw)
+            : { recipientKeyShort: '', outerMsgId: '' }
+          const spanId = makeSpanId()
+          emitStructured(LogLevel.debug, {
+            hop: 'controller.http.inbound.received',
+            flow: 'verification',
+            span_id: spanId,
+            outer_msg_id: outerMsgId,
+            recipient_key_short: recipientKeyShort,
+            content_length: req.headers['content-length'] ? Number(req.headers['content-length']) : undefined,
+            notes: outerMsgId ? undefined : 'outer_msg_id not in JWE protected header — timing join only',
+          })
+          res.locals.__dbg_span = spanId
+          res.locals.__dbg_start = monoNow()
+        }
+        next()
+      })
+    }
+    agent.registerInboundTransport(transport)
   }
 
   await agent.initialize()
+
+  emitStructured(LogLevel.info, {
+    hop: 'controller.config.dump',
+    flow: 'lifecycle',
+    notes: 'effective config at startup',
+    session_limit: Number(process.env.SESSION_LIMIT) || 10,
+    session_acquire_timeout_ms: Number(process.env.SESSION_ACQUIRE_TIMEOUT) || 10000,
+    wallet_scheme: walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet,
+    tenancy: afjConfig.tenancy ?? false,
+    admin_port: adminPort,
+  })
+
+  startGauges()
 
   let token: string = ''
   const genericRecord = await agent.genericRecords.getAll()
