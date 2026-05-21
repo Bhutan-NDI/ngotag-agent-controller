@@ -34,7 +34,7 @@ export type FlowType =
 
 export interface StructuredLogLine {
   hop: HopName
-  flow: FlowType
+  flow?: FlowType
   thread_id?: string
   outer_msg_id?: string
   recipient_key_short?: string
@@ -89,24 +89,23 @@ export function tryExtractFromJwe(rawBody: string): { recipientKeyShort: string;
     let recipientKeyShort = ''
     let outerMsgId = ''
 
+    // recipients is a top-level JWE JSON field, not inside the protected header
+    const recipients = parsed['recipients']
+    if (Array.isArray(recipients) && recipients.length > 0) {
+      const firstRecip = recipients[0] as Record<string, unknown>
+      const hdr = firstRecip['header'] as Record<string, unknown> | undefined
+      const kid = hdr?.['kid']
+      if (typeof kid === 'string') recipientKeyShort = truncateKey(kid)
+    }
+
+    // @id is non-standard in JWE but check the protected header anyway
     const protectedB64 = parsed['protected']
     if (typeof protectedB64 === 'string') {
       try {
         const headerStr = Buffer.from(protectedB64, 'base64').toString('utf8')
         const header = JSON.parse(headerStr) as Record<string, unknown>
-        // @id in protected header is non-standard but check anyway
         const id = header['@id'] || header['id']
         if (typeof id === 'string') outerMsgId = id
-        // Recipient kid from the first recipient header
-        const recipients = header['recipients']
-        if (Array.isArray(recipients) && recipients.length > 0) {
-          const firstRecip = recipients[0] as Record<string, unknown>
-          const hdr = firstRecip['header'] as Record<string, unknown> | undefined
-          if (hdr) {
-            const kid = hdr['kid']
-            if (typeof kid === 'string') recipientKeyShort = truncateKey(kid)
-          }
-        }
       } catch {
         // ignore
       }

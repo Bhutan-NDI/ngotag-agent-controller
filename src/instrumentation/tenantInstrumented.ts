@@ -7,7 +7,7 @@ type TenantAgent = any
 import { LogLevel } from '@credo-ts/core'
 
 import { emitStructured, makeSpanId, monoNow, durationMs } from '../utils/StructuredLogger'
-import { sessionAcquireStart, sessionAcquireEnd, sessionReleased } from './metrics'
+import { sessionAcquireStart, sessionAcquireEnd, sessionAcquireFailed, sessionReleased } from './metrics'
 
 type TenantCallback<T> = (tenantAgent: TenantAgent) => Promise<T>
 
@@ -41,8 +41,14 @@ export async function withInstrumentedTenantAgent<T>(
     outer_msg_id: '',
   })
 
+  // Tracks whether withTenantAgent entered the callback. If it throws before
+  // doing so (timeout, invalid tenant), we must call sessionAcquireFailed()
+  // instead of sessionReleased() to avoid phantom in-flight counts.
+  let callbackEntered = false
+
   try {
     const result = await agent.modules.tenants.withTenantAgent({ tenantId }, async (tenantAgent) => {
+      callbackEntered = true
       const waitMs = durationMs(acquireStart)
       sessionAcquireEnd(waitMs)
 
@@ -66,7 +72,23 @@ export async function withInstrumentedTenantAgent<T>(
       return callback(tenantAgent)
     })
     return result
+  } catch (err) {
+    if (!callbackEntered) {
+      // withTenantAgent failed before the session was acquired (semaphore timeout,
+      // invalid tenant, etc.). Decrement waiting without touching in-flight.
+      sessionAcquireFailed()
+      emitStructured(LogLevel.info, {
+        hop: 'controller.session.acquire.end',
+        flow,
+        span_id: acquireSpanId,
+        tenant_id: tenantId,
+        outer_msg_id: '',
+        duration_ms: durationMs(acquireStart),
+        notes: `acquire_failed: ${String(err)}`,
+      })
+    }
+    throw err
   } finally {
-    sessionReleased()
+    if (callbackEntered) sessionReleased()
   }
 }

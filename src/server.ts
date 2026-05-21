@@ -77,10 +77,14 @@ export const setupServer = async (agent: Agent, config: ServerConfig, apiKey?: s
     next()
   })
 
+  // Admin endpoints are mounted before SecurityMiddleware so the Bearer-token
+  // check in authMiddleware is the sole guard on /admin routes — the API-key
+  // middleware must not intercept them first.
+  registerAdminEndpoints(app)
+
   const securityMiddleware = new SecurityMiddleware()
   app.use(securityMiddleware.use)
   RegisterRoutes(app)
-  registerAdminEndpoints(app)
 
   app.use(function errorHandler(err: unknown, req: ExRequest, res: ExResponse, next: NextFunction): ExResponse | void {
     if (err instanceof ValidateError) {

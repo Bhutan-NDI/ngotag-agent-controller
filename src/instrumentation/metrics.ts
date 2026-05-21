@@ -16,6 +16,12 @@ export function sessionAcquireEnd(waitMs: number): void {
   if (_sessionsWaitedMs.length > 500) _sessionsWaitedMs.shift()
 }
 
+// Called when withTenantAgent throws before the callback is entered (e.g. timeout,
+// invalid tenant). Decrements waiting without touching in-flight.
+export function sessionAcquireFailed(): void {
+  _sessionsWaiting = Math.max(0, _sessionsWaiting - 1)
+}
+
 export function sessionReleased(): void {
   _sessionsInFlight = Math.max(0, _sessionsInFlight - 1)
 }

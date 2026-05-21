@@ -4,8 +4,6 @@ import express from 'express'
 
 import { getDebugLogLevel, setDebugLogLevel } from './logLevelHolder'
 
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN
-
 const LOG_LEVEL_MAP: Record<string, LogLevel> = {
   test: LogLevel.test,
   trace: LogLevel.trace,
@@ -18,12 +16,14 @@ const LOG_LEVEL_MAP: Record<string, LogLevel> = {
 }
 
 function authMiddleware(req: Request, res: Response, next: () => void): void {
-  if (!ADMIN_TOKEN) {
+  // Read at call time so dotenv.config() in server.ts has already run
+  const adminToken = process.env.ADMIN_TOKEN
+  if (!adminToken) {
     res.status(503).json({ error: 'admin endpoint disabled (ADMIN_TOKEN not set)' })
     return
   }
   const authHeader = req.headers['authorization']
-  if (!authHeader || authHeader !== `Bearer ${ADMIN_TOKEN}`) {
+  if (!authHeader || authHeader !== `Bearer ${adminToken}`) {
     res.status(401).json({ error: 'unauthorized' })
     return
   }

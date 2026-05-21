@@ -455,7 +455,6 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
           const spanId = makeSpanId()
           emitStructured(LogLevel.debug, {
             hop: 'controller.http.inbound.received',
-            flow: 'verification',
             span_id: spanId,
             outer_msg_id: outerMsgId,
             recipient_key_short: recipientKeyShort,
