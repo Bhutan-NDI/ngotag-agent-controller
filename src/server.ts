@@ -14,6 +14,7 @@ import { container } from 'tsyringe'
 
 import { setDynamicApiKey } from './authentication'
 import { BaseError } from './errors/errors'
+import { registerAdminEndpoints } from './instrumentation/adminEndpoint'
 import { basicMessageEvents } from './events/BasicMessageEvents'
 import { connectionEvents } from './events/ConnectionEvents'
 import { credentialEvents } from './events/CredentialEvents'
@@ -79,6 +80,7 @@ export const setupServer = async (agent: Agent, config: ServerConfig, apiKey?: s
   const securityMiddleware = new SecurityMiddleware()
   app.use(securityMiddleware.use)
   RegisterRoutes(app)
+  registerAdminEndpoints(app)
 
   app.use(function errorHandler(err: unknown, req: ExRequest, res: ExResponse, next: NextFunction): ExResponse | void {
     if (err instanceof ValidateError) {
