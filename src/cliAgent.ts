@@ -454,7 +454,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
             ? tryExtractFromJwe(raw)
             : { recipientKeyShort: '', outerMsgId: '' }
           const spanId = makeSpanId()
-          emitStructured(LogLevel.debug, {
+          emitStructured(LogLevel.info, {
             hop: 'controller.http.inbound.received',
             span_id: spanId,
             outer_msg_id: outerMsgId,

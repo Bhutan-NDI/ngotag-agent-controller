@@ -61,6 +61,7 @@ export async function withInstrumentedTenantAgent<T>(
         span_id: acquireSpanId,
         tenant_id: tenantId,
         outer_msg_id: outerMsgId,
+        wait_ms: waitMs,
         duration_ms: waitMs,
       })
       emitStructured(LogLevel.debug, {

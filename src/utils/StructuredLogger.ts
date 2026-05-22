@@ -42,6 +42,7 @@ export interface StructuredLogLine {
   conn_id?: string
   span_id?: string
   duration_ms?: number
+  wait_ms?: number
   notes?: string
   [key: string]: unknown
 }
