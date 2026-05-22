@@ -26,43 +26,78 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
       credential_state: record.state,
     })
 
-    const handlerSpanId = makeSpanId()
-    const handlerStart = monoNow()
-    emitStructured(LogLevel.info, {
-      hop: 'controller.handler.entry',
-      flow: 'issuance',
-      thread_id: threadId,
-      outer_msg_id: '',
-      span_id: handlerSpanId,
-      tenant_id: tenantId,
-      conn_id: record.connectionId ?? '',
-    })
-
     const body: Record<string, unknown> = {
       ...record.toJSON(),
       ...event.metadata,
       outOfBandId: null,
       credentialData: null,
     }
+    const handlerSpanId = makeSpanId()
 
     if (record.state === CredentialState.Done) {
+      // For Done state, handler.entry/exit are placed inside (or around) the
+      // session-acquire scope so handler.exit.duration_ms reflects only post-acquire
+      // work — not the semaphore wait, which is already captured in
+      // controller.session.acquire.end.duration_ms.
       try {
         if (tenantId !== 'default') {
           await withInstrumentedTenantAgent(agent, tenantId, 'issuance', async (tenantAgent) => {
+            const handlerStart = monoNow()
+            emitStructured(LogLevel.info, {
+              hop: 'controller.handler.entry',
+              flow: 'issuance',
+              thread_id: threadId,
+              outer_msg_id: '',
+              span_id: handlerSpanId,
+              tenant_id: tenantId,
+              conn_id: record.connectionId ?? '',
+            })
             const [data, connectionRecord] = await Promise.all([
               tenantAgent.credentials.getFormatData(record.id),
               record.connectionId ? tenantAgent.connections.findById(record.connectionId) : Promise.resolve(null),
             ])
             body.credentialData = data
             body.outOfBandId = connectionRecord?.outOfBandId ?? null
+            emitStructured(LogLevel.info, {
+              hop: 'controller.handler.exit',
+              flow: 'issuance',
+              thread_id: threadId,
+              outer_msg_id: '',
+              span_id: handlerSpanId,
+              tenant_id: tenantId,
+              conn_id: record.connectionId ?? '',
+              duration_ms: durationMs(handlerStart),
+              credential_state: record.state,
+            })
           })
         } else {
+          const handlerStart = monoNow()
+          emitStructured(LogLevel.info, {
+            hop: 'controller.handler.entry',
+            flow: 'issuance',
+            thread_id: threadId,
+            outer_msg_id: '',
+            span_id: handlerSpanId,
+            tenant_id: tenantId,
+            conn_id: record.connectionId ?? '',
+          })
           const [data, connectionRecord] = await Promise.all([
             agent.credentials.getFormatData(record.id),
             record.connectionId ? agent.connections.findById(record.connectionId) : Promise.resolve(null),
           ])
           body.credentialData = data
           body.outOfBandId = connectionRecord?.outOfBandId ?? null
+          emitStructured(LogLevel.info, {
+            hop: 'controller.handler.exit',
+            flow: 'issuance',
+            thread_id: threadId,
+            outer_msg_id: '',
+            span_id: handlerSpanId,
+            tenant_id: tenantId,
+            conn_id: record.connectionId ?? '',
+            duration_ms: durationMs(handlerStart),
+            credential_state: record.state,
+          })
         }
       } catch (error) {
         agent.config.logger.error(
@@ -72,19 +107,30 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
         body.credentialData = null
         body.outOfBandId = null
       }
+    } else {
+      // Non-Done states: no session acquire involved — wrap the full (instant) handler.
+      const handlerStart = monoNow()
+      emitStructured(LogLevel.info, {
+        hop: 'controller.handler.entry',
+        flow: 'issuance',
+        thread_id: threadId,
+        outer_msg_id: '',
+        span_id: handlerSpanId,
+        tenant_id: tenantId,
+        conn_id: record.connectionId ?? '',
+      })
+      emitStructured(LogLevel.info, {
+        hop: 'controller.handler.exit',
+        flow: 'issuance',
+        thread_id: threadId,
+        outer_msg_id: '',
+        span_id: handlerSpanId,
+        tenant_id: tenantId,
+        conn_id: record.connectionId ?? '',
+        duration_ms: durationMs(handlerStart),
+        credential_state: record.state,
+      })
     }
-
-    emitStructured(LogLevel.info, {
-      hop: 'controller.handler.exit',
-      flow: 'issuance',
-      thread_id: threadId,
-      outer_msg_id: '',
-      span_id: handlerSpanId,
-      tenant_id: tenantId,
-      conn_id: record.connectionId ?? '',
-      duration_ms: durationMs(handlerStart),
-      credential_state: record.state,
-    })
 
     // Only send webhook if webhook url is configured
     if (config.webhookUrl) {

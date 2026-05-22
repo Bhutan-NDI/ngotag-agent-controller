@@ -69,6 +69,30 @@ export async function withInstrumentedTenantAgent<T>(
         duration_ms: durationMs(resolveStart),
       })
 
+      // Measure first Askar access (wallet open / profile attach) for H8.
+      const walletSpanId = makeSpanId()
+      const walletStart = monoNow()
+      emitStructured(LogLevel.debug, {
+        hop: 'controller.wallet.open.start',
+        flow,
+        span_id: walletSpanId,
+        tenant_id: tenantId,
+      })
+      // The first awaited operation in the callback triggers the wallet open.
+      // We ping genericRecords as the lightest available read that forces it.
+      try {
+        await tenantAgent.genericRecords.getAll()
+      } catch {
+        // ignore — only measuring timing; the callback may not need genericRecords
+      }
+      emitStructured(LogLevel.debug, {
+        hop: 'controller.wallet.open.end',
+        flow,
+        span_id: walletSpanId,
+        tenant_id: tenantId,
+        duration_ms: durationMs(walletStart),
+      })
+
       return callback(tenantAgent)
     })
     return result

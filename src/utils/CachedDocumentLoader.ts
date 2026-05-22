@@ -31,6 +31,8 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
 
       // Check cache for external URLs
       const cacheKey = `${DOCUMENT_LOADER_CACHE_PREFIX}${url}`
+      const _fetchSpanId = makeSpanId()
+      const _fetchStart = monoNow()
 
       try {
         const cache = agentContext.dependencyManager.resolve(CacheModuleConfig).cache
@@ -41,11 +43,10 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
           logger.debug(`Document loader cache hit for: ${url}`)
           emitStructured(LogLevel.info, {
             hop: 'controller.jsonld.context.fetch.end',
-            flow: 'verification',
-            span_id: makeSpanId(),
+            span_id: _fetchSpanId,
             outer_msg_id: '',
             tenant_id: '',
-            duration_ms: 0,
+            duration_ms: durationMs(_fetchStart),
             cache_hit: true,
             url,
           })
@@ -59,11 +60,8 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
       // Cache miss — fetch via default loader
       logger.debug(`Document loader cache miss — fetching: ${url}`)
 
-      const _fetchSpanId = makeSpanId()
-      const _fetchStart = monoNow()
       emitStructured(LogLevel.info, {
         hop: 'controller.jsonld.context.fetch.start',
-        flow: 'verification',
         span_id: _fetchSpanId,
         outer_msg_id: '',
         tenant_id: '',
@@ -77,7 +75,6 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
         document = await defaultLoader(url)
         emitStructured(LogLevel.info, {
           hop: 'controller.jsonld.context.fetch.end',
-          flow: 'verification',
           span_id: _fetchSpanId,
           outer_msg_id: '',
           tenant_id: '',
@@ -88,7 +85,6 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
       } catch (err) {
         emitStructured(LogLevel.info, {
           hop: 'controller.jsonld.context.fetch.end',
-          flow: 'verification',
           span_id: _fetchSpanId,
           outer_msg_id: '',
           tenant_id: '',

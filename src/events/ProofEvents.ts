@@ -31,36 +31,71 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
       proof_state: state,
     })
 
-    const handlerSpanId = makeSpanId()
-    const handlerStart = monoNow()
-    emitStructured(LogLevel.info, {
-      hop: 'controller.handler.entry',
-      flow: 'verification',
-      thread_id: threadId ?? '',
-      outer_msg_id: '',
-      span_id: handlerSpanId,
-      tenant_id: tenantId,
-      conn_id: record.connectionId ?? '',
-    })
-
     const body = { ...record.toJSON(), ...event.metadata } as { proofData?: any }
+    const handlerSpanId = makeSpanId()
 
     if (record.state === ProofState.Done) {
+      // For Done state, handler.entry/exit are placed inside (or around) the
+      // session-acquire scope so handler.exit.duration_ms reflects only post-acquire
+      // work — not the semaphore wait, which is already captured in
+      // controller.session.acquire.end.duration_ms.
       try {
         if (tenantId !== 'default') {
           await withInstrumentedTenantAgent(agent, tenantId, 'verification', async (tenantAgent) => {
+            const handlerStart = monoNow()
+            emitStructured(LogLevel.info, {
+              hop: 'controller.handler.entry',
+              flow: 'verification',
+              thread_id: threadId ?? '',
+              outer_msg_id: '',
+              span_id: handlerSpanId,
+              tenant_id: tenantId,
+              conn_id: record.connectionId ?? '',
+            })
             const data = await tenantAgent.proofs.getFormatData(record.id)
             body.proofData = data
             agent.config.logger.debug(
               `[ProofEvent] Fetched proof format data for tenant agent - threadId=${threadId}, state=${state}, tenantId=${tenantId}, data=${JSON.stringify(body)}`
             )
+            emitStructured(LogLevel.info, {
+              hop: 'controller.handler.exit',
+              flow: 'verification',
+              thread_id: threadId ?? '',
+              outer_msg_id: '',
+              span_id: handlerSpanId,
+              tenant_id: tenantId,
+              conn_id: record.connectionId ?? '',
+              duration_ms: durationMs(handlerStart),
+              proof_state: state,
+            })
           })
         } else {
+          const handlerStart = monoNow()
+          emitStructured(LogLevel.info, {
+            hop: 'controller.handler.entry',
+            flow: 'verification',
+            thread_id: threadId ?? '',
+            outer_msg_id: '',
+            span_id: handlerSpanId,
+            tenant_id: tenantId,
+            conn_id: record.connectionId ?? '',
+          })
           const data = await agent.proofs.getFormatData(record.id)
           body.proofData = data
           agent.config.logger.debug(
             `[ProofEvent] Fetched proof format data for default agent - threadId=${threadId}, state=${state}, data=${JSON.stringify(body)}`
           )
+          emitStructured(LogLevel.info, {
+            hop: 'controller.handler.exit',
+            flow: 'verification',
+            thread_id: threadId ?? '',
+            outer_msg_id: '',
+            span_id: handlerSpanId,
+            tenant_id: tenantId,
+            conn_id: record.connectionId ?? '',
+            duration_ms: durationMs(handlerStart),
+            proof_state: state,
+          })
         }
       } catch (error) {
         agent.config.logger.error(
@@ -69,19 +104,30 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
         )
         body.proofData = null
       }
+    } else {
+      // Non-Done states: no session acquire involved — wrap the full (instant) handler.
+      const handlerStart = monoNow()
+      emitStructured(LogLevel.info, {
+        hop: 'controller.handler.entry',
+        flow: 'verification',
+        thread_id: threadId ?? '',
+        outer_msg_id: '',
+        span_id: handlerSpanId,
+        tenant_id: tenantId,
+        conn_id: record.connectionId ?? '',
+      })
+      emitStructured(LogLevel.info, {
+        hop: 'controller.handler.exit',
+        flow: 'verification',
+        thread_id: threadId ?? '',
+        outer_msg_id: '',
+        span_id: handlerSpanId,
+        tenant_id: tenantId,
+        conn_id: record.connectionId ?? '',
+        duration_ms: durationMs(handlerStart),
+        proof_state: state,
+      })
     }
-
-    emitStructured(LogLevel.info, {
-      hop: 'controller.handler.exit',
-      flow: 'verification',
-      thread_id: threadId ?? '',
-      outer_msg_id: '',
-      span_id: handlerSpanId,
-      tenant_id: tenantId,
-      conn_id: record.connectionId ?? '',
-      duration_ms: durationMs(handlerStart),
-      proof_state: state,
-    })
 
     // Only send webhook if webhook url is configured
     if (config.webhookUrl) {
