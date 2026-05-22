@@ -7,6 +7,7 @@ import { CredentialEventTypes, CredentialState, LogLevel } from '@credo-ts/core'
 import { emitStructured, makeSpanId, monoNow, durationMs } from '../utils/StructuredLogger'
 import { withInstrumentedTenantAgent } from '../instrumentation/tenantInstrumented'
 import { recordWebhookFire } from '../instrumentation/metrics'
+import { requestContext } from '../instrumentation/requestContext'
 import { sendWebSocketEvent } from './WebSocketEvents'
 import { sendWebhookEvent } from './WebhookEvent'
 
@@ -15,12 +16,13 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
     const record = event.payload.credentialRecord
     const tenantId = event.metadata.contextCorrelationId ?? 'default'
     const threadId = record.threadId ?? ''
+    const outerMsgId = requestContext.getStore()?.outerMsgId ?? ''
 
     emitStructured(LogLevel.info, {
       hop: 'controller.event.credential.state',
       flow: 'issuance',
       thread_id: threadId,
-      outer_msg_id: '',
+      outer_msg_id: outerMsgId,
       tenant_id: tenantId,
       conn_id: record.connectionId ?? '',
       credential_state: record.state,
@@ -47,7 +49,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
               hop: 'controller.handler.entry',
               flow: 'issuance',
               thread_id: threadId,
-              outer_msg_id: '',
+              outer_msg_id: outerMsgId,
               span_id: handlerSpanId,
               tenant_id: tenantId,
               conn_id: record.connectionId ?? '',
@@ -62,7 +64,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
               hop: 'controller.handler.exit',
               flow: 'issuance',
               thread_id: threadId,
-              outer_msg_id: '',
+              outer_msg_id: outerMsgId,
               span_id: handlerSpanId,
               tenant_id: tenantId,
               conn_id: record.connectionId ?? '',
@@ -76,7 +78,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
             hop: 'controller.handler.entry',
             flow: 'issuance',
             thread_id: threadId,
-            outer_msg_id: '',
+            outer_msg_id: outerMsgId,
             span_id: handlerSpanId,
             tenant_id: tenantId,
             conn_id: record.connectionId ?? '',
@@ -91,7 +93,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
             hop: 'controller.handler.exit',
             flow: 'issuance',
             thread_id: threadId,
-            outer_msg_id: '',
+            outer_msg_id: outerMsgId,
             span_id: handlerSpanId,
             tenant_id: tenantId,
             conn_id: record.connectionId ?? '',
@@ -114,7 +116,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
         hop: 'controller.handler.entry',
         flow: 'issuance',
         thread_id: threadId,
-        outer_msg_id: '',
+        outer_msg_id: outerMsgId,
         span_id: handlerSpanId,
         tenant_id: tenantId,
         conn_id: record.connectionId ?? '',
@@ -123,7 +125,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
         hop: 'controller.handler.exit',
         flow: 'issuance',
         thread_id: threadId,
-        outer_msg_id: '',
+        outer_msg_id: outerMsgId,
         span_id: handlerSpanId,
         tenant_id: tenantId,
         conn_id: record.connectionId ?? '',

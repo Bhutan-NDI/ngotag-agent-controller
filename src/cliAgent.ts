@@ -62,6 +62,7 @@ import { RedisCache } from './utils/RedisCache'
 import { TsLogger } from './utils/logger'
 import { emitStructured, makeSpanId, monoNow, tryExtractFromJwe } from './utils/StructuredLogger'
 import { startGauges } from './instrumentation/gauges'
+import { requestContext } from './instrumentation/requestContext'
 
 export type Transports = 'ws' | 'http'
 export type InboundTransport = {
@@ -463,6 +464,8 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
           })
           res.locals.__dbg_span = spanId
           res.locals.__dbg_start = monoNow()
+          // Thread outer_msg_id through Credo's async chain so event handlers can read it.
+          return requestContext.run({ outerMsgId }, () => next())
         }
         next()
       })

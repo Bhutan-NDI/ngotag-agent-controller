@@ -8,6 +8,7 @@ import { LogLevel } from '@credo-ts/core'
 
 import { emitStructured, makeSpanId, monoNow, durationMs } from '../utils/StructuredLogger'
 import { sessionAcquireStart, sessionAcquireEnd, sessionAcquireFailed, sessionReleased } from './metrics'
+import { requestContext } from './requestContext'
 
 type TenantCallback<T> = (tenantAgent: TenantAgent) => Promise<T>
 
@@ -20,12 +21,14 @@ export async function withInstrumentedTenantAgent<T>(
   const resolveSpanId = makeSpanId()
   const resolveStart = monoNow()
 
+  const outerMsgId = requestContext.getStore()?.outerMsgId ?? ''
+
   emitStructured(LogLevel.debug, {
     hop: 'controller.tenant.resolve.start',
     flow,
     span_id: resolveSpanId,
     tenant_id: tenantId,
-    outer_msg_id: '',
+    outer_msg_id: outerMsgId,
   })
 
   // Session acquire timing starts before withTenantAgent (which blocks on the semaphore)
@@ -38,7 +41,7 @@ export async function withInstrumentedTenantAgent<T>(
     flow,
     span_id: acquireSpanId,
     tenant_id: tenantId,
-    outer_msg_id: '',
+    outer_msg_id: outerMsgId,
   })
 
   // Tracks whether withTenantAgent entered the callback. If it throws before
@@ -57,7 +60,7 @@ export async function withInstrumentedTenantAgent<T>(
         flow,
         span_id: acquireSpanId,
         tenant_id: tenantId,
-        outer_msg_id: '',
+        outer_msg_id: outerMsgId,
         duration_ms: waitMs,
       })
       emitStructured(LogLevel.debug, {
@@ -65,7 +68,7 @@ export async function withInstrumentedTenantAgent<T>(
         flow,
         span_id: resolveSpanId,
         tenant_id: tenantId,
-        outer_msg_id: '',
+        outer_msg_id: outerMsgId,
         duration_ms: durationMs(resolveStart),
       })
 
@@ -106,7 +109,7 @@ export async function withInstrumentedTenantAgent<T>(
         flow,
         span_id: acquireSpanId,
         tenant_id: tenantId,
-        outer_msg_id: '',
+        outer_msg_id: outerMsgId,
         duration_ms: durationMs(acquireStart),
         notes: `acquire_failed: ${String(err)}`,
       })

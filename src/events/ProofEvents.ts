@@ -7,6 +7,7 @@ import { ProofEventTypes, ProofState, LogLevel } from '@credo-ts/core'
 import { emitStructured, makeSpanId, monoNow, durationMs } from '../utils/StructuredLogger'
 import { withInstrumentedTenantAgent } from '../instrumentation/tenantInstrumented'
 import { recordWebhookFire } from '../instrumentation/metrics'
+import { requestContext } from '../instrumentation/requestContext'
 import { sendWebSocketEvent } from './WebSocketEvents'
 import { sendWebhookEvent } from './WebhookEvent'
 
@@ -21,11 +22,13 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
       `[ProofEvent] Proof state changed event received - threadId=${threadId}, state=${state}, contextCorrelationId=${tenantId}`
     )
 
+    const outerMsgId = requestContext.getStore()?.outerMsgId ?? ''
+
     emitStructured(LogLevel.info, {
       hop: 'controller.event.proof.state',
       flow: 'verification',
       thread_id: threadId ?? '',
-      outer_msg_id: '',
+      outer_msg_id: outerMsgId,
       tenant_id: tenantId,
       conn_id: record.connectionId ?? '',
       proof_state: state,
@@ -47,7 +50,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
               hop: 'controller.handler.entry',
               flow: 'verification',
               thread_id: threadId ?? '',
-              outer_msg_id: '',
+              outer_msg_id: outerMsgId,
               span_id: handlerSpanId,
               tenant_id: tenantId,
               conn_id: record.connectionId ?? '',
@@ -61,7 +64,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
               hop: 'controller.handler.exit',
               flow: 'verification',
               thread_id: threadId ?? '',
-              outer_msg_id: '',
+              outer_msg_id: outerMsgId,
               span_id: handlerSpanId,
               tenant_id: tenantId,
               conn_id: record.connectionId ?? '',
@@ -75,7 +78,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
             hop: 'controller.handler.entry',
             flow: 'verification',
             thread_id: threadId ?? '',
-            outer_msg_id: '',
+            outer_msg_id: outerMsgId,
             span_id: handlerSpanId,
             tenant_id: tenantId,
             conn_id: record.connectionId ?? '',
@@ -89,7 +92,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
             hop: 'controller.handler.exit',
             flow: 'verification',
             thread_id: threadId ?? '',
-            outer_msg_id: '',
+            outer_msg_id: outerMsgId,
             span_id: handlerSpanId,
             tenant_id: tenantId,
             conn_id: record.connectionId ?? '',
@@ -111,7 +114,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
         hop: 'controller.handler.entry',
         flow: 'verification',
         thread_id: threadId ?? '',
-        outer_msg_id: '',
+        outer_msg_id: outerMsgId,
         span_id: handlerSpanId,
         tenant_id: tenantId,
         conn_id: record.connectionId ?? '',
@@ -120,7 +123,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
         hop: 'controller.handler.exit',
         flow: 'verification',
         thread_id: threadId ?? '',
-        outer_msg_id: '',
+        outer_msg_id: outerMsgId,
         span_id: handlerSpanId,
         tenant_id: tenantId,
         conn_id: record.connectionId ?? '',

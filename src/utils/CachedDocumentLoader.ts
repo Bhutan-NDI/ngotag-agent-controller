@@ -8,6 +8,7 @@ import { defaultDocumentLoader } from '@credo-ts/core/build/modules/vc/data-inte
 import { LogLevel } from '@credo-ts/core'
 
 import { emitStructured, makeSpanId, monoNow, durationMs } from './StructuredLogger'
+import { requestContext } from '../instrumentation/requestContext'
 
 const DOCUMENT_LOADER_CACHE_PREFIX = 'jsonld:document:'
 const DOCUMENT_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7 // 7 days
@@ -44,7 +45,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
           emitStructured(LogLevel.info, {
             hop: 'controller.jsonld.context.fetch.end',
             span_id: _fetchSpanId,
-            outer_msg_id: '',
+            outer_msg_id: requestContext.getStore()?.outerMsgId ?? '',
             tenant_id: '',
             duration_ms: durationMs(_fetchStart),
             cache_hit: true,
@@ -63,7 +64,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
       emitStructured(LogLevel.info, {
         hop: 'controller.jsonld.context.fetch.start',
         span_id: _fetchSpanId,
-        outer_msg_id: '',
+        outer_msg_id: requestContext.getStore()?.outerMsgId ?? '',
         tenant_id: '',
         cache_hit: false,
         url,
@@ -76,7 +77,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
         emitStructured(LogLevel.info, {
           hop: 'controller.jsonld.context.fetch.end',
           span_id: _fetchSpanId,
-          outer_msg_id: '',
+          outer_msg_id: requestContext.getStore()?.outerMsgId ?? '',
           tenant_id: '',
           duration_ms: durationMs(_fetchStart),
           cache_hit: false,
@@ -86,7 +87,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
         emitStructured(LogLevel.info, {
           hop: 'controller.jsonld.context.fetch.end',
           span_id: _fetchSpanId,
-          outer_msg_id: '',
+          outer_msg_id: requestContext.getStore()?.outerMsgId ?? '',
           tenant_id: '',
           duration_ms: durationMs(_fetchStart),
           cache_hit: false,
