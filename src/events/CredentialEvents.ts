@@ -16,13 +16,13 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
     const record = event.payload.credentialRecord
     const tenantId = event.metadata.contextCorrelationId ?? 'default'
     const threadId = record.threadId ?? ''
-    const outerMsgId = requestContext.getStore()?.outerMsgId ?? ''
+    const jweFp = requestContext.getStore()?.jweFp ?? ''
 
     emitStructured(LogLevel.info, {
       hop: 'controller.event.credential.state',
       flow: 'issuance',
       thread_id: threadId,
-      outer_msg_id: outerMsgId,
+      jwe_fp: jweFp,
       tenant_id: tenantId,
       conn_id: record.connectionId ?? '',
       credential_state: record.state,
@@ -49,7 +49,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
               hop: 'controller.handler.entry',
               flow: 'issuance',
               thread_id: threadId,
-              outer_msg_id: outerMsgId,
+              jwe_fp: jweFp,
               span_id: handlerSpanId,
               tenant_id: tenantId,
               conn_id: record.connectionId ?? '',
@@ -64,7 +64,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
               hop: 'controller.handler.exit',
               flow: 'issuance',
               thread_id: threadId,
-              outer_msg_id: outerMsgId,
+              jwe_fp: jweFp,
               span_id: handlerSpanId,
               tenant_id: tenantId,
               conn_id: record.connectionId ?? '',
@@ -78,7 +78,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
             hop: 'controller.handler.entry',
             flow: 'issuance',
             thread_id: threadId,
-            outer_msg_id: outerMsgId,
+            jwe_fp: jweFp,
             span_id: handlerSpanId,
             tenant_id: tenantId,
             conn_id: record.connectionId ?? '',
@@ -93,7 +93,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
             hop: 'controller.handler.exit',
             flow: 'issuance',
             thread_id: threadId,
-            outer_msg_id: outerMsgId,
+            jwe_fp: jweFp,
             span_id: handlerSpanId,
             tenant_id: tenantId,
             conn_id: record.connectionId ?? '',
@@ -116,7 +116,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
         hop: 'controller.handler.entry',
         flow: 'issuance',
         thread_id: threadId,
-        outer_msg_id: outerMsgId,
+        jwe_fp: jweFp,
         span_id: handlerSpanId,
         tenant_id: tenantId,
         conn_id: record.connectionId ?? '',
@@ -125,7 +125,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
         hop: 'controller.handler.exit',
         flow: 'issuance',
         thread_id: threadId,
-        outer_msg_id: outerMsgId,
+        jwe_fp: jweFp,
         span_id: handlerSpanId,
         tenant_id: tenantId,
         conn_id: record.connectionId ?? '',

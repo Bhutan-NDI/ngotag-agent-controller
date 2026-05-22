@@ -7,7 +7,7 @@ type TenantAgent = any
 import { LogLevel } from '@credo-ts/core'
 
 import { emitStructured, makeSpanId, monoNow, durationMs } from '../utils/StructuredLogger'
-import { sessionAcquireStart, sessionAcquireEnd, sessionAcquireFailed, sessionReleased } from './metrics'
+import { sessionAcquireStart, sessionAcquireEnd, sessionAcquireFailed, sessionReleased, getSessionPoolStats } from './metrics'
 import { requestContext } from './requestContext'
 
 type TenantCallback<T> = (tenantAgent: TenantAgent) => Promise<T>
@@ -21,14 +21,14 @@ export async function withInstrumentedTenantAgent<T>(
   const resolveSpanId = makeSpanId()
   const resolveStart = monoNow()
 
-  const outerMsgId = requestContext.getStore()?.outerMsgId ?? ''
+  const jweFp = requestContext.getStore()?.jweFp ?? ''
 
   emitStructured(LogLevel.debug, {
     hop: 'controller.tenant.resolve.start',
     flow,
     span_id: resolveSpanId,
     tenant_id: tenantId,
-    outer_msg_id: outerMsgId,
+    jwe_fp: jweFp,
   })
 
   // Session acquire timing starts before withTenantAgent (which blocks on the semaphore)
@@ -41,7 +41,7 @@ export async function withInstrumentedTenantAgent<T>(
     flow,
     span_id: acquireSpanId,
     tenant_id: tenantId,
-    outer_msg_id: outerMsgId,
+    jwe_fp: jweFp,
   })
 
   // Tracks whether withTenantAgent entered the callback. If it throws before
@@ -54,22 +54,25 @@ export async function withInstrumentedTenantAgent<T>(
       callbackEntered = true
       const waitMs = durationMs(acquireStart)
       sessionAcquireEnd(waitMs)
+      const { sessionsInFlight, sessionsWaiting } = getSessionPoolStats()
 
       emitStructured(LogLevel.info, {
         hop: 'controller.session.acquire.end',
         flow,
         span_id: acquireSpanId,
         tenant_id: tenantId,
-        outer_msg_id: outerMsgId,
+        jwe_fp: jweFp,
         wait_ms: waitMs,
         duration_ms: waitMs,
+        sessions_in_use: sessionsInFlight,
+        sessions_waiting: sessionsWaiting,
       })
       emitStructured(LogLevel.debug, {
         hop: 'controller.tenant.resolve.end',
         flow,
         span_id: resolveSpanId,
         tenant_id: tenantId,
-        outer_msg_id: outerMsgId,
+        jwe_fp: jweFp,
         duration_ms: durationMs(resolveStart),
       })
 
@@ -110,7 +113,7 @@ export async function withInstrumentedTenantAgent<T>(
         flow,
         span_id: acquireSpanId,
         tenant_id: tenantId,
-        outer_msg_id: outerMsgId,
+        jwe_fp: jweFp,
         duration_ms: durationMs(acquireStart),
         notes: `acquire_failed: ${String(err)}`,
       })

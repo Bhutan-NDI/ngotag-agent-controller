@@ -45,7 +45,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
           emitStructured(LogLevel.info, {
             hop: 'controller.jsonld.context.fetch.end',
             span_id: _fetchSpanId,
-            outer_msg_id: requestContext.getStore()?.outerMsgId ?? '',
+            jwe_fp: requestContext.getStore()?.jweFp ?? '',
             tenant_id: '',
             duration_ms: durationMs(_fetchStart),
             cache_hit: true,
@@ -64,7 +64,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
       emitStructured(LogLevel.info, {
         hop: 'controller.jsonld.context.fetch.start',
         span_id: _fetchSpanId,
-        outer_msg_id: requestContext.getStore()?.outerMsgId ?? '',
+        jwe_fp: requestContext.getStore()?.jweFp ?? '',
         tenant_id: '',
         cache_hit: false,
         url,
@@ -77,7 +77,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
         emitStructured(LogLevel.info, {
           hop: 'controller.jsonld.context.fetch.end',
           span_id: _fetchSpanId,
-          outer_msg_id: requestContext.getStore()?.outerMsgId ?? '',
+          jwe_fp: requestContext.getStore()?.jweFp ?? '',
           tenant_id: '',
           duration_ms: durationMs(_fetchStart),
           cache_hit: false,
@@ -87,7 +87,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
         emitStructured(LogLevel.info, {
           hop: 'controller.jsonld.context.fetch.end',
           span_id: _fetchSpanId,
-          outer_msg_id: requestContext.getStore()?.outerMsgId ?? '',
+          jwe_fp: requestContext.getStore()?.jweFp ?? '',
           tenant_id: '',
           duration_ms: durationMs(_fetchStart),
           cache_hit: false,

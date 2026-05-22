@@ -450,22 +450,21 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       transport.app.use((req: any, res: any, next: any) => {
         if (req.method === 'POST') {
           const raw: string = typeof req.body === 'string' ? req.body : ''
-          const { recipientKeyShort, outerMsgId } = raw
+          const { recipientKeyShort, jweFp } = raw
             ? tryExtractFromJwe(raw)
-            : { recipientKeyShort: '', outerMsgId: '' }
+            : { recipientKeyShort: '', jweFp: '' }
           const spanId = makeSpanId()
           emitStructured(LogLevel.info, {
             hop: 'controller.http.inbound.received',
             span_id: spanId,
-            outer_msg_id: outerMsgId,
+            jwe_fp: jweFp,
             recipient_key_short: recipientKeyShort,
             content_length: req.headers['content-length'] ? Number(req.headers['content-length']) : undefined,
-            notes: outerMsgId ? undefined : 'outer_msg_id not in JWE protected header — timing join only',
           })
           res.locals.__dbg_span = spanId
           res.locals.__dbg_start = monoNow()
-          // Thread outer_msg_id through Credo's async chain so event handlers can read it.
-          return requestContext.run({ outerMsgId }, () => next())
+          // Thread JWE fingerprint through Credo's async chain so event handlers can read it.
+          return requestContext.run({ jweFp }, () => next())
         }
         next()
       })
