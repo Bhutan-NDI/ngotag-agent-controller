@@ -30,6 +30,10 @@ export function recordWebhookFire(): void {
   _webhookFiresLast10s++
 }
 
+export function getSessionPoolStats(): { sessionsInFlight: number; sessionsWaiting: number } {
+  return { sessionsInFlight: _sessionsInFlight, sessionsWaiting: _sessionsWaiting }
+}
+
 export interface ControllerGaugeSnapshot {
   sessions_in_flight: number
   sessions_waiting: number

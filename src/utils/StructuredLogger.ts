@@ -36,7 +36,7 @@ export interface StructuredLogLine {
   hop: HopName
   flow?: FlowType
   thread_id?: string
-  outer_msg_id?: string
+  jwe_fp?: string
   recipient_key_short?: string
   tenant_id?: string
   conn_id?: string
@@ -84,36 +84,61 @@ export function truncateKey(key: string): string {
   return key.slice(0, 6) + '…' + key.slice(-6)
 }
 
-export function tryExtractFromJwe(rawBody: string): { recipientKeyShort: string; outerMsgId: string } {
+// Extracts the JWE top-level `iv` as a per-message fingerprint and the recipient key
+// for cross-service log correlation.
+export function tryExtractFromJwe(rawBody: string): { recipientKeyShort: string; jweFp: string } {
   try {
     const parsed = JSON.parse(rawBody) as Record<string, unknown>
     let recipientKeyShort = ''
-    let outerMsgId = ''
 
-    // recipients is a top-level JWE JSON field, not inside the protected header
+    // Try top-level recipients first (standard JWE General JSON Serialization)
     const recipients = parsed['recipients']
     if (Array.isArray(recipients) && recipients.length > 0) {
       const firstRecip = recipients[0] as Record<string, unknown>
       const hdr = firstRecip['header'] as Record<string, unknown> | undefined
       const kid = hdr?.['kid']
-      if (typeof kid === 'string') recipientKeyShort = truncateKey(kid)
+      if (typeof kid === 'string' && kid.length > 0) recipientKeyShort = truncateKey(kid)
     }
 
-    // @id is non-standard in JWE but check the protected header anyway
-    const protectedB64 = parsed['protected']
-    if (typeof protectedB64 === 'string') {
-      try {
-        const headerStr = Buffer.from(protectedB64, 'base64').toString('utf8')
-        const header = JSON.parse(headerStr) as Record<string, unknown>
-        const id = header['@id'] || header['id']
-        if (typeof id === 'string') outerMsgId = id
-      } catch {
-        // ignore
+    // Fall back: Aries DIDComm v1 Authcrypt puts recipients inside the protected header
+    if (!recipientKeyShort) {
+      const protectedB64 = parsed['protected']
+      if (typeof protectedB64 === 'string') {
+        try {
+          const headerStr = Buffer.from(protectedB64, 'base64').toString('utf8')
+          const header = JSON.parse(headerStr) as Record<string, unknown>
+          const innerRecipients = header['recipients']
+          if (Array.isArray(innerRecipients) && innerRecipients.length > 0) {
+            const first = innerRecipients[0] as Record<string, unknown>
+            const hdr = first['header'] as Record<string, unknown> | undefined
+            const kid = hdr?.['kid']
+            if (typeof kid === 'string') recipientKeyShort = truncateKey(kid)
+          }
+        } catch {
+          // ignore
+        }
       }
     }
 
-    return { recipientKeyShort, outerMsgId }
+    // iv fingerprint: unique per JWE encryption, visible at both ends without decryption
+    const iv = parsed['iv']
+    const jweFp = typeof iv === 'string' ? iv : ''
+
+    return { recipientKeyShort, jweFp }
   } catch {
-    return { recipientKeyShort: '', outerMsgId: '' }
+    return { recipientKeyShort: '', jweFp: '' }
+  }
+}
+
+export function tryExtractJweFp(payload: unknown): string {
+  try {
+    const parsed: Record<string, unknown> =
+      typeof payload === 'string'
+        ? (JSON.parse(payload) as Record<string, unknown>)
+        : (payload as Record<string, unknown>)
+    const iv = parsed['iv']
+    return typeof iv === 'string' ? iv : ''
+  } catch {
+    return ''
   }
 }

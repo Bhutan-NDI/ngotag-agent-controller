@@ -22,13 +22,13 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
       `[ProofEvent] Proof state changed event received - threadId=${threadId}, state=${state}, contextCorrelationId=${tenantId}`
     )
 
-    const outerMsgId = requestContext.getStore()?.outerMsgId ?? ''
+    const jweFp = requestContext.getStore()?.jweFp ?? ''
 
     emitStructured(LogLevel.info, {
       hop: 'controller.event.proof.state',
       flow: 'verification',
       thread_id: threadId ?? '',
-      outer_msg_id: outerMsgId,
+      jwe_fp: jweFp,
       tenant_id: tenantId,
       conn_id: record.connectionId ?? '',
       proof_state: state,
@@ -50,7 +50,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
               hop: 'controller.handler.entry',
               flow: 'verification',
               thread_id: threadId ?? '',
-              outer_msg_id: outerMsgId,
+              jwe_fp: jweFp,
               span_id: handlerSpanId,
               tenant_id: tenantId,
               conn_id: record.connectionId ?? '',
@@ -64,7 +64,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
               hop: 'controller.handler.exit',
               flow: 'verification',
               thread_id: threadId ?? '',
-              outer_msg_id: outerMsgId,
+              jwe_fp: jweFp,
               span_id: handlerSpanId,
               tenant_id: tenantId,
               conn_id: record.connectionId ?? '',
@@ -78,7 +78,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
             hop: 'controller.handler.entry',
             flow: 'verification',
             thread_id: threadId ?? '',
-            outer_msg_id: outerMsgId,
+            jwe_fp: jweFp,
             span_id: handlerSpanId,
             tenant_id: tenantId,
             conn_id: record.connectionId ?? '',
@@ -92,7 +92,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
             hop: 'controller.handler.exit',
             flow: 'verification',
             thread_id: threadId ?? '',
-            outer_msg_id: outerMsgId,
+            jwe_fp: jweFp,
             span_id: handlerSpanId,
             tenant_id: tenantId,
             conn_id: record.connectionId ?? '',
@@ -114,7 +114,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
         hop: 'controller.handler.entry',
         flow: 'verification',
         thread_id: threadId ?? '',
-        outer_msg_id: outerMsgId,
+        jwe_fp: jweFp,
         span_id: handlerSpanId,
         tenant_id: tenantId,
         conn_id: record.connectionId ?? '',
@@ -123,7 +123,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
         hop: 'controller.handler.exit',
         flow: 'verification',
         thread_id: threadId ?? '',
-        outer_msg_id: outerMsgId,
+        jwe_fp: jweFp,
         span_id: handlerSpanId,
         tenant_id: tenantId,
         conn_id: record.connectionId ?? '',
