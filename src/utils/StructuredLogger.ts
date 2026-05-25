@@ -129,16 +129,3 @@ export function tryExtractFromJwe(rawBody: string): { recipientKeyShort: string;
     return { recipientKeyShort: '', jweFp: '' }
   }
 }
-
-export function tryExtractJweFp(payload: unknown): string {
-  try {
-    const parsed: Record<string, unknown> =
-      typeof payload === 'string'
-        ? (JSON.parse(payload) as Record<string, unknown>)
-        : (payload as Record<string, unknown>)
-    const iv = parsed['iv']
-    return typeof iv === 'string' ? iv : ''
-  } catch {
-    return ''
-  }
-}
