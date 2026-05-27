@@ -42,7 +42,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
 
         if (cached) {
           logger.debug(`Document loader cache hit for: ${url}`)
-          emitStructured(LogLevel.info, {
+          emitStructured(LogLevel.trace, {
             hop: 'controller.jsonld.context.fetch.end',
             span_id: _fetchSpanId,
             jwe_fp: requestContext.getStore()?.jweFp ?? '',
@@ -61,7 +61,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
       // Cache miss — fetch via default loader
       logger.debug(`Document loader cache miss — fetching: ${url}`)
 
-      emitStructured(LogLevel.info, {
+      emitStructured(LogLevel.trace, {
         hop: 'controller.jsonld.context.fetch.start',
         span_id: _fetchSpanId,
         jwe_fp: requestContext.getStore()?.jweFp ?? '',
@@ -74,7 +74,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
 
       try {
         document = await defaultLoader(url)
-        emitStructured(LogLevel.info, {
+        emitStructured(LogLevel.trace, {
           hop: 'controller.jsonld.context.fetch.end',
           span_id: _fetchSpanId,
           jwe_fp: requestContext.getStore()?.jweFp ?? '',
@@ -84,7 +84,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
           url,
         })
       } catch (err) {
-        emitStructured(LogLevel.info, {
+        emitStructured(LogLevel.trace, {
           hop: 'controller.jsonld.context.fetch.end',
           span_id: _fetchSpanId,
           jwe_fp: requestContext.getStore()?.jweFp ?? '',

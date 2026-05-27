@@ -454,7 +454,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
             ? tryExtractFromJwe(raw)
             : { recipientKeyShort: '', jweFp: '' }
           const spanId = makeSpanId()
-          emitStructured(LogLevel.info, {
+          emitStructured(LogLevel.trace, {
             hop: 'controller.http.inbound.received',
             span_id: spanId,
             jwe_fp: jweFp,
@@ -474,7 +474,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
 
   await agent.initialize()
 
-  emitStructured(LogLevel.info, {
+  emitStructured(LogLevel.trace, {
     hop: 'controller.config.dump',
     flow: 'lifecycle',
     notes: 'effective config at startup',

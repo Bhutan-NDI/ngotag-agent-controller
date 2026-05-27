@@ -23,7 +23,7 @@ export async function withInstrumentedTenantAgent<T>(
 
   const jweFp = requestContext.getStore()?.jweFp ?? ''
 
-  emitStructured(LogLevel.debug, {
+  emitStructured(LogLevel.trace, {
     hop: 'controller.tenant.resolve.start',
     flow,
     span_id: resolveSpanId,
@@ -36,7 +36,7 @@ export async function withInstrumentedTenantAgent<T>(
   const acquireStart = monoNow()
   sessionAcquireStart()
 
-  emitStructured(LogLevel.info, {
+  emitStructured(LogLevel.trace, {
     hop: 'controller.session.acquire.start',
     flow,
     span_id: acquireSpanId,
@@ -56,7 +56,7 @@ export async function withInstrumentedTenantAgent<T>(
       sessionAcquireEnd(waitMs)
       const { sessionsInFlight, sessionsWaiting } = getSessionPoolStats()
 
-      emitStructured(LogLevel.info, {
+      emitStructured(LogLevel.trace, {
         hop: 'controller.session.acquire.end',
         flow,
         span_id: acquireSpanId,
@@ -67,7 +67,7 @@ export async function withInstrumentedTenantAgent<T>(
         sessions_in_use: sessionsInFlight,
         sessions_waiting: sessionsWaiting,
       })
-      emitStructured(LogLevel.debug, {
+      emitStructured(LogLevel.trace, {
         hop: 'controller.tenant.resolve.end',
         flow,
         span_id: resolveSpanId,
@@ -79,7 +79,7 @@ export async function withInstrumentedTenantAgent<T>(
       // Measure first Askar access (wallet open / profile attach) for H8.
       const walletSpanId = makeSpanId()
       const walletStart = monoNow()
-      emitStructured(LogLevel.debug, {
+      emitStructured(LogLevel.trace, {
         hop: 'controller.wallet.open.start',
         flow,
         span_id: walletSpanId,
@@ -92,7 +92,7 @@ export async function withInstrumentedTenantAgent<T>(
       } catch {
         // ignore — only measuring timing; the callback may not need genericRecords
       }
-      emitStructured(LogLevel.debug, {
+      emitStructured(LogLevel.trace, {
         hop: 'controller.wallet.open.end',
         flow,
         span_id: walletSpanId,
@@ -108,7 +108,7 @@ export async function withInstrumentedTenantAgent<T>(
       // withTenantAgent failed before the session was acquired (semaphore timeout,
       // invalid tenant, etc.). Decrement waiting without touching in-flight.
       sessionAcquireFailed()
-      emitStructured(LogLevel.info, {
+      emitStructured(LogLevel.trace, {
         hop: 'controller.session.acquire.end',
         flow,
         span_id: acquireSpanId,

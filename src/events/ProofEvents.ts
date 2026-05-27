@@ -24,7 +24,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
 
     const jweFp = requestContext.getStore()?.jweFp ?? ''
 
-    emitStructured(LogLevel.info, {
+    emitStructured(LogLevel.trace, {
       hop: 'controller.event.proof.state',
       flow: 'verification',
       thread_id: threadId ?? '',
@@ -46,7 +46,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
         if (tenantId !== 'default') {
           await withInstrumentedTenantAgent(agent, tenantId, 'verification', async (tenantAgent) => {
             const handlerStart = monoNow()
-            emitStructured(LogLevel.info, {
+            emitStructured(LogLevel.trace, {
               hop: 'controller.handler.entry',
               flow: 'verification',
               thread_id: threadId ?? '',
@@ -60,7 +60,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
             agent.config.logger.debug(
               `[ProofEvent] Fetched proof format data for tenant agent - threadId=${threadId}, state=${state}, tenantId=${tenantId}, data=${JSON.stringify(body)}`
             )
-            emitStructured(LogLevel.info, {
+            emitStructured(LogLevel.trace, {
               hop: 'controller.handler.exit',
               flow: 'verification',
               thread_id: threadId ?? '',
@@ -74,7 +74,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
           })
         } else {
           const handlerStart = monoNow()
-          emitStructured(LogLevel.info, {
+          emitStructured(LogLevel.trace, {
             hop: 'controller.handler.entry',
             flow: 'verification',
             thread_id: threadId ?? '',
@@ -88,7 +88,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
           agent.config.logger.debug(
             `[ProofEvent] Fetched proof format data for default agent - threadId=${threadId}, state=${state}, data=${JSON.stringify(body)}`
           )
-          emitStructured(LogLevel.info, {
+          emitStructured(LogLevel.trace, {
             hop: 'controller.handler.exit',
             flow: 'verification',
             thread_id: threadId ?? '',
@@ -110,7 +110,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
     } else {
       // Non-Done states: no session acquire involved — wrap the full (instant) handler.
       const handlerStart = monoNow()
-      emitStructured(LogLevel.info, {
+      emitStructured(LogLevel.trace, {
         hop: 'controller.handler.entry',
         flow: 'verification',
         thread_id: threadId ?? '',
@@ -119,7 +119,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
         tenant_id: tenantId,
         conn_id: record.connectionId ?? '',
       })
-      emitStructured(LogLevel.info, {
+      emitStructured(LogLevel.trace, {
         hop: 'controller.handler.exit',
         flow: 'verification',
         thread_id: threadId ?? '',
@@ -139,7 +139,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
       )
       const webhookSpanId = makeSpanId()
       const webhookStart = monoNow()
-      emitStructured(LogLevel.info, {
+      emitStructured(LogLevel.trace, {
         hop: 'controller.webhook.fire.start',
         flow: 'verification',
         thread_id: threadId ?? '',
@@ -149,7 +149,7 @@ export const proofEvents = async (agent: Agent<RestMultiTenantAgentModules>, con
       })
       recordWebhookFire()
       sendWebhookEvent(config.webhookUrl + '/proofs', body, agent.config.logger)
-      emitStructured(LogLevel.info, {
+      emitStructured(LogLevel.trace, {
         hop: 'controller.webhook.fire.end',
         flow: 'verification',
         thread_id: threadId ?? '',
