@@ -18,7 +18,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
     const threadId = record.threadId ?? ''
     const jweFp = requestContext.getStore()?.jweFp ?? ''
 
-    emitStructured(LogLevel.info, {
+    emitStructured(LogLevel.trace, {
       hop: 'controller.event.credential.state',
       flow: 'issuance',
       thread_id: threadId,
@@ -45,7 +45,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
         if (tenantId !== 'default') {
           await withInstrumentedTenantAgent(agent, tenantId, 'issuance', async (tenantAgent) => {
             const handlerStart = monoNow()
-            emitStructured(LogLevel.info, {
+            emitStructured(LogLevel.trace, {
               hop: 'controller.handler.entry',
               flow: 'issuance',
               thread_id: threadId,
@@ -60,7 +60,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
             ])
             body.credentialData = data
             body.outOfBandId = connectionRecord?.outOfBandId ?? null
-            emitStructured(LogLevel.info, {
+            emitStructured(LogLevel.trace, {
               hop: 'controller.handler.exit',
               flow: 'issuance',
               thread_id: threadId,
@@ -74,7 +74,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
           })
         } else {
           const handlerStart = monoNow()
-          emitStructured(LogLevel.info, {
+          emitStructured(LogLevel.trace, {
             hop: 'controller.handler.entry',
             flow: 'issuance',
             thread_id: threadId,
@@ -89,7 +89,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
           ])
           body.credentialData = data
           body.outOfBandId = connectionRecord?.outOfBandId ?? null
-          emitStructured(LogLevel.info, {
+          emitStructured(LogLevel.trace, {
             hop: 'controller.handler.exit',
             flow: 'issuance',
             thread_id: threadId,
@@ -112,7 +112,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
     } else {
       // Non-Done states: no session acquire involved — wrap the full (instant) handler.
       const handlerStart = monoNow()
-      emitStructured(LogLevel.info, {
+      emitStructured(LogLevel.trace, {
         hop: 'controller.handler.entry',
         flow: 'issuance',
         thread_id: threadId,
@@ -121,7 +121,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
         tenant_id: tenantId,
         conn_id: record.connectionId ?? '',
       })
-      emitStructured(LogLevel.info, {
+      emitStructured(LogLevel.trace, {
         hop: 'controller.handler.exit',
         flow: 'issuance',
         thread_id: threadId,
@@ -138,7 +138,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
     if (config.webhookUrl) {
       const webhookSpanId = makeSpanId()
       const webhookStart = monoNow()
-      emitStructured(LogLevel.info, {
+      emitStructured(LogLevel.trace, {
         hop: 'controller.webhook.fire.start',
         flow: 'issuance',
         thread_id: threadId,
@@ -148,7 +148,7 @@ export const credentialEvents = async (agent: Agent<RestMultiTenantAgentModules>
       })
       recordWebhookFire()
       sendWebhookEvent(config.webhookUrl + '/credentials', body, agent.config.logger)
-      emitStructured(LogLevel.info, {
+      emitStructured(LogLevel.trace, {
         hop: 'controller.webhook.fire.end',
         flow: 'issuance',
         thread_id: threadId,

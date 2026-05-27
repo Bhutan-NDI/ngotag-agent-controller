@@ -11,7 +11,7 @@ export function startGauges(): void {
   if (_gaugeTimer) return
   _gaugeTimer = setInterval(() => {
     const snap = snapshotAndReset()
-    emitStructured(LogLevel.info, {
+    emitStructured(LogLevel.trace, {
       hop: 'controller.gauge.snapshot',
       flow: 'lifecycle',
       ...snap,
