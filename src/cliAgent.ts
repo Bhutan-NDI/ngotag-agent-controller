@@ -108,7 +108,6 @@ export interface AriesRestConfig {
   fileServerToken?: string
   ethereumNetworkName?: string
   ethereumChainId?: string | number
-  ethereumNetworkRpcUrl?: string
   ethereumRegistry?: string
   ethereumSchemaManagerContractAddress?: string
   ethereumRpcUrl?: string
@@ -133,7 +132,6 @@ export type RestAgentModules = Awaited<ReturnType<typeof getModules>>
 interface EthereumModuleEnvironmentConfig {
   ethereumNetworkName?: string
   ethereumChainId?: string | number
-  ethereumNetworkRpcUrl?: string
   ethereumRegistry?: string
   ethereumSchemaManagerContractAddress?: string
   ethereumRpcUrl?: string
@@ -170,8 +168,7 @@ const getModules = (
 ) => {
   const ethereumNetworkName = ethereumModuleConfig.ethereumNetworkName || process.env.ETHEREUM_NETWORK_NAME
   const ethereumChainId = Number(ethereumModuleConfig.ethereumChainId || process.env.ETHEREUM_CHAIN_ID)
-  const ethereumNetworkRpcUrl =
-    ethereumModuleConfig.ethereumNetworkRpcUrl || process.env.ETHEREUM_NETWORK_RPC_URL
+  const ethereumRpcUrl = ethereumModuleConfig.ethereumRpcUrl || process.env.ETHEREUM_RPC_URL
   const ethereumRegistry =
     ethereumModuleConfig.ethereumRegistry ||
     process.env.ETHEREUM_DID_REGISTRY_CONTRACT_ADDRESS ||
@@ -179,7 +176,6 @@ const getModules = (
   const ethereumSchemaManagerContractAddress =
     ethereumModuleConfig.ethereumSchemaManagerContractAddress ||
     process.env.ETHEREUM_SCHEMA_MANAGER_CONTRACT_ADDRESS
-  const ethereumRpcUrl = ethereumModuleConfig.ethereumRpcUrl || process.env.ETHEREUM_RPC_URL
 
   const legacyIndyCredentialFormat = new LegacyIndyCredentialFormatService()
   const legacyIndyProofFormat = new LegacyIndyProofFormatService()
@@ -272,7 +268,7 @@ const getModules = (
           {
             name: ethereumNetworkName as string,
             chainId: ethereumChainId,
-            rpcUrl: ethereumNetworkRpcUrl as string,
+            rpcUrl: ethereumRpcUrl as string,
             registry: ethereumRegistry as string,
           },
         ],
@@ -356,7 +352,6 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     schemaManagerContractAddress,
     ethereumNetworkName,
     ethereumChainId,
-    ethereumNetworkRpcUrl,
     ethereumRegistry,
     ethereumSchemaManagerContractAddress,
     ethereumRpcUrl,
@@ -445,7 +440,6 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   const ethereumModuleConfig = {
     ethereumNetworkName: ethereumNetworkName || name,
     ethereumChainId: ethereumChainId || chainId,
-    ethereumNetworkRpcUrl,
     ethereumRegistry: ethereumRegistry || registry,
     ethereumSchemaManagerContractAddress,
     ethereumRpcUrl,

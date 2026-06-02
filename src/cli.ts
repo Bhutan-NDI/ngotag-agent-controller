@@ -44,7 +44,6 @@ interface Parsed {
   fileServerToken?: string
   ethereumNetworkName?: string
   ethereumChainId?: string
-  ethereumNetworkRpcUrl?: string
   ethereumRegistry?: string
   ethereumSchemaManagerContractAddress?: string
   ethereumRpcUrl?: string
@@ -121,10 +120,6 @@ async function parseArguments(): Promise<Parsed> {
       demandOption: false,
     })
     .option('ethereum-chain-id', {
-      string: true,
-      demandOption: false,
-    })
-    .option('ethereum-network-rpc-url', {
       string: true,
       demandOption: false,
     })
@@ -299,7 +294,6 @@ export async function runCliServer() {
     fileServerToken: parsed['fileServerToken'],
     ethereumNetworkName: parsed['ethereumNetworkName'] || parsed['chainName'],
     ethereumChainId: parsed['ethereumChainId'] || parsed['chainId'],
-    ethereumNetworkRpcUrl: parsed['ethereumNetworkRpcUrl'],
     ethereumRegistry: parsed['ethereumRegistry'] || parsed['registry'],
     ethereumSchemaManagerContractAddress: parsed['ethereumSchemaManagerContractAddress'],
     ethereumRpcUrl: parsed['ethereumRpcUrl'],
