@@ -42,6 +42,12 @@ interface Parsed {
   rpcUrl?: string
   fileServerUrl?: string
   fileServerToken?: string
+  ethereumNetworkName?: string
+  ethereumChainId?: string
+  ethereumNetworkRpcUrl?: string
+  ethereumRegistry?: string
+  ethereumSchemaManagerContractAddress?: string
+  ethereumRpcUrl?: string
   chainId?: string
   chainName?: string
   registry?: string
@@ -98,7 +104,7 @@ async function parseArguments(): Promise<Parsed> {
       string: true,
       demandOption: true,
     })
-     .option('chainId', {
+    .option('chainId', {
       string: true,
       demandOption: false,
     })
@@ -107,6 +113,30 @@ async function parseArguments(): Promise<Parsed> {
       demandOption: false,
     })
     .option('registry', {
+      string: true,
+      demandOption: false,
+    })
+    .option('ethereum-network-name', {
+      string: true,
+      demandOption: false,
+    })
+    .option('ethereum-chain-id', {
+      string: true,
+      demandOption: false,
+    })
+    .option('ethereum-network-rpc-url', {
+      string: true,
+      demandOption: false,
+    })
+    .option('ethereum-registry', {
+      string: true,
+      demandOption: false,
+    })
+    .option('ethereum-schema-manager-contract-address', {
+      string: true,
+      demandOption: false,
+    })
+    .option('ethereum-rpc-url', {
       string: true,
       demandOption: false,
     })
@@ -267,8 +297,11 @@ export async function runCliServer() {
     rpcUrl: parsed['rpcUrl'],
     fileServerUrl: parsed['fileServerUrl'],
     fileServerToken: parsed['fileServerToken'],
-    chainId: parsed['chainId'],
-    name: parsed['chainName'],
-    registry: parsed['registry'],
+    ethereumNetworkName: parsed['ethereumNetworkName'] || parsed['chainName'],
+    ethereumChainId: parsed['ethereumChainId'] || parsed['chainId'],
+    ethereumNetworkRpcUrl: parsed['ethereumNetworkRpcUrl'],
+    ethereumRegistry: parsed['ethereumRegistry'] || parsed['registry'],
+    ethereumSchemaManagerContractAddress: parsed['ethereumSchemaManagerContractAddress'],
+    ethereumRpcUrl: parsed['ethereumRpcUrl'],
   } as unknown as AriesRestConfig)
 }
