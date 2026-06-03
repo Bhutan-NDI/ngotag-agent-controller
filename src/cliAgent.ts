@@ -111,9 +111,6 @@ export interface AriesRestConfig {
   ethereumRegistry?: string
   ethereumSchemaManagerContractAddress?: string
   ethereumRpcUrl?: string
-  chainId?: string | number
-  name?: string
-  registry?: string
   walletScheme?: AskarMultiWalletDatabaseScheme
   schemaFileServerURL?: string
 }
@@ -169,10 +166,7 @@ const getModules = (
   const ethereumNetworkName = ethereumModuleConfig.ethereumNetworkName || process.env.ETHEREUM_NETWORK_NAME
   const ethereumChainId = Number(ethereumModuleConfig.ethereumChainId || process.env.ETHEREUM_CHAIN_ID)
   const ethereumRpcUrl = ethereumModuleConfig.ethereumRpcUrl || process.env.ETHEREUM_RPC_URL
-  const ethereumRegistry =
-    ethereumModuleConfig.ethereumRegistry ||
-    process.env.ETHEREUM_DID_REGISTRY_CONTRACT_ADDRESS ||
-    process.env.ETHEREUM_REGISTRY
+  const ethereumRegistry = ethereumModuleConfig.ethereumRegistry || process.env.ETHEREUM_DID_REGISTRY_CONTRACT_ADDRESS
   const ethereumSchemaManagerContractAddress =
     ethereumModuleConfig.ethereumSchemaManagerContractAddress ||
     process.env.ETHEREUM_SCHEMA_MANAGER_CONTRACT_ADDRESS
@@ -355,9 +349,6 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     ethereumRegistry,
     ethereumSchemaManagerContractAddress,
     ethereumRpcUrl,
-    chainId,
-    name,
-    registry,
     walletConfig,
     autoAcceptConnections,
     autoAcceptCredentials,
@@ -438,9 +429,9 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   }
 
   const ethereumModuleConfig = {
-    ethereumNetworkName: ethereumNetworkName || name,
-    ethereumChainId: ethereumChainId || chainId,
-    ethereumRegistry: ethereumRegistry || registry,
+    ethereumNetworkName,
+    ethereumChainId,
+    ethereumRegistry,
     ethereumSchemaManagerContractAddress,
     ethereumRpcUrl,
   }
