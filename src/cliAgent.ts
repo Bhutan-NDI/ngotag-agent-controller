@@ -130,6 +130,11 @@ export interface AriesRestConfig {
   rpcUrl?: string
   fileServerUrl?: string
   fileServerToken?: string
+  ethereumNetworkName?: string
+  ethereumChainId?: string | number
+  ethereumRegistry?: string
+  ethereumSchemaManagerContractAddress?: string
+  ethereumRpcUrl?: string
   walletScheme?: AskarMultiWalletDatabaseScheme
   schemaFileServerURL?: string
   apiKey: string
@@ -146,6 +151,15 @@ export async function readRestConfig(path: string) {
 export type RestMultiTenantAgentModules = Awaited<ReturnType<typeof getWithTenantModules>>
 
 export type RestAgentModules = Awaited<ReturnType<typeof getModules>>
+
+interface EthereumModuleEnvironmentConfig {
+  ethereumNetworkName?: string
+  ethereumChainId?: string | number
+  ethereumRegistry?: string
+  ethereumSchemaManagerContractAddress?: string
+  ethereumRpcUrl?: string
+}
+
 function requireEnv(name: string): string {
   const value = process.env[name]
   if (!value) {
@@ -171,7 +185,15 @@ const getModules = (
   walletScheme: AskarMultiWalletDatabaseScheme,
   storeOptions: AskarModuleConfigStoreOptions,
   endpoints: string[],
+  ethereumModuleConfig: EthereumModuleEnvironmentConfig = {},
 ) => {
+  const ethereumNetworkName = ethereumModuleConfig.ethereumNetworkName || process.env.ETHEREUM_NETWORK_NAME
+  const ethereumChainId = Number(ethereumModuleConfig.ethereumChainId || process.env.ETHEREUM_CHAIN_ID)
+  const ethereumRpcUrl = ethereumModuleConfig.ethereumRpcUrl || process.env.ETHEREUM_RPC_URL
+  const ethereumRegistry = ethereumModuleConfig.ethereumRegistry || process.env.ETHEREUM_DID_REGISTRY_CONTRACT_ADDRESS
+  const ethereumSchemaManagerContractAddress =
+    ethereumModuleConfig.ethereumSchemaManagerContractAddress || process.env.ETHEREUM_SCHEMA_MANAGER_CONTRACT_ADDRESS
+
   const legacyIndyCredentialFormat = new LegacyIndyDidCommCredentialFormatService()
   const legacyIndyProofFormat = new LegacyIndyDidCommProofFormatService()
   const jsonLdCredentialFormatService = new DidCommJsonLdCredentialFormatService()
@@ -323,17 +345,17 @@ const getModules = (
       config: {
         networks: [
           {
-            name: 'sepolia',
-            chainId: 11155111,
-            rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/API-KEY',
-            registry: '0x485cFb9cdB84c0a5AfE69b75E2e79497Fc2256Fc',
+            name: ethereumNetworkName as string,
+            chainId: ethereumChainId,
+            rpcUrl: ethereumRpcUrl as string,
+            registry: ethereumRegistry as string,
           },
         ],
       },
-      schemaManagerContractAddress: '0xa95ACF3119791F65b2192267836df9A472785c15',
-      serverUrl: 'https://dev-schema.ngotag.com',
-      fileServerToken: 'ACCESS-TOKEN',
-      rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/API-KEY',
+      schemaManagerContractAddress: ethereumSchemaManagerContractAddress as string,
+      serverUrl: fileServerUrl ? fileServerUrl : (process.env.SERVER_URL as string),
+      fileServerToken: fileServerToken ? fileServerToken : (process.env.FILE_SERVER_TOKEN as string),
+      rpcUrl: ethereumRpcUrl as string,
     }),
   }
 }
@@ -352,6 +374,7 @@ const getWithTenantModules = (
   walletScheme: AskarMultiWalletDatabaseScheme,
   walletConfig: AskarModuleConfigStoreOptions,
   endpoints: string[],
+  ethereumModuleConfig: EthereumModuleEnvironmentConfig = {},
 ) => {
   const modules = getModules(
     networkConfig,
@@ -366,6 +389,7 @@ const getWithTenantModules = (
     walletScheme,
     walletConfig,
     endpoints,
+    ethereumModuleConfig,
   )
   return {
     tenants: new TenantsModule<typeof modules>({
@@ -408,6 +432,11 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     fileServerUrl,
     rpcUrl,
     schemaManagerContractAddress,
+    ethereumNetworkName,
+    ethereumChainId,
+    ethereumRegistry,
+    ethereumSchemaManagerContractAddress,
+    ethereumRpcUrl,
     walletConfig,
     autoAcceptConnections,
     autoAcceptCredentials,
@@ -486,6 +515,14 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   }
   let modules
 
+  const ethereumModuleConfig: EthereumModuleEnvironmentConfig = {
+    ethereumNetworkName,
+    ethereumChainId,
+    ethereumRegistry,
+    ethereumSchemaManagerContractAddress,
+    ethereumRpcUrl,
+  }
+
   if (afjConfig.tenancy) {
     modules = getWithTenantModules(
       networkConfig,
@@ -500,6 +537,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet,
       walletConfig,
       endpoints || [],
+      ethereumModuleConfig,
     )
   } else {
     modules = getModules(
@@ -515,6 +553,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet,
       walletConfig,
       endpoints || [],
+      ethereumModuleConfig,
     )
   }
 
