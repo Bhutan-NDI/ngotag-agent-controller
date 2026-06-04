@@ -1,0 +1,60 @@
+diff --git a/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/PolygonDidRegistrar.mjs b/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/PolygonDidRegistrar.mjs
+index f866853..0e23e1d 100644
+--- a/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/PolygonDidRegistrar.mjs
++++ b/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/PolygonDidRegistrar.mjs
+@@ -75,24 +75,40 @@ var PolygonDidRegistrar = class {
+ 			const signingKey = await this.getSigningKey(agentContext, publicKeyBase58);
+ 			const didRegistry = ledgerService.createDidRegistryInstance(signingKey);
+ 			const secpDidDoc = getSecp256k1DidDoc(did, createSecp256k1PublicJwk(ecPublicJwk), options.options.endpoint);
+-			const response = await didRegistry.create(did, secpDidDoc);
+-			agentContext.config.logger.info(`Published did on ledger: ${did}`);
+-			const didDoc = response.didDoc;
++			// Idempotency: if the DID is already registered on-chain (e.g. a previous attempt wrote it
++			// to the ledger but a later step - local save or platform DB write - failed), skip the
++			// on-chain write and recover, so a retry does not fail with "already registered".
++			let didDoc;
++			let txnHash;
++			const existingOnChain = await this._getResolver(agentContext).resolve(did);
++			if (existingOnChain?.didDocument) {
++				agentContext.config.logger.warn(`DID ${did} already registered on ledger - skipping on-chain write and recovering local state`);
++				didDoc = secpDidDoc;
++			} else {
++				const response = await didRegistry.create(did, secpDidDoc);
++				agentContext.config.logger.info(`Published did on ledger: ${did}`);
++				didDoc = response.didDoc;
++				txnHash = response.txnHash;
++			}
+ 			const didDocument = JsonTransformer.fromJSON(didDoc, DidDocument);
+-			const didRecord = new DidRecord({
+-				did: didDocument.id,
+-				role: DidDocumentRole.Created,
+-				didDocument,
+-				keys: [{
+-					kmsKeyId: keyId,
+-					didDocumentRelativeKeyId: `${didDocument.id}#key-1`
+-				}]
+-			});
+-			agentContext.config.logger.info(`Saving DID record to wallet: ${did} and did document: ${didDocument}`);
+-			await didRepository.save(agentContext, didRecord);
++			// Idempotency: only persist the wallet DID record if it is not already stored.
++			const existingDidRecord = await didRepository.findCreatedDid(agentContext, didDocument.id);
++			if (!existingDidRecord) {
++				const didRecord = new DidRecord({
++					did: didDocument.id,
++					role: DidDocumentRole.Created,
++					didDocument,
++					keys: [{
++						kmsKeyId: keyId,
++						didDocumentRelativeKeyId: `${didDocument.id}#key-1`
++					}]
++				});
++				agentContext.config.logger.info(`Saving DID record to wallet: ${did} and did document: ${didDocument}`);
++				await didRepository.save(agentContext, didRecord);
++			}
+ 			return {
+ 				didDocumentMetadata: {},
+-				didRegistrationMetadata: { txn: response.txnHash },
++				didRegistrationMetadata: { txn: txnHash },
+ 				didState: {
+ 					state: "finished",
+ 					did: didDocument.id,
