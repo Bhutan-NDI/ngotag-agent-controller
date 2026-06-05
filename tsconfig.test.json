@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "verbatimModuleSyntax": false,
+    "noEmit": false,
+    "noEmitOnError": false,
+    "declaration": false,
+    "sourceMap": false,
+    "lib": ["ESNext"],
+    "skipLibCheck": true,
+    "rootDir": ".",
+    "outDir": "./.jest-cache-build"
+  }
+}

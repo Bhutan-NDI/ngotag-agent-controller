@@ -33,7 +33,7 @@
     "clean": "rimraf -rf ./build",
     "compile": "tsoa spec-and-routes && tsc -p tsconfig.build.json",
     "prepublishOnly": "yarn run build",
-    "test": "jest",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "postinstall": "patch-package",
     "lint": "eslint --config eslint.config.mjs .",
     "validate": "yarn lint && yarn check-types && yarn check-format"
@@ -95,6 +95,7 @@
     "@types/cors": "^2.8.18",
     "@types/eslint": "^9.6.1",
     "@types/express": "^5.0.2",
+    "@jest/globals": "^29.7.0",
     "@types/express-serve-static-core": "^5.0.6",
     "@types/jest": "^29.5.14",
     "@types/jsonwebtoken": "^9.0.9",
