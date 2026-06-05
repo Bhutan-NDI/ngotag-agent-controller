@@ -1,0 +1,35 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "verbatimModuleSyntax": false,
+    "noEmit": false,
+    "noEmitOnError": false,
+    "declaration": false,
+    "sourceMap": false,
+    // ES2020+ so the BigInt literals (e.g. wei balances) used in the specs are valid; the build
+    // target stays ES2017. Tests only ever run on modern Node.
+    "target": "ES2020",
+    "lib": ["ESNext"],
+    "skipLibCheck": true,
+    "rootDir": ".",
+    "outDir": "./.jest-cache-build",
+    "baseUrl": ".",
+    "paths": {
+      "credo-controller/*": ["*/src"],
+      // The source pulled in transitively (via the controller the specs import) deep-imports the
+      // package `build/*` outputs by file path. Those subpaths aren't in the packages' "exports"
+      // maps, so Bundler resolution can't see them; map them directly so the type-check resolves
+      // them the way the CommonJS build (tsconfig.build.json) does. ts-jest ignores `paths` (Node
+      // resolves at runtime), so this only affects `tsc --noEmit -p tsconfig.test.json`.
+      "@credo-ts/core/build/*": ["./node_modules/@credo-ts/core/build/*"],
+      "@ayanworks/credo-polygon-w3c-module/build/*": ["./node_modules/@ayanworks/credo-polygon-w3c-module/build/*"]
+    }
+  },
+  // Override the build config's include/exclude (which drop **/__tests__/*.ts) so the test files
+  // are part of this program. ts-jest ignores include/exclude (it compiles the files Jest feeds
+  // it), but `tsc --noEmit -p tsconfig.test.json` relies on them to type-check the specs.
+  "include": ["src/**/__tests__/**/*", "src/**/*.spec.ts", "src/**/*.test.ts"],
+  "exclude": ["node_modules", "build"]
+}
