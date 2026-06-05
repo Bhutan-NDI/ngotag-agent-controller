@@ -16,7 +16,9 @@ const config: Config.InitialOptions = {
         // Type-aware emit (isolatedModules off) so type-only named imports that aren't written as
         // `import type` are elided — otherwise ESM linking fails on them across the source graph.
         isolatedModules: false,
-        // Don't fail tests on type diagnostics; type-checking is covered by `yarn check-types`.
+        // Don't fail tests on type diagnostics here. Source is type-checked by `yarn check-types`
+        // (tsconfig.build.json) and the test files by `yarn check-types:test` (tsconfig.test.json,
+        // which includes **/__tests__/*.ts); both run in `yarn validate`.
         diagnostics: false,
         tsconfig: 'tsconfig.test.json',
       },

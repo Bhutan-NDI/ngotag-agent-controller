@@ -1,5 +1,5 @@
 diff --git a/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/PolygonDidRegistrar.mjs b/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/PolygonDidRegistrar.mjs
-index f866853..fba2204 100644
+index f866853..016e4d1 100644
 --- a/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/PolygonDidRegistrar.mjs
 +++ b/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/PolygonDidRegistrar.mjs
 @@ -56,16 +56,9 @@ var PolygonDidRegistrar = class {
@@ -22,7 +22,7 @@ index f866853..fba2204 100644
  		const { publicKeyBase58, publicJwk, keyId } = await this.importKeyToKms(agentContext, privateKey);
  		const ecPublicJwk = publicJwk;
  		const fullPublicKeyHex = Buffer.from(ecPublicJwk.x, "base64url").toString("hex") + Buffer.from(ecPublicJwk.y, "base64url").toString("hex");
-@@ -75,24 +68,76 @@ var PolygonDidRegistrar = class {
+@@ -75,24 +68,91 @@ var PolygonDidRegistrar = class {
  			const signingKey = await this.getSigningKey(agentContext, publicKeyBase58);
  			const didRegistry = ledgerService.createDidRegistryInstance(signingKey);
  			const secpDidDoc = getSecp256k1DidDoc(did, createSecp256k1PublicJwk(ecPublicJwk), options.options.endpoint);
@@ -45,9 +45,23 @@ index f866853..fba2204 100644
 +				recovered = true;
 +			};
 +			const existingOnChain = await this._getResolver(agentContext).resolve(did);
-+			if (existingOnChain?.didDocument) {
++			if (existingOnChain?.didDocument && !existingOnChain.didDocumentMetadata?.deactivated) {
 +				agentContext.config.logger.warn(`DID ${did} already registered on ledger - skipping on-chain write and recovering local state`);
 +				recoverFrom(existingOnChain.didDocument);
++			} else if (existingOnChain?.didDocument && existingOnChain.didDocumentMetadata?.deactivated) {
++				// The DID exists on-chain but is deactivated. It cannot be recovered into the wallet as a
++				// usable Created DID (the update/deactivate paths likewise treat deactivated documents as
++				// not usable), and a did:polygon is derived deterministically from the key, so it cannot be
++				// re-created either. Fail clearly instead of resurrecting a deactivated DID.
++				agentContext.config.logger.warn(`DID ${did} is deactivated on ledger - cannot recover a deactivated DID`);
++				return {
++					didDocumentMetadata: {},
++					didRegistrationMetadata: {},
++					didState: {
++						state: "failed",
++						reason: "DID is deactivated"
++					}
++				};
 +			} else {
 +				// Only require wallet balance when a new on-chain create() transaction is about to be submitted.
 +				const wallet = new Wallet(new SigningKey(privateKey));
@@ -73,7 +87,8 @@ index f866853..fba2204 100644
 +					if (/already registered/i.test(createErrorMessage)) {
 +						agentContext.config.logger.warn(`DID ${did} reported as already registered during create - re-resolving and recovering local state`);
 +						const reResolved = await this._getResolver(agentContext).resolve(did);
-+						if (reResolved?.didDocument) recoverFrom(reResolved.didDocument);
++						// Mirror the up-front check: only recover a live document, never a deactivated one.
++						if (reResolved?.didDocument && !reResolved.didDocumentMetadata?.deactivated) recoverFrom(reResolved.didDocument);
 +						else throw createError;
 +					} else throw createError;
 +				}

@@ -60,12 +60,16 @@ const publicJwk = { kty: 'EC', crv: 'secp256k1', x: (privateJwk as any).x, y: (p
 // request-built secpDidDoc carries — so we can prove recovery uses the resolved document.
 const onChainDidDocument = (id: string) => ({ '@context': ['https://www.w3.org/ns/did/v1'], id })
 
+// Shape returned by the (mocked) Polygon resolver. didDocumentMetadata.deactivated drives the
+// deactivated-DID recovery guard under test.
+type ResolveResult = { didDocument: unknown; didDocumentMetadata?: { deactivated?: boolean } }
+
 type Mocks = {
   ledgerService: { rpcUrl: string; createDidRegistryInstance: jest.Mock }
-  didRegistry: { create: jest.Mock }
+  didRegistry: { create: jest.Mock<(did: string, doc: unknown) => Promise<{ didDoc: unknown; txnHash: string }>> }
   didRepository: { findCreatedDid: jest.Mock; save: jest.Mock }
   kmsApi: { getPublicKey: jest.Mock; importKey: jest.Mock }
-  resolver: { resolve: jest.Mock }
+  resolver: { resolve: jest.Mock<(did: string) => Promise<ResolveResult>> }
 }
 
 const buildRegistrar = (mocks: Mocks) => {
@@ -94,7 +98,7 @@ const makeMocks = (over: Partial<Mocks> = {}): Mocks => {
     didRegistry,
     didRepository: { findCreatedDid: jest.fn(async () => null), save: jest.fn(async () => {}) },
     kmsApi: { getPublicKey: jest.fn(async () => publicJwk), importKey: jest.fn() },
-    resolver: { resolve: jest.fn() },
+    resolver: { resolve: jest.fn<(did: string) => Promise<ResolveResult>>() },
     ...over,
   }
 }
@@ -180,6 +184,43 @@ describe('PolygonDidRegistrar.create() idempotent retry', () => {
     // The on-chain document we returned has no verificationMethod; the request-built secpDidDoc would.
     // So an empty verificationMethod proves the saved record came from the ledger document.
     expect(savedRecord.didDocument.verificationMethod ?? []).toHaveLength(0)
+  })
+
+  it('case 6: DID exists on-chain but is deactivated -> fails, does not recover or save', async () => {
+    const mocks = makeMocks()
+    mocks.resolver.resolve.mockImplementation(async (did: string) => ({
+      didDocument: onChainDidDocument(did),
+      didDocumentMetadata: { deactivated: true },
+    }))
+    const { registrar, agentContext } = buildRegistrar(mocks)
+
+    const result: any = await registrar.create(agentContext, createOptions)
+
+    expect(result.didState.state).toBe('failed')
+    expect(result.didState.reason).toBe('DID is deactivated')
+    expect(mocks.didRegistry.create).not.toHaveBeenCalled()
+    expect(mocks.didRepository.save).not.toHaveBeenCalled()
+  })
+
+  it('case 7: resolve() misses, create() throws "already registered", re-resolve is deactivated -> fails', async () => {
+    const mocks = makeMocks()
+    mocks.resolver.resolve
+      .mockImplementationOnce(async () => ({ didDocument: null }))
+      .mockImplementationOnce(async (did: string) => ({
+        didDocument: onChainDidDocument(did),
+        didDocumentMetadata: { deactivated: true },
+      }))
+    mocks.didRegistry.create.mockImplementation(async () => {
+      throw new Error('The DID document already registered!')
+    })
+    const { registrar, agentContext } = buildRegistrar(mocks)
+
+    const result: any = await registrar.create(agentContext, createOptions)
+
+    // The deactivated re-resolve must not recover; the create error surfaces as a failed state.
+    expect(result.didState.state).toBe('failed')
+    expect(mocks.resolver.resolve).toHaveBeenCalledTimes(2)
+    expect(mocks.didRepository.save).not.toHaveBeenCalled()
   })
 
   it('baseline: a new DID is written on-chain and reported with its txn hash', async () => {

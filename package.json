@@ -22,6 +22,7 @@
   },
   "scripts": {
     "check-types": "tsc --noEmit -p tsconfig.build.json",
+    "check-types:test": "tsc --noEmit -p tsconfig.test.json",
     "prettier": "prettier '**/*.+(js|json|ts|md|yml|yaml)'",
     "format": "yarn prettier --write",
     "check-format": "yarn prettier --list-different",
@@ -36,7 +37,7 @@
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "postinstall": "patch-package",
     "lint": "eslint --config eslint.config.mjs .",
-    "validate": "yarn lint && yarn check-types && yarn check-format"
+    "validate": "yarn lint && yarn check-types && yarn check-types:test && yarn check-format"
   },
   "dependencies": {
     "@ayanworks/credo-polygon-w3c-module": "2.0.2",
