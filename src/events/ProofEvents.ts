@@ -1,3 +1,4 @@
+import type { RestMultiTenantAgentModules } from '../cliAgent'
 import type { ServerConfig } from '../utils/ServerConfig'
 import type { Agent } from '@credo-ts/core'
 import type { DidCommProofStateChangedEvent } from '@credo-ts/didcomm'
@@ -10,19 +11,30 @@ import { sendWebhookEvent } from './WebhookEvent'
 export const proofEvents = async (agent: Agent, config: ServerConfig) => {
   agent.events.on(DidCommProofEventTypes.ProofStateChanged, async (event: DidCommProofStateChangedEvent) => {
     const record = event.payload.proofRecord
-    const body = { ...record.toJSON(), ...event.metadata } as { proofData?: any }
-    if (event.metadata.contextCorrelationId && event.metadata.contextCorrelationId !== 'default') {
-      const tenantAgent = await agent.modules.tenants.getTenantAgent({
-        tenantId: event.metadata.contextCorrelationId.split('tenant-')[1],
-      })
-      const data = await tenantAgent.modules.didcomm.proofs.getFormatData(record.id)
-      body.proofData = data
+    const tenantId =
+      !event.metadata.contextCorrelationId || event.metadata.contextCorrelationId === 'default'
+        ? event.metadata.contextCorrelationId
+        : event.metadata.contextCorrelationId.split('tenant-')[1]
+
+    const body: Record<string, unknown> = {
+      ...record.toJSON(),
+      ...event.metadata,
+      contextCorrelationId: tenantId,
+      proofData: null,
+    }
+
+    if (tenantId && tenantId !== 'default') {
+      await (agent as Agent<RestMultiTenantAgentModules>).modules.tenants.withTenantAgent(
+        { tenantId },
+        async (tenantAgent) => {
+          body.proofData = await tenantAgent.modules.didcomm.proofs.getFormatData(record.id)
+        },
+      )
     }
 
     //Emit webhook for dedicated agent
     if (event.metadata.contextCorrelationId === 'default') {
-      const data = await agent.modules.didcomm.proofs.getFormatData(record.id)
-      body.proofData = data
+      body.proofData = await agent.modules.didcomm.proofs.getFormatData(record.id)
     }
 
     // Only send webhook if webhook url is configured
