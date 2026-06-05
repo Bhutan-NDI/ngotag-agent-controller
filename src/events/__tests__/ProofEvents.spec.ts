@@ -91,8 +91,8 @@ describe('proofEvents', () => {
   beforeEach(async () => {
     jest.clearAllMocks()
     agent = makeAgent()
-    agent.events.on.mockImplementation((_eventType: string, listener: typeof capturedListener) => {
-      capturedListener = listener
+    agent.events.on.mockImplementation((_eventType, listener) => {
+      capturedListener = listener as typeof capturedListener
     })
     await proofEvents(agent as never, { port: 3000, webhookUrl: WEBHOOK_URL })
   })
