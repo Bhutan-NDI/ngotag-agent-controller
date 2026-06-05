@@ -112,10 +112,7 @@ describe('proofEvents', () => {
     })
 
     it('strips the "tenant-" prefix before passing tenantId to withTenantAgent', () => {
-      expect(agent.modules.tenants.withTenantAgent).toHaveBeenCalledWith(
-        { tenantId: 'abc123' },
-        expect.any(Function),
-      )
+      expect(agent.modules.tenants.withTenantAgent).toHaveBeenCalledWith({ tenantId: 'abc123' }, expect.any(Function))
     })
 
     it('emits the webhook payload with proofData populated', () => {
