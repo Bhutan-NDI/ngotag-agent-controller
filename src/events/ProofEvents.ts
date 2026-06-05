@@ -30,10 +30,7 @@ export const proofEvents = async (agent: Agent, config: ServerConfig) => {
           body.proofData = await tenantAgent.modules.didcomm.proofs.getFormatData(record.id)
         },
       )
-    }
-
-    //Emit webhook for dedicated agent
-    if (event.metadata.contextCorrelationId === 'default') {
+    } else if (tenantId === 'default') {
       body.proofData = await agent.modules.didcomm.proofs.getFormatData(record.id)
     }
 
