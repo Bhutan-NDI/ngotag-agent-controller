@@ -217,8 +217,10 @@ describe('PolygonDidRegistrar.create() idempotent retry', () => {
 
     const result: any = await registrar.create(agentContext, createOptions)
 
-    // The deactivated re-resolve must not recover; the create error surfaces as a failed state.
+    // The deactivated re-resolve must not recover; it surfaces the clear deactivated reason rather
+    // than the raw "already registered" create error, matching the up-front deactivated branch.
     expect(result.didState.state).toBe('failed')
+    expect(result.didState.reason).toBe('DID is deactivated')
     expect(mocks.resolver.resolve).toHaveBeenCalledTimes(2)
     expect(mocks.didRepository.save).not.toHaveBeenCalled()
   })

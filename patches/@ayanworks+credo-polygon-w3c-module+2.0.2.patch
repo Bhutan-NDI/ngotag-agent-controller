@@ -1,5 +1,5 @@
 diff --git a/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/PolygonDidRegistrar.mjs b/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/PolygonDidRegistrar.mjs
-index f866853..016e4d1 100644
+index f866853..9b2029c 100644
 --- a/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/PolygonDidRegistrar.mjs
 +++ b/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/PolygonDidRegistrar.mjs
 @@ -56,16 +56,9 @@ var PolygonDidRegistrar = class {
@@ -22,7 +22,7 @@ index f866853..016e4d1 100644
  		const { publicKeyBase58, publicJwk, keyId } = await this.importKeyToKms(agentContext, privateKey);
  		const ecPublicJwk = publicJwk;
  		const fullPublicKeyHex = Buffer.from(ecPublicJwk.x, "base64url").toString("hex") + Buffer.from(ecPublicJwk.y, "base64url").toString("hex");
-@@ -75,24 +68,91 @@ var PolygonDidRegistrar = class {
+@@ -75,24 +68,105 @@ var PolygonDidRegistrar = class {
  			const signingKey = await this.getSigningKey(agentContext, publicKeyBase58);
  			const didRegistry = ledgerService.createDidRegistryInstance(signingKey);
  			const secpDidDoc = getSecp256k1DidDoc(did, createSecp256k1PublicJwk(ecPublicJwk), options.options.endpoint);
@@ -88,8 +88,22 @@ index f866853..016e4d1 100644
 +						agentContext.config.logger.warn(`DID ${did} reported as already registered during create - re-resolving and recovering local state`);
 +						const reResolved = await this._getResolver(agentContext).resolve(did);
 +						// Mirror the up-front check: only recover a live document, never a deactivated one.
-+						if (reResolved?.didDocument && !reResolved.didDocumentMetadata?.deactivated) recoverFrom(reResolved.didDocument);
-+						else throw createError;
++						if (reResolved?.didDocument && !reResolved.didDocumentMetadata?.deactivated) {
++							recoverFrom(reResolved.didDocument);
++						} else if (reResolved?.didDocument && reResolved.didDocumentMetadata?.deactivated) {
++							// Same as the up-front deactivated branch: surface the clear "DID is deactivated"
++							// reason instead of the raw "already registered" create error, so both deactivated
++							// paths return a consistent, caller-friendly failure.
++							agentContext.config.logger.warn(`DID ${did} is deactivated on ledger - cannot recover a deactivated DID`);
++							return {
++								didDocumentMetadata: {},
++								didRegistrationMetadata: {},
++								didState: {
++									state: "failed",
++									reason: "DID is deactivated"
++								}
++							};
++						} else throw createError;
 +					} else throw createError;
 +				}
 +			}
