@@ -60,7 +60,7 @@ import { setupServer } from './server'
 import { buildCachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
 import { TsLogger } from './utils/logger'
-import { emitStructured, makeSpanId, monoNow, tryExtractFromJwe } from './utils/StructuredLogger'
+import { emitStructured, isInstrumentationEnabled, makeSpanId, monoNow, tryExtractFromJwe } from './utils/StructuredLogger'
 import { startGauges } from './instrumentation/gauges'
 import { requestContext } from './instrumentation/requestContext'
 
@@ -484,7 +484,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     // Add instrumentation middleware to the HTTP inbound transport's express app.
     // express.text() body parser is added in the transport constructor so req.body is
     // available as a string when our middleware fires.
-    if (inboundTransport.transport === 'http' && transport.app) {
+    if (isInstrumentationEnabled() && inboundTransport.transport === 'http' && transport.app) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       transport.app.use((req: any, res: any, next: any) => {
         if (req.method === 'POST') {
@@ -524,7 +524,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     admin_port: adminPort,
   })
 
-  startGauges()
+  if (isInstrumentationEnabled()) startGauges()
 
   let token: string = ''
   const genericRecord = await agent.genericRecords.getAll()
