@@ -106,10 +106,7 @@ const memCache = new SimpleLRU<DocumentLoaderResult>(LRU_MAX)
 // ---------------------------------------------------------------------------
 const withTimeout = <T>(p: Promise<T>, ms: number, url: string): Promise<T> =>
   new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`document loader timeout after ${ms}ms for ${url}`)),
-      ms,
-    )
+    const timer = setTimeout(() => reject(new Error(`document loader timeout after ${ms}ms for ${url}`)), ms)
     timer.unref() // don't keep the Node.js event loop alive for this timer alone
     p.then(
       (val) => {
@@ -119,7 +116,7 @@ const withTimeout = <T>(p: Promise<T>, ms: number, url: string): Promise<T> =>
       (err) => {
         clearTimeout(timer)
         reject(err)
-      },
+      }
     )
   })
 
