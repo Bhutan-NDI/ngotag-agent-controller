@@ -51,7 +51,9 @@ const STATIC_CONTEXTS: Record<string, unknown> = {
 // ---------------------------------------------------------------------------
 const schemaHost = (() => {
   try {
-    return new URL(process.env.SERVER_URL ?? '').host
+    // Fall back to the default schema server so dev-schema.ngotag.com stays
+    // allowlisted when SERVER_URL is not set (preserves pre-PR behaviour).
+    return new URL(process.env.SERVER_URL ?? 'https://dev-schema.ngotag.com').host
   } catch {
     return ''
   }
@@ -103,12 +105,23 @@ const memCache = new SimpleLRU<DocumentLoaderResult>(LRU_MAX)
 // Helpers
 // ---------------------------------------------------------------------------
 const withTimeout = <T>(p: Promise<T>, ms: number, url: string): Promise<T> =>
-  Promise.race([
-    p,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`document loader timeout after ${ms}ms for ${url}`)), ms)
-    ),
-  ])
+  new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`document loader timeout after ${ms}ms for ${url}`)),
+      ms,
+    )
+    timer.unref() // don't keep the Node.js event loop alive for this timer alone
+    p.then(
+      (val) => {
+        clearTimeout(timer)
+        resolve(val)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
 
 // ---------------------------------------------------------------------------
 // Loader factory
