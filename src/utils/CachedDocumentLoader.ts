@@ -10,7 +10,7 @@ import { defaultDocumentLoader } from '@credo-ts/core/build/modules/vc/data-inte
 
 import { requestContext } from '../instrumentation/requestContext'
 
-import { emitStructured, makeSpanId, monoNow, durationMs } from './StructuredLogger'
+import { emitStructured, isInstrumentationEnabled, makeSpanId, monoNow, durationMs } from './StructuredLogger'
 import { SECP256K1_RECOVERY_2020_V2 } from './staticContexts/secp256k1recovery2020v2'
 
 // ---------------------------------------------------------------------------
@@ -141,9 +141,10 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
 
     const wrappedLoader = async (url: string): Promise<DocumentLoaderResult> => {
       const noFrag = url.split('#')[0]
-      const spanId = makeSpanId()
-      const start = monoNow()
-      const jweFp = requestContext.getStore()?.jweFp ?? ''
+      const enabled = isInstrumentationEnabled()
+      const spanId = enabled ? makeSpanId() : ''
+      const start = enabled ? monoNow() : 0
+      const jweFp = enabled ? (requestContext.getStore()?.jweFp ?? '') : ''
 
       // ------------------------------------------------------------------
       // 1a) STATIC contexts — embedded in bundle, zero network, Redis-immune
