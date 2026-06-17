@@ -94,7 +94,7 @@ jobs:
 
           cd manifests/apps/${{ env.MANIFEST_ENV }}
           if grep -q "${{ env.IMAGE_NAME }}" kustomization.yaml; then
-            sed -i "/^[[:space:]]*- name: .*\\/${{ env.IMAGE_NAME }}$/,/^[[:space:]]*newTag:/s|^[[:space:]]*newTag: .*|    newTag: $IMAGE_TAG # {\"\\$imagepolicy\": \"flux-system:phenix-agent-controller:tag\"}|" kustomization.yaml
+            sed -i "/^[[:space:]]*- name: .*\\/${{ env.IMAGE_NAME }}$/,/^[[:space:]]*newTag:/s|^[[:space:]]*newTag: .*|    newTag: $IMAGE_TAG # {\"\\\$imagepolicy\": \"flux-system:phenix-agent-controller:tag\"}|" kustomization.yaml
           else
             echo "::error::${{ env.IMAGE_NAME }} not found in prod kustomization.yaml"
             exit 1
