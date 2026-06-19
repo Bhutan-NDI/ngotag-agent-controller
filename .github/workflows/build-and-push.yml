@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: prod
     outputs:
-      image_tag: ${{ steps.tag.outputs.sha }}
+      image_tag: ${{ steps.tag.outputs.release_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -54,7 +54,11 @@ jobs:
 
       - name: Set image tag
         id: tag
-        run: echo "sha=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+        run: |
+          SHA="${GITHUB_SHA::8}"
+          RELEASE_TAG="$(date -u +%Y%m%d%H%M%S)-$SHA"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -63,6 +67,7 @@ jobs:
           file: Dockerfile
           push: true
           tags: |
+            ${{ env.ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.release_tag }}
             ${{ env.ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.sha }}
             ${{ env.ACR_SERVER }}/${{ env.IMAGE_NAME }}:latest
           cache-from: type=gha
