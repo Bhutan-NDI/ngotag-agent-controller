@@ -3242,6 +3242,40 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"VerifyDataOptions": {
+				"properties": {
+					"publicKeyBase58": {
+						"type": "string",
+						"description": "Optional; ignored for verification — the DID-resolved key is always used"
+					},
+					"method": {
+						"type": "string",
+						"description": "Optional DID method hint (informational)"
+					},
+					"keyType": {
+						"type": "string",
+						"description": "Key type hint (informational, e.g. \"ed25519\")"
+					},
+					"signature": {
+						"type": "string",
+						"description": "Signature to verify, base64 encoded"
+					},
+					"data": {
+						"type": "string",
+						"description": "Signed data, base64 encoded"
+					},
+					"did": {
+						"type": "string",
+						"description": "DID whose authentication key verifies the signature. The verification key is\nresolved from the DID Document, never taken from the request body."
+					}
+				},
+				"required": [
+					"signature",
+					"data",
+					"did"
+				],
+				"type": "object"
+			},
 			"Partial_W3cCredentialValidations_": {
 				"properties": {},
 				"type": "object",
@@ -9055,6 +9089,48 @@
 					}
 				],
 				"parameters": []
+			}
+		},
+		"/agent/verify": {
+			"post": {
+				"operationId": "Verify",
+				"responses": {
+					"200": {
+						"description": "true if the signature is valid for the DID-resolved key, false otherwise",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "boolean"
+								}
+							}
+						}
+					}
+				},
+				"description": "Verify an Ed25519 signature against the key resolved from the holder's DID.",
+				"tags": [
+					"Agent"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"description": "Verify options\ndid - DID whose authentication key is used to verify (resolved server-side)\ndata - Signed data, base64 encoded\nsignature - Signature to verify, base64 encoded",
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/VerifyDataOptions",
+								"description": "Verify options\ndid - DID whose authentication key is used to verify (resolved server-side)\ndata - Signed data, base64 encoded\nsignature - Signature to verify, base64 encoded"
+							}
+						}
+					}
+				}
 			}
 		},
 		"/agent/credential/verify": {
