@@ -430,11 +430,21 @@ export type SignDataOptions = {
 }
 
 export type VerifyDataOptions = {
+  /**
+   * DID whose authentication key verifies the signature. The verification key is
+   * resolved from the DID Document, never taken from the request body.
+   */
+  did: string
+  /** Signed data, base64 encoded */
   data: string
-  // FIXME: Check type
-  keyType: any
-  publicKeyBase58: string
+  /** Signature to verify, base64 encoded */
   signature: string
+  /** Key type hint (informational, e.g. "ed25519") */
+  keyType?: string
+  /** Optional DID method hint (informational) */
+  method?: string
+  /** Optional; ignored for verification — the DID-resolved key is always used */
+  publicKeyBase58?: string
 }
 
 export interface jsonLdCredentialOptions {

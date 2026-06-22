@@ -1,4 +1,4 @@
-import type { AgentInfo, AgentToken, SafeW3cJsonLdVerifyCredentialOptions } from '../types'
+import type { AgentInfo, AgentToken, SafeW3cJsonLdVerifyCredentialOptions, VerifyDataOptions } from '../types'
 
 import { JsonTransformer, W3cJsonLdVerifiableCredential } from '@credo-ts/core'
 import { Request as Req } from 'express'
@@ -8,6 +8,7 @@ import { injectable } from 'tsyringe'
 
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
+import { verifyDidBoundSignature } from '../../utils/didSignatureVerification'
 
 @Tags('Agent')
 @Route('/agent')
@@ -156,6 +157,30 @@ export class AgentController extends Controller {
   //       throw ErrorHandlingService.handle(error)
   //     }
   //   }
+
+  /**
+   * Verify a DID-bound challenge-response signature.
+   *
+   * The signing algorithm is determined by the key type in the holder's DID Document
+   * (e.g. EdDSA for Ed25519 did:key, ES256 for P-256) — the endpoint is not
+   * restricted to Ed25519. Any algorithm supported by the resolved authentication
+   * key is accepted.
+   *
+   * @param body Verify options
+   *  did - DID whose authentication key is used to verify (resolved server-side)
+   *  data - Signed data, base64 encoded
+   *  signature - Signature to verify, base64 encoded
+   * @returns true if the signature is valid for the DID-resolved key, false otherwise
+   */
+  @Security('jwt', [SCOPES.TENANT_AGENT, SCOPES.DEDICATED_AGENT])
+  @Post('/verify')
+  public async verify(@Request() request: Req, @Body() body: VerifyDataOptions): Promise<boolean> {
+    try {
+      return await verifyDidBoundSignature(request.agent.dids, request.agent.kms, body)
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
 
   @Security('jwt', [SCOPES.TENANT_AGENT, SCOPES.DEDICATED_AGENT])
   @Post('/credential/verify')
