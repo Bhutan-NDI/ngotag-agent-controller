@@ -144,7 +144,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
       const enabled = isInstrumentationEnabled()
       const spanId = enabled ? makeSpanId() : ''
       const start = enabled ? monoNow() : 0
-      const jweFp = enabled ? (requestContext.getStore()?.jweFp ?? '') : ''
+      const jweFp = enabled ? requestContext.getStore()?.jweFp ?? '' : ''
 
       // ------------------------------------------------------------------
       // 1a) STATIC contexts — embedded in bundle, zero network, Redis-immune
@@ -157,7 +157,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
           span_id: spanId,
           jwe_fp: jweFp,
           tenant_id: '',
-          duration_ms: durationMs(start),
+          duration_ms: enabled ? durationMs(start) : undefined,
           cache_hit: true,
           url,
           notes: 'static',
@@ -177,7 +177,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
           span_id: spanId,
           jwe_fp: jweFp,
           tenant_id: '',
-          duration_ms: durationMs(start),
+          duration_ms: enabled ? durationMs(start) : undefined,
           cache_hit: true,
           url,
           notes: 'credo_bundled',
@@ -242,7 +242,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
             span_id: spanId,
             jwe_fp: jweFp,
             tenant_id: '',
-            duration_ms: durationMs(start),
+            duration_ms: enabled ? durationMs(start) : undefined,
             cache_hit: false,
             url,
             notes: resolveNotes,
@@ -254,7 +254,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
             span_id: spanId,
             jwe_fp: jweFp,
             tenant_id: '',
-            duration_ms: durationMs(start),
+            duration_ms: enabled ? durationMs(start) : undefined,
             cache_hit: false,
             url,
             notes: `did_resolve_error: ${String(err)}`,
@@ -293,7 +293,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
           span_id: spanId,
           jwe_fp: jweFp,
           tenant_id: '',
-          duration_ms: durationMs(start),
+          duration_ms: enabled ? durationMs(start) : undefined,
           cache_hit: true,
           url,
           notes: 'lru',
@@ -316,7 +316,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
             span_id: spanId,
             jwe_fp: jweFp,
             tenant_id: '',
-            duration_ms: durationMs(start),
+            duration_ms: enabled ? durationMs(start) : undefined,
             cache_hit: true,
             url,
             notes: 'redis',
@@ -350,7 +350,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
           span_id: spanId,
           jwe_fp: jweFp,
           tenant_id: '',
-          duration_ms: durationMs(start),
+          duration_ms: enabled ? durationMs(start) : undefined,
           cache_hit: false,
           url,
           notes: `fetch_error: ${String(err)}`,
@@ -364,7 +364,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
         span_id: spanId,
         jwe_fp: jweFp,
         tenant_id: '',
-        duration_ms: durationMs(start),
+        duration_ms: enabled ? durationMs(start) : undefined,
         cache_hit: false,
         url,
       })
