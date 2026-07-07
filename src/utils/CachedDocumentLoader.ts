@@ -10,7 +10,7 @@ import { defaultDocumentLoader } from '@credo-ts/core/build/modules/vc/data-inte
 
 import { requestContext } from '../instrumentation/requestContext'
 
-import { emitStructured, makeSpanId, monoNow, durationMs } from './StructuredLogger'
+import { emitStructured, isInstrumentationEnabled, makeSpanId, monoNow, durationMs } from './StructuredLogger'
 import { SECP256K1_RECOVERY_2020_V2 } from './staticContexts/secp256k1recovery2020v2'
 
 // ---------------------------------------------------------------------------
@@ -141,9 +141,10 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
 
     const wrappedLoader = async (url: string): Promise<DocumentLoaderResult> => {
       const noFrag = url.split('#')[0]
-      const spanId = makeSpanId()
-      const start = monoNow()
-      const jweFp = requestContext.getStore()?.jweFp ?? ''
+      const enabled = isInstrumentationEnabled()
+      const spanId = enabled ? makeSpanId() : ''
+      const start = enabled ? monoNow() : 0
+      const jweFp = enabled ? requestContext.getStore()?.jweFp ?? '' : ''
 
       // ------------------------------------------------------------------
       // 1a) STATIC contexts — embedded in bundle, zero network, Redis-immune
@@ -156,7 +157,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
           span_id: spanId,
           jwe_fp: jweFp,
           tenant_id: '',
-          duration_ms: durationMs(start),
+          duration_ms: enabled ? durationMs(start) : undefined,
           cache_hit: true,
           url,
           notes: 'static',
@@ -176,7 +177,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
           span_id: spanId,
           jwe_fp: jweFp,
           tenant_id: '',
-          duration_ms: durationMs(start),
+          duration_ms: enabled ? durationMs(start) : undefined,
           cache_hit: true,
           url,
           notes: 'credo_bundled',
@@ -241,7 +242,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
             span_id: spanId,
             jwe_fp: jweFp,
             tenant_id: '',
-            duration_ms: durationMs(start),
+            duration_ms: enabled ? durationMs(start) : undefined,
             cache_hit: false,
             url,
             notes: resolveNotes,
@@ -253,7 +254,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
             span_id: spanId,
             jwe_fp: jweFp,
             tenant_id: '',
-            duration_ms: durationMs(start),
+            duration_ms: enabled ? durationMs(start) : undefined,
             cache_hit: false,
             url,
             notes: `did_resolve_error: ${String(err)}`,
@@ -292,7 +293,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
           span_id: spanId,
           jwe_fp: jweFp,
           tenant_id: '',
-          duration_ms: durationMs(start),
+          duration_ms: enabled ? durationMs(start) : undefined,
           cache_hit: true,
           url,
           notes: 'lru',
@@ -315,7 +316,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
             span_id: spanId,
             jwe_fp: jweFp,
             tenant_id: '',
-            duration_ms: durationMs(start),
+            duration_ms: enabled ? durationMs(start) : undefined,
             cache_hit: true,
             url,
             notes: 'redis',
@@ -349,7 +350,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
           span_id: spanId,
           jwe_fp: jweFp,
           tenant_id: '',
-          duration_ms: durationMs(start),
+          duration_ms: enabled ? durationMs(start) : undefined,
           cache_hit: false,
           url,
           notes: `fetch_error: ${String(err)}`,
@@ -363,7 +364,7 @@ export const buildCachedDocumentLoader = (logger: TsLogger): DocumentLoaderWithC
         span_id: spanId,
         jwe_fp: jweFp,
         tenant_id: '',
-        duration_ms: durationMs(start),
+        duration_ms: enabled ? durationMs(start) : undefined,
         cache_hit: false,
         url,
       })

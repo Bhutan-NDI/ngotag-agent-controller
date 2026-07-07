@@ -15,6 +15,7 @@ import { container } from 'tsyringe'
 import { setDynamicApiKey } from './authentication'
 import { BaseError } from './errors/errors'
 import { registerAdminEndpoints } from './instrumentation/adminEndpoint'
+import { isInstrumentationEnabled } from './utils/StructuredLogger'
 import { basicMessageEvents } from './events/BasicMessageEvents'
 import { connectionEvents } from './events/ConnectionEvents'
 import { credentialEvents } from './events/CredentialEvents'
@@ -79,8 +80,9 @@ export const setupServer = async (agent: Agent, config: ServerConfig, apiKey?: s
 
   // Admin endpoints are mounted before SecurityMiddleware so the Bearer-token
   // check in authMiddleware is the sole guard on /admin routes — the API-key
-  // middleware must not intercept them first.
-  registerAdminEndpoints(app)
+  // middleware must not intercept them first. Only mounted when instrumentation
+  // is enabled (there is nothing to toggle otherwise).
+  if (isInstrumentationEnabled()) registerAdminEndpoints(app)
 
   const securityMiddleware = new SecurityMiddleware()
   app.use(securityMiddleware.use)

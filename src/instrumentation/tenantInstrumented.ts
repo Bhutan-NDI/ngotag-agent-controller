@@ -6,7 +6,7 @@ type TenantAgent = any
 
 import { LogLevel } from '@credo-ts/core'
 
-import { emitStructured, makeSpanId, monoNow, durationMs } from '../utils/StructuredLogger'
+import { emitStructured, isInstrumentationEnabled, makeSpanId, monoNow, durationMs } from '../utils/StructuredLogger'
 import { sessionAcquireStart, sessionAcquireEnd, sessionAcquireFailed, sessionReleased, getSessionPoolStats } from './metrics'
 import { requestContext } from './requestContext'
 
@@ -18,6 +18,13 @@ export async function withInstrumentedTenantAgent<T>(
   flow: 'issuance' | 'verification',
   callback: TenantCallback<T>
 ): Promise<T> {
+  // When instrumentation is off, run the stock tenant agent directly — no
+  // session-acquire timing, no metrics, and crucially no extra wallet-open probe
+  // query (genericRecords.getAll) per tenant operation.
+  if (!isInstrumentationEnabled()) {
+    return agent.modules.tenants.withTenantAgent({ tenantId }, (tenantAgent: TenantAgent) => callback(tenantAgent))
+  }
+
   const resolveSpanId = makeSpanId()
   const resolveStart = monoNow()
 

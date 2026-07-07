@@ -49,7 +49,21 @@ export interface StructuredLogLine {
 
 const TASK_HOST = process.env.HOSTNAME || os.hostname()
 
+// Master switch for the latency debug instrumentation (env INSTRUMENTATION_ENABLED,
+// default off). When off, emitStructured() is a no-op and the following wiring is
+// skipped: HTTP inbound middleware, the instrumented tenant wrapper, pool gauges,
+// and the admin endpoint. Call sites that compute span IDs or durations before
+// calling emitStructured() still incur that lightweight overhead regardless.
+// When on, /admin/log-level controls verbosity.
+//
+// Read at call time (not module-init) so that dotenv.config() in server.ts — which
+// runs after imports are evaluated — is visible here without any load-order changes.
+export function isInstrumentationEnabled(): boolean {
+  return process.env.INSTRUMENTATION_ENABLED === 'true'
+}
+
 export function emitStructured(level: LogLevel, line: StructuredLogLine): void {
+  if (!isInstrumentationEnabled()) return
   if (level < getDebugLogLevel()) return
 
   const out: Record<string, unknown> = {
