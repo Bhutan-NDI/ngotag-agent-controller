@@ -1,0 +1,99 @@
+diff --git a/node_modules/@credo-ts/tenants/build/TenantsApi.js b/node_modules/@credo-ts/tenants/build/TenantsApi.js
+--- a/node_modules/@credo-ts/tenants/build/TenantsApi.js
++++ b/node_modules/@credo-ts/tenants/build/TenantsApi.js
+@@ -29,7 +29,20 @@
+         const tenantContext = await this.agentContextProvider.getAgentContextForContextCorrelationId(tenantId);
+         this.logger.trace(`Got tenant context for tenant '${tenantId}'`);
+         const tenantAgent = new TenantAgent_1.TenantAgent(tenantContext);
+-        await tenantAgent.initialize();
++        try {
++            await tenantAgent.initialize();
++        }
++        catch (error) {
++            // PATCH(+002): the session slot was already acquired inside
++            // getAgentContextForContextCorrelationId. If initialize() fails, withTenantAgent's
++            // finally is never reached, so we must release the slot here or the global session
++            // counter leaks and the pool wedges at SESSION_LIMIT.
++            try {
++                await tenantAgent.endSession();
++            }
++            catch (_) { /* best-effort release */ }
++            throw error;
++        }
+         this.logger.trace(`Initializing tenant agent for tenant '${tenantId}'`);
+         return tenantAgent;
+     }
+diff --git a/node_modules/@credo-ts/tenants/build/context/TenantSessionMutex.js b/node_modules/@credo-ts/tenants/build/context/TenantSessionMutex.js
+--- a/node_modules/@credo-ts/tenants/build/context/TenantSessionMutex.js
++++ b/node_modules/@credo-ts/tenants/build/context/TenantSessionMutex.js
+@@ -54,7 +54,15 @@
+         // If we reached the limit we should lock the session mutex
+         if (this.currentSessions >= this.maxSessions) {
+             this.logger.debug(`Reached max number of sessions ${this.maxSessions}, locking mutex`);
+-            await this.sessionMutex.acquire();
++            try {
++                await this.sessionMutex.acquire();
++            }
++            catch (error) {
++                // PATCH(+002): the post-increment lock timed out. currentSessions was already
++                // incremented above, so undo it before propagating or the slot leaks permanently.
++                this.currentSessions--;
++                throw error;
++            }
+         }
+         this.logger.debug(`Acquired tenant session (${this.currentSessions} / ${this.maxSessions})`);
+     }
+diff --git a/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.js b/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.js
+--- a/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.js
++++ b/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.js
+@@ -118,24 +118,33 @@
+             this.logger.debug('Ending session for root agent context. Not disposing dependency manager');
+             return;
+         }
+-        // This should not happen
+-        if (!hasTenantSessionMapping) {
+-            this.logger.error(`Unknown agent context with contextCorrelationId '${agentContext.contextCorrelationId}'.  Cannot end session`);
+-            throw new core_1.CredoError(`Unknown agent context with contextCorrelationId '${agentContext.contextCorrelationId}'. Cannot end session`);
+-        }
+-        await this.mutexForTenant(agentContext.contextCorrelationId).runExclusive(async () => {
+-            this.logger.debug(`Acquired lock for tenant '${agentContext.contextCorrelationId}' to end session context`);
+-            const tenantSessions = this.getTenantSessionsMapping(agentContext.contextCorrelationId);
+-            // TODO: check if session count is already 0
+-            tenantSessions.sessionCount--;
+-            this.logger.debug(`Decreased agent context session count for tenant '${agentContext.contextCorrelationId}' to ${tenantSessions.sessionCount}`);
+-            if (tenantSessions.sessionCount <= 0 && tenantSessions.agentContext) {
+-                await this.closeAgentContext(tenantSessions.agentContext);
+-                delete this.tenantAgentContextMapping[agentContext.contextCorrelationId];
++        // PATCH(+002): a session slot was acquired for this context, so it MUST be released on
++        // every exit path. Previously an early throw (unknown mapping) or a rejection from the
++        // runExclusive block below skipped releaseSession(), leaking the slot and eventually
++        // wedging the pool at SESSION_LIMIT. Release now runs in a finally, and an
++        // already-closed mapping no longer throws-and-strands the slot.
++        try {
++            // This should not happen (mapping already closed by a concurrent sibling).
++            if (!hasTenantSessionMapping) {
++                this.logger.warn(`Unknown agent context with contextCorrelationId '${agentContext.contextCorrelationId}' on endSession; releasing session slot anyway`);
++                return;
+             }
+-        });
+-        // Release a session so new sessions can be acquired
+-        this.sessionMutex.releaseSession();
++            await this.mutexForTenant(agentContext.contextCorrelationId).runExclusive(async () => {
++                this.logger.debug(`Acquired lock for tenant '${agentContext.contextCorrelationId}' to end session context`);
++                const tenantSessions = this.getTenantSessionsMapping(agentContext.contextCorrelationId);
++                // TODO: check if session count is already 0
++                tenantSessions.sessionCount--;
++                this.logger.debug(`Decreased agent context session count for tenant '${agentContext.contextCorrelationId}' to ${tenantSessions.sessionCount}`);
++                if (tenantSessions.sessionCount <= 0 && tenantSessions.agentContext) {
++                    await this.closeAgentContext(tenantSessions.agentContext);
++                    delete this.tenantAgentContextMapping[agentContext.contextCorrelationId];
++                }
++            });
++        }
++        finally {
++            // Release a session so new sessions can be acquired
++            this.sessionMutex.releaseSession();
++        }
+     }
+     hasTenantSessionMapping(tenantId) {
+         return this.tenantAgentContextMapping[tenantId] !== undefined;
