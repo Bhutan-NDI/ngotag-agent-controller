@@ -1,0 +1,121 @@
+name: Build and Push to Azure ACR
+
+on:
+  push:
+    tags:
+      - 'prod-agent-controller-*'
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ACR_NAME: phenixprodacr
+  ACR_SERVER: phenixprodacr.azurecr.io
+  IMAGE_NAME: phenix-agent-controller
+  MANIFEST_ENV: prod
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: prod
+    outputs:
+      image_tag: ${{ steps.tag.outputs.release_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag commit is on main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to Azure Container Registry
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Set image tag
+        id: tag
+        run: |
+          SHA="${GITHUB_SHA::8}"
+          RELEASE_TAG="$(date -u +%Y%m%d%H%M%S)-$SHA"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ${{ env.ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.release_tag }}
+            ${{ env.ACR_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.sha }}
+            ${{ env.ACR_SERVER }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  update-manifests:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: phenix-iac-manifests
+
+      - name: Checkout manifests repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/phenix-iac-manifests
+          token: ${{ steps.app-token.outputs.token }}
+          path: manifests
+
+      - name: Update prod image tag
+        run: |
+          IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
+
+          cd manifests/apps/${{ env.MANIFEST_ENV }}
+          if grep -q "${{ env.IMAGE_NAME }}" kustomization.yaml; then
+            sed -i "/^[[:space:]]*- name: .*\\/${{ env.IMAGE_NAME }}$/,/^[[:space:]]*newTag:/s|^[[:space:]]*newTag: .*|    newTag: $IMAGE_TAG # {\"\\\$imagepolicy\": \"flux-system:phenix-agent-controller:tag\"}|" kustomization.yaml
+          else
+            echo "::error::${{ env.IMAGE_NAME }} not found in prod kustomization.yaml"
+            exit 1
+          fi
+
+      - name: Commit and push
+        run: |
+          cd manifests
+          IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
+
+          git config user.name "phenix-ci[bot]"
+          git config user.email "phenix-ci[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --staged --quiet; then
+            git commit -m "[prod] Update phenix-agent-controller image to $IMAGE_TAG"
+            git push
+          else
+            echo "No changes to commit"
+          fi

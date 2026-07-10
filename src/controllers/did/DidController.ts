@@ -602,6 +602,15 @@ export class DidController extends Controller {
         privateKey: TypedArrayEncoder.fromHex(`${privatekey}`),
       },
     })
+
+    // The Polygon registrar never throws on failure; it returns didState.state === 'failed' with a
+    // reason. Surface that reason instead of silently returning an undefined did, so partial-state
+    // failures (e.g. ledger write failed) are reported and the caller can safely retry.
+    if (createDidResponse?.didState?.state !== 'finished') {
+      const reason = (createDidResponse?.didState as { reason?: string })?.reason ?? 'Unknown error'
+      throw new InternalServerError(`Failed to create did:polygon: ${reason}`)
+    }
+
     const didResponse = {
       did: createDidResponse?.didState?.did,
       didDocument: createDidResponse?.didState?.didDocument,
