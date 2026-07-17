@@ -60,6 +60,9 @@ import { setupServer } from './server'
 import { buildCachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
 import { TsLogger } from './utils/logger'
+import { emitStructured, isInstrumentationEnabled, makeSpanId, monoNow, tryExtractFromJwe } from './utils/StructuredLogger'
+import { startGauges } from './instrumentation/gauges'
+import { requestContext } from './instrumentation/requestContext'
 
 export type Transports = 'ws' | 'http'
 export type InboundTransport = {
@@ -103,6 +106,11 @@ export interface AriesRestConfig {
   rpcUrl?: string
   fileServerUrl?: string
   fileServerToken?: string
+  ethereumNetworkName?: string
+  ethereumChainId?: string | number
+  ethereumRegistry?: string
+  ethereumSchemaManagerContractAddress?: string
+  ethereumRpcUrl?: string
   walletScheme?: AskarMultiWalletDatabaseScheme
   schemaFileServerURL?: string
 }
@@ -117,6 +125,14 @@ export async function readRestConfig(path: string) {
 export type RestMultiTenantAgentModules = Awaited<ReturnType<typeof getWithTenantModules>>
 
 export type RestAgentModules = Awaited<ReturnType<typeof getModules>>
+
+interface EthereumModuleEnvironmentConfig {
+  ethereumNetworkName?: string
+  ethereumChainId?: string | number
+  ethereumRegistry?: string
+  ethereumSchemaManagerContractAddress?: string
+  ethereumRpcUrl?: string
+}
 
 const initializeCache = (logger: TsLogger) => {
   const redisUrl = process.env.REDIS_URL
@@ -144,8 +160,17 @@ const getModules = (
   autoAcceptCredentials: AutoAcceptCredential,
   autoAcceptProofs: AutoAcceptProof,
   walletScheme: AskarMultiWalletDatabaseScheme,
-  logger: TsLogger
+  logger: TsLogger,
+  ethereumModuleConfig: EthereumModuleEnvironmentConfig = {}
 ) => {
+  const ethereumNetworkName = ethereumModuleConfig.ethereumNetworkName || process.env.ETHEREUM_NETWORK_NAME
+  const ethereumChainId = Number(ethereumModuleConfig.ethereumChainId || process.env.ETHEREUM_CHAIN_ID)
+  const ethereumRpcUrl = ethereumModuleConfig.ethereumRpcUrl || process.env.ETHEREUM_RPC_URL
+  const ethereumRegistry = ethereumModuleConfig.ethereumRegistry || process.env.ETHEREUM_DID_REGISTRY_CONTRACT_ADDRESS
+  const ethereumSchemaManagerContractAddress =
+    ethereumModuleConfig.ethereumSchemaManagerContractAddress ||
+    process.env.ETHEREUM_SCHEMA_MANAGER_CONTRACT_ADDRESS
+
   const legacyIndyCredentialFormat = new LegacyIndyCredentialFormatService()
   const legacyIndyProofFormat = new LegacyIndyProofFormatService()
   const jsonLdCredentialFormatService = new JsonLdCredentialFormatService()
@@ -235,17 +260,17 @@ const getModules = (
       config: {
         networks: [
           {
-            name: 'sepolia',
-            chainId: 11155111,
-            rpcUrl: 'https://ethereum-sepolia-rpc.publicnode.com',
-            registry: '0x485cFb9cdB84c0a5AfE69b75E2e79497Fc2256Fc',
+            name: ethereumNetworkName as string,
+            chainId: ethereumChainId,
+            rpcUrl: ethereumRpcUrl as string,
+            registry: ethereumRegistry as string,
           },
         ],
       },
-      schemaManagerContractAddress: '0xa95ACF3119791F65b2192267836df9A472785c15',
-      serverUrl: 'https://dev-schema.ngotag.com',
-      fileServerToken: 'ACCESS-TOKEN',
-      rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/API-KEY',
+      schemaManagerContractAddress: ethereumSchemaManagerContractAddress as string,
+      serverUrl: fileServerUrl ? fileServerUrl : (process.env.SERVER_URL as string),
+      fileServerToken: fileServerToken ? fileServerToken : (process.env.FILE_SERVER_TOKEN as string),
+      rpcUrl: ethereumRpcUrl as string,
     }),
   }
 }
@@ -262,7 +287,8 @@ const getWithTenantModules = (
   autoAcceptCredentials: AutoAcceptCredential,
   autoAcceptProofs: AutoAcceptProof,
   walletScheme: AskarMultiWalletDatabaseScheme,
-  logger: TsLogger
+  logger: TsLogger,
+  ethereumModuleConfig: EthereumModuleEnvironmentConfig = {}
 ) => {
   const modules = getModules(
     networkConfig,
@@ -275,7 +301,8 @@ const getWithTenantModules = (
     autoAcceptCredentials,
     autoAcceptProofs,
     walletScheme,
-    logger
+    logger,
+    ethereumModuleConfig
   )
   return {
     tenants: new TenantsModule<typeof modules>({
@@ -317,6 +344,11 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     fileServerUrl,
     rpcUrl,
     schemaManagerContractAddress,
+    ethereumNetworkName,
+    ethereumChainId,
+    ethereumRegistry,
+    ethereumSchemaManagerContractAddress,
+    ethereumRpcUrl,
     walletConfig,
     autoAcceptConnections,
     autoAcceptCredentials,
@@ -396,6 +428,14 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     ]
   }
 
+  const ethereumModuleConfig = {
+    ethereumNetworkName,
+    ethereumChainId,
+    ethereumRegistry,
+    ethereumSchemaManagerContractAddress,
+    ethereumRpcUrl,
+  }
+
   const tenantModule = await getWithTenantModules(
     networkConfig,
     didRegistryContractAddress || '',
@@ -407,7 +447,8 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     autoAcceptCredentials || AutoAcceptCredential.Always,
     autoAcceptProofs || AutoAcceptProof.ContentApproved,
     walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet,
-    logger
+    logger,
+    ethereumModuleConfig
   )
   const modules = getModules(
     networkConfig,
@@ -420,7 +461,8 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     autoAcceptCredentials || AutoAcceptCredential.Always,
     autoAcceptProofs || AutoAcceptProof.ContentApproved,
     walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet,
-    logger
+    logger,
+    ethereumModuleConfig
   )
   const agent = new Agent({
     config: agentConfig,
@@ -437,10 +479,52 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   // Register inbound transports
   for (const inboundTransport of inboundTransports) {
     const InboundTransport = inboundTransportMapping[inboundTransport.transport]
-    agent.registerInboundTransport(new InboundTransport({ port: inboundTransport.port }))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const transport: any = new (InboundTransport as any)({ port: inboundTransport.port })
+    // Add instrumentation middleware to the HTTP inbound transport's express app.
+    // express.text() body parser is added in the transport constructor so req.body is
+    // available as a string when our middleware fires.
+    if (isInstrumentationEnabled() && inboundTransport.transport === 'http' && transport.app) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      transport.app.use((req: any, res: any, next: any) => {
+        if (req.method === 'POST') {
+          const raw: string = typeof req.body === 'string' ? req.body : ''
+          const { recipientKeyShort, jweFp } = raw
+            ? tryExtractFromJwe(raw)
+            : { recipientKeyShort: '', jweFp: '' }
+          const spanId = makeSpanId()
+          emitStructured(LogLevel.trace, {
+            hop: 'controller.http.inbound.received',
+            span_id: spanId,
+            jwe_fp: jweFp,
+            recipient_key_short: recipientKeyShort,
+            content_length: req.headers['content-length'] ? Number(req.headers['content-length']) : undefined,
+          })
+          res.locals.__dbg_span = spanId
+          res.locals.__dbg_start = monoNow()
+          // Thread JWE fingerprint through Credo's async chain so event handlers can read it.
+          return requestContext.run({ jweFp }, () => next())
+        }
+        next()
+      })
+    }
+    agent.registerInboundTransport(transport)
   }
 
   await agent.initialize()
+
+  emitStructured(LogLevel.trace, {
+    hop: 'controller.config.dump',
+    flow: 'lifecycle',
+    notes: 'effective config at startup',
+    session_limit: Number(process.env.SESSION_LIMIT) || 10,
+    session_acquire_timeout_ms: Number(process.env.SESSION_ACQUIRE_TIMEOUT) || 10000,
+    wallet_scheme: walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet,
+    tenancy: afjConfig.tenancy ?? false,
+    admin_port: adminPort,
+  })
+
+  if (isInstrumentationEnabled()) startGauges()
 
   let token: string = ''
   const genericRecord = await agent.genericRecords.getAll()
