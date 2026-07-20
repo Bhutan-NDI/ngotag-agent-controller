@@ -5,6 +5,7 @@
     "files": true
   },
   "compilerOptions": {
+    "ignoreDeprecations": "5.0",
     "baseUrl": ".",
     "paths": {
       "credo-controller/*": ["*/src"]

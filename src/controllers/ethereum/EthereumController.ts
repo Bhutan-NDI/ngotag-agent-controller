@@ -4,9 +4,8 @@ import type { SchemaMetadata } from '../types'
 import { generateSecp256k1KeyPair } from '@ayanworks/credo-polygon-w3c-module'
 import { Agent, CredoError } from '@credo-ts/core'
 import * as fs from 'fs'
-import { injectable } from 'tsyringe'
-
 import { Route, Tags, Security, Controller, Post, TsoaResponse, Res, Body, Get, Path } from 'tsoa'
+import { injectable } from 'tsyringe'
 
 @Tags('Ethereum')
 @Security('apiKey')
@@ -53,7 +52,7 @@ export class Ethereum extends Controller {
       schema: { [key: string]: any }
     },
     @Res() internalServerError: TsoaResponse<500, { message: string }>,
-    @Res() badRequestError: TsoaResponse<400, { reason: string }>
+    @Res() badRequestError: TsoaResponse<400, { reason: string }>,
   ): Promise<unknown> {
     try {
       const { did, schemaName, schema } = createSchemaRequest
@@ -102,7 +101,7 @@ export class Ethereum extends Controller {
       schemaId: string
     },
     @Res() internalServerError: TsoaResponse<500, { message: string }>,
-    @Res() badRequestError: TsoaResponse<400, { reason: string }>
+    @Res() badRequestError: TsoaResponse<400, { reason: string }>,
   ): Promise<unknown> {
     try {
       const { did, schemaId } = migrateSchemaRequest
@@ -186,7 +185,7 @@ export class Ethereum extends Controller {
     @Path('did') did: string,
     @Path('schemaId') schemaId: string,
     @Res() internalServerError: TsoaResponse<500, { message: string }>,
-    @Res() forbiddenError: TsoaResponse<401, { reason: string }>
+    @Res() forbiddenError: TsoaResponse<401, { reason: string }>,
   ): Promise<unknown> {
     try {
       return this.agent.modules.ethereum.getSchemaById(did, schemaId)

@@ -12,6 +12,7 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "skipLibCheck": true,
+    "rootDir": "./src",
     "outDir": "./build",
     "types": ["node"],
     "lib": ["ESNext"]

@@ -143,3 +143,23 @@ index f866853..9b2029c 100644
  				didState: {
  					state: "finished",
  					did: didDocument.id,
+diff --git a/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/index.d.mts b/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/index.d.mts
+index d9c4ed0..1695d40 100644
+--- a/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/index.d.mts
++++ b/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/index.d.mts
+@@ -1,3 +1,5 @@
+ import { buildDid, createSecp256k1PublicJwk, failedResult, getSecp256k1DidDoc, isValidPolygonDid, polygonDidRegex, validateSpecCompliantPayload } from "./didPolygonUtil.mjs";
+ import { PolygonDidCreateOptions, PolygonDidRegistrar, PolygonDidUpdateOptions } from "./PolygonDidRegistrar.mjs";
+ import { PolygonDidResolver } from "./PolygonDidResolver.mjs";
++
++export { buildDid, createSecp256k1PublicJwk, failedResult, getSecp256k1DidDoc, isValidPolygonDid, polygonDidRegex, validateSpecCompliantPayload, PolygonDidCreateOptions, PolygonDidRegistrar, PolygonDidUpdateOptions, PolygonDidResolver };
+\ No newline at end of file
+diff --git a/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/index.d.ts b/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/index.d.ts
+new file mode 100644
+index 0000000..6b1f9a4
+--- /dev/null
++++ b/node_modules/@ayanworks/credo-polygon-w3c-module/build/dids/index.d.ts
+@@ -0,0 +1,3 @@
++export * from './didPolygonUtil.mjs'
++export * from './PolygonDidRegistrar.mjs'
++export * from './PolygonDidResolver.mjs'
