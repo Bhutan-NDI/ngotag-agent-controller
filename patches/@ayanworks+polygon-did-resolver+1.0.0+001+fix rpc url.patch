@@ -1,18 +1,22 @@
 diff --git a/node_modules/@ayanworks/polygon-did-resolver/build/config.js b/node_modules/@ayanworks/polygon-did-resolver/build/config.js
-index 0ddbfa0..f408faa 100644
+index 0ddbfa0..570a2e0 100644
 --- a/node_modules/@ayanworks/polygon-did-resolver/build/config.js
 +++ b/node_modules/@ayanworks/polygon-did-resolver/build/config.js
-@@ -3,11 +3,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
+@@ -3,12 +3,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
  exports.networkConfig = void 0;
  exports.networkConfig = {
      testnet: {
 -        URL: 'https://rpc-amoy.polygon.technology',
+-        CONTRACT_ADDRESS: '0xcB80F37eDD2bE3570c6C9D5B0888614E04E1e49E',
 +        URL: process.env.POLYGON_TESTNET_RPC_URL || 'https://polygon-amoy.drpc.org',
-         CONTRACT_ADDRESS: '0xcB80F37eDD2bE3570c6C9D5B0888614E04E1e49E',
++        CONTRACT_ADDRESS: process.env.POLYGON_TESTNET_CONTRACT_ADDRESS || '0xcB80F37eDD2bE3570c6C9D5B0888614E04E1e49E',
      },
      mainnet: {
 -        URL: 'https://polygon-rpc.com',
-+        URL: process.env.POLYGON_MAINNET_RPC_URL || 'https://polygon-grpc.org',
-         CONTRACT_ADDRESS: '0x0C16958c4246271622201101C83B9F0Fc7180d15',
+-        CONTRACT_ADDRESS: '0x0C16958c4246271622201101C83B9F0Fc7180d15',
++        URL: process.env.POLYGON_MAINNET_RPC_URL || process.env.RPC_URL || 'https://polygon.drpc.org',
++        CONTRACT_ADDRESS: process.env.POLYGON_MAINNET_CONTRACT_ADDRESS || '0x0C16958c4246271622201101C83B9F0Fc7180d15',
      },
  };
+ //# sourceMappingURL=config.js.map
+\ No newline at end of file
