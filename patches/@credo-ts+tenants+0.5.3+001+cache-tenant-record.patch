@@ -1,0 +1,105 @@
+diff --git a/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.js b/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.js
+index d491d4e..8b86b7a 100644
+--- a/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.js
++++ b/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.js
+@@ -24,16 +24,43 @@ let TenantAgentContextProvider = class TenantAgentContextProvider {
+         this.eventEmitter = eventEmitter;
+         this.tenantSessionCoordinator = tenantSessionCoordinator;
+         this.logger = logger;
++        this.cache = undefined
+         // Start listener for newly created routing keys, so we can register a mapping for each new key for the tenant
+         this.listenForRoutingKeyCreatedEvents();
+     }
+     async getAgentContextForContextCorrelationId(contextCorrelationId) {
++        this.logger.debug('Inside getAgentContextForContextCorrelationId')
+         // It could be that the root agent context is requested, in that case we return the root agent context
+         if (contextCorrelationId === this.rootAgentContext.contextCorrelationId) {
+             return this.rootAgentContext;
+         }
+-        // TODO: maybe we can look at not having to retrieve the tenant record if there's already a context available.
+-        const tenantRecord = await this.tenantRecordService.getTenantById(this.rootAgentContext, contextCorrelationId);
++
++        const cacheKey = `contextCorrelationId:${contextCorrelationId}`
++        const cache = this.getCache()
++
++        let tenantRecord;
++        
++        if (cache) {
++            this.logger.debug('Get Tenant Record from cache')
++            const cached = await cache.get(this.rootAgentContext, cacheKey)
++            if (cached) {
++                tenantRecord = core_1.JsonTransformer.fromJSON(cached, services_1.TenantRecord)
++            }
++        }
++    
++        if (!tenantRecord) {
++            this.logger.debug('Tenant Record not found in cache')
++            tenantRecord = await this.tenantRecordService
++                .getTenantById(this.rootAgentContext, contextCorrelationId)
++            if (cache) {
++                await cache.set(
++                    this.rootAgentContext,
++                    cacheKey,
++                    core_1.JsonTransformer.toJSON(tenantRecord)
++                )
++                this.logger.debug(`Cached tenant record for contextCorrelationId '${contextCorrelationId}'`)
++            }
++        }
+         const shouldUpdate = !(0, core_1.isStorageUpToDate)(tenantRecord.storageVersion);
+         // If the tenant storage is not up to date, and autoUpdate is disabled we throw an error
+         if (shouldUpdate && !this.rootAgentContext.config.autoUpdateStorageOnStartup) {
+@@ -48,6 +75,23 @@ let TenantAgentContextProvider = class TenantAgentContextProvider {
+         this.logger.debug(`Created tenant agent context for tenant '${contextCorrelationId}'`);
+         return agentContext;
+     }
++
++    getCache() {
++        if (this.cache !== undefined) {
++            return this.cache
++        }
++        try {
++            const cacheModuleConfig = this.rootAgentContext.dependencyManager
++                .resolve(core_1.CacheModuleConfig)
++            this.cache = cacheModuleConfig.cache
++            this.logger.debug('Cache resolved via CacheModuleConfig')
++        } catch (err) {
++            this.logger.warn(`Failed to resolve CacheModuleConfig: ${err}`)
++            this.cache = null
++        }
++        return this.cache
++    }
++
+     async getContextForInboundMessage(inboundMessage, options) {
+         this.logger.debug('Getting context for inbound message in tenant agent context provider', {
+             contextCorrelationId: options === null || options === void 0 ? void 0 : options.contextCorrelationId,
+@@ -156,12 +200,30 @@ let TenantAgentContextProvider = class TenantAgentContextProvider {
+             tenantRecord.storageVersion = await updateAssistant.getCurrentAgentStorageVersion();
+             const tenantRecordService = this.rootAgentContext.dependencyManager.resolve(services_1.TenantRecordService);
+             await tenantRecordService.updateTenant(this.rootAgentContext, tenantRecord);
++
++            await this.invalidateTenantCache(tenantRecord.id)
+         }
+         catch (error) {
+             this.logger.error(`Error occurred while updating tenant storage for tenant ${tenantRecord.id}`, error);
+             throw error;
+         }
+     }
++
++    async invalidateTenantCache(tenantId) {
++        const cache = this.getCache()
++        if (!cache) return
++        try {
++            const cacheKey = `contextCorrelationId:${tenantId}`
++            if (typeof cache.remove === 'function') {
++                await cache.remove(this.rootAgentContext, cacheKey)
++            } else {
++                await cache.set(this.rootAgentContext, cacheKey, null)
++            }
++            this.logger.debug(`Invalidated cache for tenant ${tenantId}`)
++        } catch (err) {
++            this.logger.error(`Failed to invalidate cache for tenant ${tenantId}: ${err}`)
++        }
++    }
+ };
+ TenantAgentContextProvider = __decorate([
+     (0, core_1.injectable)(),

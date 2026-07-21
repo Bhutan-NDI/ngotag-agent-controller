@@ -1,0 +1,12 @@
+diff --git a/node_modules/@credo-ts/core/build/modules/credentials/protocol/v2/V2CredentialProtocol.js b/node_modules/@credo-ts/core/build/modules/credentials/protocol/v2/V2CredentialProtocol.js
+index fb1fb9d..b519694 100644
+--- a/node_modules/@credo-ts/core/build/modules/credentials/protocol/v2/V2CredentialProtocol.js
++++ b/node_modules/@credo-ts/core/build/modules/credentials/protocol/v2/V2CredentialProtocol.js
+@@ -97,7 +97,6 @@ class V2CredentialProtocol extends BaseCredentialProtocol_1.BaseCredentialProtoc
+         let credentialRecord = await this.findByProperties(messageContext.agentContext, {
+             threadId: proposalMessage.threadId,
+             role: models_1.CredentialRole.Issuer,
+-            connectionId: connection === null || connection === void 0 ? void 0 : connection.id,
+         });
+         const formatServices = this.getFormatServicesFromMessage(proposalMessage.formats);
+         if (formatServices.length === 0) {

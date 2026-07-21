@@ -29,8 +29,10 @@ import { questionAnswerEvents } from './events/QuestionAnswerEvents'
 import { reuseConnectionEvents } from './events/ReuseConnectionEvents'
 import { openId4VcIssuanceSessionEvents } from './events/openId4VcIssuanceSessionEvents'
 import { openId4VcVerificationSessionEvents } from './events/openId4VcVerificationSessionEvents'
+import { registerAdminEndpoints } from './instrumentation/adminEndpoint'
 import { RegisterRoutes } from './routes/routes'
 import { SecurityMiddleware } from './securityMiddleware'
+import { isInstrumentationEnabled } from './utils/StructuredLogger'
 import { validateAuthConfig } from './utils/auth'
 
 dotenv.config()
@@ -107,6 +109,12 @@ export const setupServer = async (
     })
     next()
   })
+
+  // Admin endpoints are mounted before SecurityMiddleware so the Bearer-token
+  // check in authMiddleware is the sole guard on /admin routes — the API-key
+  // middleware must not intercept them first. Only mounted when instrumentation
+  // is enabled (there is nothing to toggle otherwise).
+  if (isInstrumentationEnabled()) registerAdminEndpoints(app)
 
   const securityMiddleware = new SecurityMiddleware()
   app.use(securityMiddleware.use)

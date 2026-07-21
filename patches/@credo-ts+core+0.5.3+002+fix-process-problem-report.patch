@@ -1,0 +1,33 @@
+diff --git a/node_modules/@credo-ts/core/build/modules/credentials/protocol/BaseCredentialProtocol.js b/node_modules/@credo-ts/core/build/modules/credentials/protocol/BaseCredentialProtocol.js
+index 30dbb7a..5b1b54c 100644
+--- a/node_modules/@credo-ts/core/build/modules/credentials/protocol/BaseCredentialProtocol.js
++++ b/node_modules/@credo-ts/core/build/modules/credentials/protocol/BaseCredentialProtocol.js
+@@ -19,11 +19,9 @@ class BaseCredentialProtocol {
+      */
+     async processProblemReport(messageContext) {
+         const { message: credentialProblemReportMessage, agentContext } = messageContext;
+-        const connection = messageContext.assertReadyConnection();
+         agentContext.config.logger.debug(`Processing problem report with message id ${credentialProblemReportMessage.id}`);
+         const credentialRecord = await this.getByProperties(agentContext, {
+             threadId: credentialProblemReportMessage.threadId,
+-            connectionId: connection.id,
+         });
+         // Update record
+         credentialRecord.errorMessage = `${credentialProblemReportMessage.description.code}: ${credentialProblemReportMessage.description.en}`;
+diff --git a/node_modules/@credo-ts/core/build/modules/proofs/protocol/BaseProofProtocol.js b/node_modules/@credo-ts/core/build/modules/proofs/protocol/BaseProofProtocol.js
+index 25d2948..cf9e315 100644
+--- a/node_modules/@credo-ts/core/build/modules/proofs/protocol/BaseProofProtocol.js
++++ b/node_modules/@credo-ts/core/build/modules/proofs/protocol/BaseProofProtocol.js
+@@ -8,11 +8,10 @@ const ProofState_1 = require("../models/ProofState");
+ const repository_1 = require("../repository");
+ class BaseProofProtocol {
+     async processProblemReport(messageContext) {
+-        const { message: proofProblemReportMessage, agentContext, connection } = messageContext;
++        const { message: proofProblemReportMessage, agentContext } = messageContext;
+         agentContext.config.logger.debug(`Processing problem report with message id ${proofProblemReportMessage.id}`);
+         const proofRecord = await this.getByProperties(agentContext, {
+             threadId: proofProblemReportMessage.threadId,
+-            connectionId: connection === null || connection === void 0 ? void 0 : connection.id,
+         });
+         // Update record
+         proofRecord.errorMessage = `${proofProblemReportMessage.description.code}: ${proofProblemReportMessage.description.en}`;

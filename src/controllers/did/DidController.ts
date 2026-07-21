@@ -1,56 +1,50 @@
 import type { DidResolutionResultProps } from '../types'
 import type { PolygonDidCreateOptions } from '@ayanworks/credo-polygon-w3c-module/build/dids'
 import type { EthereumDidCreateOptions } from '@bhutan-ndi/ethr-credo-module/build/dids'
-import type { DidDocument, KeyDidCreateOptions, PeerDidNumAlgo2CreateOptions } from '@credo-ts/core'
+import type { KeyDidCreateOptions } from '@credo-ts/core'
 
-import { transformPrivateKeyToPrivateJwk, transformSeedToPrivateJwk } from '@credo-ts/askar'
 import {
+  KeyType,
   TypedArrayEncoder,
   DidDocumentBuilder,
   getEd25519VerificationKey2018,
-  createPeerDidDocumentFromServices,
-  PeerDidNumAlgo,
-  Kms,
-  Hasher,
-  LogLevel,
   Agent,
-  DidKey,
+  getBls12381G2Key2020,
 } from '@credo-ts/core'
-import { Key, KeyAlgorithm, askar } from '@openwallet-foundation/askar-nodejs'
 import axios from 'axios'
-import { Request as Req } from 'express'
-import { Body, Controller, Example, Get, Path, Post, Route, Tags, Security, Request } from 'tsoa'
 import { injectable } from 'tsyringe'
-import { container } from 'tsyringe'
 
-import { RestMultiTenantAgentModules } from '../../cliAgent'
-import { DidMethod, KeyAlgorithmCurve, Network, NetworkTypes, Role, SCOPES } from '../../enums'
+import { DidMethod, Network, NetworkTypes, Role } from '../../enums/enum'
 import ErrorHandlingService from '../../errorHandlingService'
 import { BadRequestError, InternalServerError } from '../../errors'
-import { AgentType } from '../../types'
-import { keyAlgorithmToCurve, p521, verkey } from '../../utils/constant'
-import { getTypeFromCurve } from '../../utils/helpers'
 import { CreateDidResponse, Did, DidRecordExample } from '../examples'
-import { DidCreate, supportedKeyTypesDID } from '../types'
+import { DidCreate } from '../types'
+
+import { Body, Controller, Example, Get, Path, Post, Route, Tags, Security } from 'tsoa'
 
 @Tags('Dids')
 @Route('/dids')
-@Security('jwt', [SCOPES.TENANT_AGENT, SCOPES.DEDICATED_AGENT])
+@Security('apiKey')
 @injectable()
 export class DidController extends Controller {
+  private agent: Agent
+
+  public constructor(agent: Agent) {
+    super()
+    this.agent = agent
+  }
+
   /**
    * Resolves did and returns did resolution result
    * @param did Decentralized Identifier
    * @returns DidResolutionResult
    */
-  private agent = container.resolve(Agent<RestMultiTenantAgentModules>)
-
   @Example<DidResolutionResultProps>(DidRecordExample)
   @Get('/:did')
-  public async getDidRecordByDid(@Request() request: Req, @Path('did') did: Did) {
+  public async getDidRecordByDid(@Path('did') did: Did) {
     try {
-      const resolveResult = await request.agent.dids.resolve(did)
-      const importDid = await request.agent.dids.import({
+      const resolveResult = await this.agent.dids.resolve(did)
+      const importDid = await this.agent.dids.import({
         did,
         overwrite: true,
       })
@@ -70,12 +64,12 @@ export class DidController extends Controller {
    * @returns DidResolutionResult
    */
   // @Example<DidResolutionResultProps>(DidRecordExample)
+
   @Example(CreateDidResponse)
   @Post('/write')
-  public async writeDid(@Request() request: Req, @Body() createDidOptions: DidCreate) {
+  public async writeDid(@Body() createDidOptions: DidCreate) {
     let didRes
 
-    this.agent.config.logger.info(`askar version ${askar.version()}`)
     try {
       if (!createDidOptions.method) {
         throw new BadRequestError('Method is required')
@@ -84,27 +78,23 @@ export class DidController extends Controller {
       let result
       switch (createDidOptions.method) {
         case DidMethod.Indy:
-          result = await this.handleIndy(request.agent, createDidOptions)
+          result = await this.handleIndy(createDidOptions)
           break
 
         case DidMethod.Key:
-          result = await this.handleKey(request.agent, createDidOptions)
+          result = await this.handleKey(createDidOptions)
           break
 
         case DidMethod.Web:
-          result = await this.handleWeb(request.agent, createDidOptions)
+          result = await this.handleWeb(createDidOptions)
           break
 
         case DidMethod.Polygon:
-          result = await this.handlePolygon(request.agent, createDidOptions)
-          break
-
-        case DidMethod.Peer:
-          result = await this.handleDidPeer(request.agent, createDidOptions)
+          result = await this.handlePolygon(createDidOptions)
           break
 
         case DidMethod.Ethereum:
-          result = await this.handleEthereum(request.agent, createDidOptions)
+          result = await this.handleEthereum(createDidOptions)
           break
 
         default:
@@ -119,44 +109,7 @@ export class DidController extends Controller {
     }
   }
 
-  private async handleDidPeer(agent: AgentType, createDidOptions: DidCreate) {
-    let didResponse
-    let did
-
-    if (!createDidOptions.keyType) {
-      throw Error('keyType is required')
-    }
-
-    const didRouting = await agent.modules.didcomm.mediationRecipient.getRouting({})
-    const { didDocument, keys } = createPeerDidDocumentFromServices(
-      [
-        {
-          id: 'didcomm',
-          recipientKeys: [didRouting.recipientKey],
-          routingKeys: didRouting.routingKeys,
-          serviceEndpoint: didRouting.endpoints[0],
-        },
-      ],
-      true,
-    )
-
-    const didPeerResponse = await agent.dids.create<PeerDidNumAlgo2CreateOptions>({
-      didDocument,
-      method: DidMethod.Peer,
-      options: {
-        numAlgo: PeerDidNumAlgo.MultipleInceptionKeyWithoutDoc,
-        keys,
-      },
-    })
-
-    did = didPeerResponse.didState.did
-    didResponse = {
-      did,
-    }
-    return didResponse
-  }
-
-  private async handleIndy(agent: AgentType, createDidOptions: DidCreate) {
+  private async handleIndy(createDidOptions: DidCreate) {
     let result
     if (!createDidOptions.keyType) {
       throw new BadRequestError('keyType is required')
@@ -166,29 +119,27 @@ export class DidController extends Controller {
       throw new BadRequestError('For indy method network is required')
     }
 
-    if (createDidOptions.keyType !== KeyAlgorithm.Ed25519) {
+    if (createDidOptions.keyType !== KeyType.Ed25519) {
       throw new BadRequestError('Only ed25519 key type supported')
     }
 
-    if (!Object.values(Network).includes(createDidOptions.network as Network)) {
+    if (!Network.Bcovrin_Testnet && !Network.Indicio_Demonet && !Network.Indicio_Testnet) {
       throw new BadRequestError(`Invalid network for 'indy' method: ${createDidOptions.network}`)
     }
 
     switch (createDidOptions?.network?.toLowerCase()) {
       case Network.Bcovrin_Testnet:
         result = await this.handleBcovrin(
-          agent,
           createDidOptions,
-          `did:${createDidOptions.method}:${createDidOptions.network}`,
+          `did:${createDidOptions.method}:${createDidOptions.network}`
         )
         break
 
       case Network.Indicio_Demonet:
       case Network.Indicio_Testnet:
         result = await this.handleIndicio(
-          agent,
           createDidOptions,
-          `did:${createDidOptions.method}:${createDidOptions.network}`,
+          `did:${createDidOptions.method}:${createDidOptions.network}`
         )
         break
 
@@ -198,17 +149,15 @@ export class DidController extends Controller {
     return result
   }
 
-  private async handleBcovrin(agent: AgentType, createDidOptions: DidCreate, didMethod: string) {
+  private async handleBcovrin(createDidOptions: DidCreate, didMethod: string) {
     let didDocument
     if (!createDidOptions.seed) {
       throw new BadRequestError('Seed is required')
     }
     if (createDidOptions?.role?.toLowerCase() === Role.Endorser) {
       if (createDidOptions.did) {
-        // Hint: Bcovrin uses seed as private key when creating key. But seed is written as a NYM transaction
-        // Triage: Make sure what to use, seed or privateKey when accepting from API itself
-        await this.importDid(agent, didMethod, createDidOptions.did, '', createDidOptions.seed)
-        const getDid = await agent.dids.getCreatedDids({
+        await this.importDid(didMethod, createDidOptions.did, createDidOptions.seed)
+        const getDid = await this.agent.dids.getCreatedDids({
           method: createDidOptions.method,
           did: `did:${createDidOptions.method}:${createDidOptions.network}:${createDidOptions.did}`,
         })
@@ -221,9 +170,6 @@ export class DidController extends Controller {
           didDocument: didDocument,
         }
       } else {
-        if (!process.env.BCOVRIN_REGISTER_URL) {
-          throw new InternalServerError('BCOVRIN_REGISTER_URL is not set in environment variables')
-        }
         const BCOVRIN_REGISTER_URL = process.env.BCOVRIN_REGISTER_URL as string
         const res = await axios.post(BCOVRIN_REGISTER_URL, {
           role: 'ENDORSER',
@@ -231,8 +177,8 @@ export class DidController extends Controller {
           seed: createDidOptions.seed,
         })
         const { did } = res?.data || {}
-        await this.importDid(agent, didMethod, did, '', createDidOptions.seed)
-        const didRecord = await agent.dids.getCreatedDids({
+        await this.importDid(didMethod, did, createDidOptions.seed)
+        const didRecord = await this.agent.dids.getCreatedDids({
           method: DidMethod.Indy,
           did: `did:${DidMethod.Indy}:${Network.Bcovrin_Testnet}:${res.data.did}`,
         })
@@ -250,20 +196,20 @@ export class DidController extends Controller {
       if (!createDidOptions.endorserDid) {
         throw new BadRequestError('Please provide the endorser DID or role')
       }
-      const didCreateTxResult = await this.createEndorserDid(agent, createDidOptions.endorserDid)
+      const didCreateTxResult = await this.createEndorserDid(createDidOptions.endorserDid)
       return { did: didCreateTxResult.didState.did, didDocument: didCreateTxResult.didState.didDocument }
     }
   }
 
-  private async handleIndicio(agent: AgentType, createDidOptions: DidCreate, didMethod: string) {
+  private async handleIndicio(createDidOptions: DidCreate, didMethod: string) {
     let didDocument
     if (!createDidOptions.seed) {
       throw new BadRequestError('Seed is required')
     }
     if (createDidOptions?.role?.toLowerCase() === Role.Endorser) {
       if (createDidOptions.did) {
-        await this.importDid(agent, didMethod, createDidOptions.did, createDidOptions.seed)
-        const didRecord = await agent.dids.getCreatedDids({
+        await this.importDid(didMethod, createDidOptions.did, createDidOptions.seed)
+        const didRecord = await this.agent.dids.getCreatedDids({
           method: createDidOptions.method,
           did: `did:${createDidOptions.method}:${createDidOptions.network}:${createDidOptions.did}`,
         })
@@ -277,12 +223,12 @@ export class DidController extends Controller {
           didDocument: didDocument,
         }
       } else {
-        const { keyId, ...key } = await this.createIndicioKey(agent, createDidOptions)
+        const key = await this.createIndicioKey(createDidOptions)
         const INDICIO_NYM_URL = process.env.INDICIO_NYM_URL as string
         const res = await axios.post(INDICIO_NYM_URL, key)
         if (res.data.statusCode === 200) {
-          await this.importDid(agent, didMethod, key.did, createDidOptions.seed, undefined, keyId)
-          const didRecord = await agent.dids.getCreatedDids({
+          await this.importDid(didMethod, key.did, createDidOptions.seed)
+          const didRecord = await this.agent.dids.getCreatedDids({
             method: DidMethod.Indy,
             did: `${didMethod}:${key.did}`,
           })
@@ -295,23 +241,19 @@ export class DidController extends Controller {
             did: `${didMethod}:${key.did}`,
             didDocument: didDocument,
           }
-        } else {
-          throw new InternalServerError(
-            `Failed to register DID with Indicio: ${res.data.message || res.data.body || 'Unknown error'}`,
-          )
         }
       }
     } else {
       if (!createDidOptions.endorserDid) {
         throw new BadRequestError('Please provide the endorser DID or role')
       }
-      const didCreateTxResult = await this.createEndorserDid(agent, createDidOptions.endorserDid)
+      const didCreateTxResult = await this.createEndorserDid(createDidOptions.endorserDid)
       return didCreateTxResult
     }
   }
 
-  private async createEndorserDid(agent: AgentType, endorserDid: string) {
-    return agent.dids.create({
+  private async createEndorserDid(endorserDid: string) {
+    return this.agent.dids.create({
       method: 'indy',
       options: {
         endorserMode: 'external',
@@ -320,52 +262,30 @@ export class DidController extends Controller {
     })
   }
 
-  private async createIndicioKey(agent: AgentType, createDidOptions: DidCreate) {
+  private async createIndicioKey(createDidOptions: DidCreate) {
     if (!createDidOptions.seed) {
       throw new BadRequestError('Seed is required')
     }
-    // TODO: Remove comments afterwards
-    // const key = await agent.kms.createKey({
-    //     privateKey: TypedArrayEncoder.fromString(createDidOptions.seed),
-    //     keyType: KeyAlgorithm.Ed25519,
-    // })
-
-    // const buffer = TypedArrayEncoder.fromBase58(key.publicKeyBase58)
-    // const did = TypedArrayEncoder.toBase58(buffer.slice(0, 16))
-
-    const privateJwk = transformSeedToPrivateJwk({
-      seed: TypedArrayEncoder.fromString(createDidOptions.seed),
-      type: {
-        crv: 'Ed25519',
-        kty: 'OKP',
-      },
-    }).privateJwk
-
-    const key = await agent.kms.importKey({
-      privateJwk,
+    const key = await this.agent.wallet.createKey({
+      privateKey: TypedArrayEncoder.fromString(createDidOptions.seed),
+      keyType: KeyType.Ed25519,
     })
 
-    const verificationKey = Kms.PublicJwk.fromPublicJwk(key.publicJwk) as Kms.PublicJwk<Kms.Ed25519PublicJwk>
-
-    // Create a new key and calculate did according to the rules for indy did method
-    const publicKeyBytes = verificationKey.publicKey.publicKey
-
-    const did = TypedArrayEncoder.toBase58(publicKeyBytes.slice(0, 16))
+    const buffer = TypedArrayEncoder.fromBase58(key.publicKeyBase58)
+    const did = TypedArrayEncoder.toBase58(buffer.slice(0, 16))
 
     let body
     if (createDidOptions.network === Network.Indicio_Testnet) {
       body = {
         network: 'testnet',
         did,
-        verkey: TypedArrayEncoder.toBase58(publicKeyBytes),
-        keyId: key.keyId,
+        verkey: TypedArrayEncoder.toBase58(buffer),
       }
     } else if (createDidOptions.network === Network.Indicio_Demonet) {
       body = {
         network: 'demonet',
         did,
-        verkey: TypedArrayEncoder.toBase58(publicKeyBytes),
-        keyId: key.keyId,
+        verkey: TypedArrayEncoder.toBase58(buffer),
       }
     } else {
       throw new BadRequestError('Please provide a valid did method')
@@ -373,153 +293,72 @@ export class DidController extends Controller {
     return body
   }
 
-  private async importDid(
-    agent: AgentType,
-    didMethod: string,
-    did: string,
-    seed: string,
-    privateKey?: string,
-    keyId?: string,
-  ) {
-    let _keyId: string
-
-    if (!keyId) {
-      const { privateJwk } = privateKey
-        ? transformPrivateKeyToPrivateJwk({
-            type: {
-              crv: 'Ed25519',
-              kty: 'OKP',
-            },
-            privateKey: TypedArrayEncoder.fromString(privateKey),
-          })
-        : seed
-          ? transformSeedToPrivateJwk({
-              seed: TypedArrayEncoder.fromString(seed),
-              type: {
-                crv: 'Ed25519',
-                kty: 'OKP',
-              },
-            })
-          : {
-              privateJwk: undefined,
-            }
-
-      if (!privateJwk) {
-        throw new Error('Either privateKey or seed is required')
-      }
-
-      const key = await agent.kms.importKey({ privateJwk })
-      _keyId = key.keyId
-    } else {
-      _keyId = keyId
-    }
-
-    const completeDid = `${didMethod}:${did}`
-    await agent.dids.import({
-      did: completeDid,
-      keys: [
+  private async importDid(didMethod: string, did: string, seed: string) {
+    await this.agent.dids.import({
+      did: `${didMethod}:${did}`,
+      overwrite: true,
+      privateKeys: [
         {
-          kmsKeyId: _keyId,
-          didDocumentRelativeKeyId: verkey,
+          keyType: KeyType.Ed25519,
+          privateKey: TypedArrayEncoder.fromString(seed),
         },
       ],
     })
   }
-  public async handleKey(agent: AgentType, didOptions: DidCreate) {
+
+  public async handleKey(didOptions: DidCreate) {
     let did
     let didResponse
     let didDocument
 
+    if (!didOptions.seed) {
+      throw new BadRequestError('Seed is required')
+    }
     if (!didOptions.keyType) {
       throw new BadRequestError('keyType is required')
     }
-    if (didOptions.keyType === KeyAlgorithm.Bls12381G2) {
-      throw new BadRequestError('didOptions.keyType for type "bls12381g2" has been deprecated')
-    }
-    if (didOptions.keyType === (p521 as KeyAlgorithm)) {
-      throw new BadRequestError('didOptions.keyType for type p521 is not supported')
-    }
-
-    const normalizedCurve = keyAlgorithmToCurve[didOptions.keyType as KeyAlgorithm]
-    if (!(normalizedCurve && supportedKeyTypesDID[DidMethod.Key]?.some((kt) => kt.crv === normalizedCurve))) {
-      throw new BadRequestError(`Invalid keyType: ${didOptions.keyType}`)
+    if (didOptions.keyType !== KeyType.Ed25519 && didOptions.keyType !== KeyType.Bls12381g2) {
+      throw new BadRequestError('Only ed25519 and bls12381g2 key type supported')
     }
 
     if (!didOptions.did) {
-      if (didOptions.seed) {
-        this.agent.config.logger.info('Creating DID:key with provided seed')
-        const privateJwk = transformPrivateKeyToPrivateJwk({
+      await this.agent.wallet.createKey({
+        keyType: didOptions.keyType,
+        seed: TypedArrayEncoder.fromString(didOptions.seed),
+      })
+
+      didResponse = await this.agent.dids.create<KeyDidCreateOptions>({
+        method: DidMethod.Key,
+        options: {
+          keyType: KeyType.Ed25519,
+        },
+        secret: {
           privateKey: TypedArrayEncoder.fromString(didOptions.seed),
-          type: getTypeFromCurve(didOptions.keyType ?? KeyAlgorithm.Ed25519),
-        }).privateJwk
-
-        const { keyId, publicJwk } = await agent.kms.importKey({
-          privateJwk,
-        })
-
-        this.agent.config.logger.info(`This is keyId:::::: ${keyId}`)
-        const publicKey = Kms.PublicJwk.fromPublicJwk(publicJwk)
-
-        const didKey = new DidKey(publicKey)
-        didDocument = didKey.didDocument
-        did = didDocument.id
-
-        const verificationMethodId = didDocument.verificationMethod?.[0]?.id
-        const relativeKeyId = verificationMethodId?.split('#')[1]
-
-        this.agent.config.logger.info(`This is did:::::: ${did}`)
-        this.agent.config.logger.info(`This is verificationMethodId:::::: ${verificationMethodId}`)
-
-        await agent.dids.import({
-          did,
-          didDocument,
-          overwrite: true,
-          keys: [
-            {
-              didDocumentRelativeKeyId: `#${relativeKeyId}`,
-              kmsKeyId: keyId,
-            },
-          ],
-        })
-      } else {
-        this.agent.config.logger.info('Creating DID:key without seed')
-        const { keyId } = await agent.kms.createKey({
-          type: getTypeFromCurve(didOptions.keyType ?? KeyAlgorithm.Ed25519),
-        })
-        this.agent.config.logger.info(`This is did:::::: ${did}`)
-        const didCreateResult = await agent.dids.create<KeyDidCreateOptions>({
-          method: 'key',
-          options: { keyId },
-        })
-        didDocument = didCreateResult.didState.didDocument
-        did = didCreateResult.didState.did
-      }
+        },
+      })
+      did = `${didResponse.didState.did}`
+      didDocument = didResponse.didState.didDocument
     } else {
       did = didOptions.did
-      const createdDid = await agent.dids.getCreatedDids({
+      const createdDid = await this.agent.dids.getCreatedDids({
         method: DidMethod.Key,
         did: didOptions.did,
       })
       didDocument = createdDid[0]?.didDocument
-
-      await agent.dids.import({
-        did,
-        overwrite: true,
-        didDocument,
-      })
     }
 
-    this.agent.config.logger.info(`This is did ${did}`)
-    this.agent.config.logger.info(`This is didDocument ${JSON.stringify(didDocument)}`)
-
+    await this.agent.dids.import({
+      did,
+      overwrite: true,
+      didDocument,
+    })
     return { did: did, didDocument: didDocument }
   }
 
-  // TODO: Right now we are using seed as privateKey for did creation. Fix this is API payload
-  public async handleWeb(agent: AgentType, didOptions: DidCreate) {
-    let didDocument: DidDocument
+  public async handleWeb(didOptions: DidCreate) {
+    let didDocument: any
     if (!didOptions.domain) {
-      throw new BadRequestError('For create did:web, domain is required')
+      throw new BadRequestError('domain is required')
     }
 
     if (!didOptions.seed) {
@@ -530,57 +369,45 @@ export class DidController extends Controller {
       throw new BadRequestError('keyType is required')
     }
 
-    if (didOptions.keyType !== KeyAlgorithm.Ed25519) {
-      throw new BadRequestError('Only ed25519 key type supported')
+    if (didOptions.keyType !== KeyType.Ed25519 && didOptions.keyType !== KeyType.Bls12381g2) {
+      throw new BadRequestError('Only ed25519 and bls12381g2 key type supported')
     }
 
     const domain = didOptions.domain
     const did = `did:${didOptions.method}:${domain}`
     const keyId = `${did}#key-1`
 
-    let key
-    let publicJwk
+    const key = await this.agent.wallet.createKey({
+      keyType: KeyType.Ed25519,
+      privateKey: TypedArrayEncoder.fromString(didOptions.seed),
+    })
 
-    if (didOptions.keyType === KeyAlgorithm.Ed25519) {
-      const { privateJwk } = transformPrivateKeyToPrivateJwk({
-        type: {
-          crv: 'Ed25519',
-          kty: 'OKP',
-        },
-        privateKey: TypedArrayEncoder.fromString(didOptions.seed),
-      })
-
-      key = await agent.kms.importKey({ privateJwk })
-
-      publicJwk = Kms.PublicJwk.fromPublicJwk(key.publicJwk)
+    if (didOptions.keyType === KeyType.Ed25519) {
       didDocument = new DidDocumentBuilder(did)
         .addContext('https://w3id.org/security/suites/ed25519-2018/v1')
-        .addVerificationMethod(getEd25519VerificationKey2018({ id: keyId, publicJwk, controller: did }))
+        .addVerificationMethod(getEd25519VerificationKey2018({ key, id: keyId, controller: did }))
         .addAuthentication(keyId)
         .addAssertionMethod(keyId)
         .build()
-    } else if (didOptions.keyType === KeyAlgorithm.Bls12381G2) {
-      // Support for BBS signature is discontinued from credo-ts version 0.6.0
-      throw new BadRequestError(`Support for ${KeyAlgorithm.Bls12381G2} has been deprecated`)
-    } else {
-      throw new BadRequestError('Unsupported key type') // fallback, but this won't hit due to earlier check
+    }
+    if (didOptions.keyType === KeyType.Bls12381g2) {
+      didDocument = new DidDocumentBuilder(did)
+        .addContext('https://w3id.org/security/bbs/v1')
+        .addVerificationMethod(getBls12381G2Key2020({ key, id: keyId, controller: did }))
+        .addAuthentication(keyId)
+        .addAssertionMethod(keyId)
+        .build()
     }
 
-    await agent.dids.import({
+    await this.agent.dids.import({
       did,
       overwrite: true,
       didDocument,
-      keys: [
-        {
-          didDocumentRelativeKeyId: `#key-1`,
-          kmsKeyId: key.keyId,
-        },
-      ],
     })
     return { did, didDocument }
   }
 
-  public async handlePolygon(agent: AgentType, createDidOptions: DidCreate) {
+  public async handlePolygon(createDidOptions: DidCreate) {
     // need to discuss try catch logic
     const { endpoint, network, privatekey } = createDidOptions
 
@@ -594,11 +421,11 @@ export class DidController extends Controller {
       throw new BadRequestError('Invalid network type')
     }
     if (!privatekey || typeof privatekey !== 'string' || !privatekey.trim() || privatekey.length !== 64) {
-      throw new BadRequestError('Invalid private key or key not supported')
+      throw new BadRequestError('Invalid private key or not supported')
     }
 
-    const createDidResponse = await agent.dids.create<PolygonDidCreateOptions>({
-      method: DidMethod.Polygon,
+    const createDidResponse = await this.agent.dids.create<PolygonDidCreateOptions>({
+      method: 'polygon',
       options: {
         network: networkName,
         endpoint,
@@ -607,23 +434,14 @@ export class DidController extends Controller {
         privateKey: TypedArrayEncoder.fromHex(`${privatekey}`),
       },
     })
-
-    // The Polygon registrar never throws on failure; it returns didState.state === 'failed' with a
-    // reason. Surface that reason instead of silently returning an undefined did, so partial-state
-    // failures (e.g. ledger write failed) are reported and the caller can safely retry.
-    if (createDidResponse?.didState?.state !== 'finished') {
-      const reason = (createDidResponse?.didState as { reason?: string })?.reason ?? 'Unknown error'
-      throw new InternalServerError(`Failed to create did:polygon: ${reason}`)
-    }
-
     const didResponse = {
       did: createDidResponse?.didState?.did,
-      didDocument: createDidResponse?.didState?.didDocument,
+      didDoc: createDidResponse?.didState?.didDocument,
     }
     return didResponse
   }
 
-  public async handleEthereum(agent: AgentType, createDidOptions: DidCreate) {
+  public async handleEthereum(createDidOptions: DidCreate) {
     const { endpoint, network, privatekey } = createDidOptions
     const networkName = network?.split(':')[1]
     if (networkName !== 'mainnet' && networkName !== 'sepolia') {
@@ -633,7 +451,7 @@ export class DidController extends Controller {
       throw Error('Invalid private key or not supported')
     }
 
-    const createDidResponse = await agent.dids.create<EthereumDidCreateOptions>({
+    const createDidResponse = await this.agent.dids.create<EthereumDidCreateOptions>({
       method: DidMethod.Ethereum,
       options: {
         network: networkName === NetworkTypes.Mainnet ? '' : networkName,
@@ -651,9 +469,9 @@ export class DidController extends Controller {
   }
 
   @Get('/')
-  public async getDids(@Request() request: Req) {
+  public async getDids() {
     try {
-      const createdDids = await request.agent.dids.getCreatedDids()
+      const createdDids = await this.agent.dids.getCreatedDids()
       return createdDids
     } catch (error) {
       throw ErrorHandlingService.handle(error)

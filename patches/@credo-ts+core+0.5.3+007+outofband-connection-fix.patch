@@ -1,0 +1,40 @@
+diff --git a/node_modules/@credo-ts/core/build/modules/oob/OutOfBandApi.js b/node_modules/@credo-ts/core/build/modules/oob/OutOfBandApi.js
+index 141bc8d..e84e210 100644
+--- a/node_modules/@credo-ts/core/build/modules/oob/OutOfBandApi.js
++++ b/node_modules/@credo-ts/core/build/modules/oob/OutOfBandApi.js
+@@ -432,17 +432,30 @@ let OutOfBandApi = class OutOfBandApi {
+                 }
+                 else {
+                     // Wait until the connection is ready and then pass the messages to the agent for further processing
+-                    this.connectionsApi
+-                        .returnWhenIsConnected(connectionRecord.id, { timeoutMs })
+-                        .then((connectionRecord) => this.emitWithConnection(outOfBandRecord, connectionRecord, messages))
+-                        .catch((error) => {
++                    // this.connectionsApi
++                    //     .returnWhenIsConnected(connectionRecord.id, { timeoutMs })
++                    //     .then((connectionRecord) => this.emitWithConnection(outOfBandRecord, connectionRecord, messages))
++                    //     .catch((error) => {
++                    //     if (error instanceof rxjs_1.EmptyError) {
++                    //         this.logger.warn(`Agent unsubscribed before connection got into ${connections_1.DidExchangeState.Completed} state`, error);
++                    //     }
++                    //     else {
++                    //         this.logger.error('Promise waiting for the connection to be complete failed.', error);
++                    //     }
++                    // });
++
++                    try{
++                        connectionRecord = await this.connectionsApi.returnWhenIsConnected(connectionRecord.id, { timeoutMs })
++                        await this.emitWithConnection(outOfBandRecord, connectionRecord, messages);
++
++                    }catch(error){
+                         if (error instanceof rxjs_1.EmptyError) {
+                             this.logger.warn(`Agent unsubscribed before connection got into ${connections_1.DidExchangeState.Completed} state`, error);
+                         }
+                         else {
+                             this.logger.error('Promise waiting for the connection to be complete failed.', error);
+                         }
+-                    });
++                    }
+                 }
+             }
+             return { outOfBandRecord, connectionRecord };

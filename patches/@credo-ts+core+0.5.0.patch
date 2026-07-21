@@ -1,0 +1,50 @@
+diff --git a/node_modules/@credo-ts/core/build/agent/EnvelopeService.js b/node_modules/@credo-ts/core/build/agent/EnvelopeService.js
+index 12261a9..0238d59 100644
+--- a/node_modules/@credo-ts/core/build/agent/EnvelopeService.js
++++ b/node_modules/@credo-ts/core/build/agent/EnvelopeService.js
+@@ -32,12 +32,14 @@ let EnvelopeService = class EnvelopeService {
+         let encryptedMessage = await agentContext.wallet.pack(message, recipientKeysBase58, senderKeyBase58 !== null && senderKeyBase58 !== void 0 ? senderKeyBase58 : undefined);
+         // If the message has routing keys (mediator) pack for each mediator
+         for (const routingKeyBase58 of routingKeysBase58) {
++            console.log(`message['@type']`, JSON.stringify(message['@type']))
+             const forwardMessage = new messages_1.ForwardMessage({
+                 // Forward to first recipient key
+                 to: recipientKeysBase58[0],
+                 message: encryptedMessage,
+             });
+             recipientKeysBase58 = [routingKeyBase58];
++            forwardMessage["messageType"] = message['@type'];
+             this.logger.debug('Forward message created', forwardMessage);
+             const forwardJson = forwardMessage.toJSON({
+                 useDidSovPrefixWhereAllowed: agentContext.config.useDidSovPrefixWhereAllowed,
+diff --git a/node_modules/@credo-ts/core/build/modules/routing/messages/ForwardMessage.d.ts b/node_modules/@credo-ts/core/build/modules/routing/messages/ForwardMessage.d.ts
+index 4f8577b..396f78a 100644
+--- a/node_modules/@credo-ts/core/build/modules/routing/messages/ForwardMessage.d.ts
++++ b/node_modules/@credo-ts/core/build/modules/routing/messages/ForwardMessage.d.ts
+@@ -3,6 +3,7 @@ import { EncryptedMessage } from '../../../types';
+ export interface ForwardMessageOptions {
+     id?: string;
+     to: string;
++    messageType: string;
+     message: EncryptedMessage;
+ }
+ /**
+@@ -19,5 +20,6 @@ export declare class ForwardMessage extends AgentMessage {
+     readonly type: string;
+     static readonly type: import("../../../utils/messageType").ParsedMessageType;
+     to: string;
++    messageType: string;
+     message: EncryptedMessage;
+ }
+diff --git a/node_modules/@credo-ts/core/build/types.d.ts b/node_modules/@credo-ts/core/build/types.d.ts
+index e0384d9..0a669fb 100644
+--- a/node_modules/@credo-ts/core/build/types.d.ts
++++ b/node_modules/@credo-ts/core/build/types.d.ts
+@@ -81,6 +81,7 @@ export interface PlaintextMessage {
+         thid?: string;
+         pthid?: string;
+     };
++    messageType: string;
+     [key: string]: unknown;
+ }
+ export interface OutboundPackage {

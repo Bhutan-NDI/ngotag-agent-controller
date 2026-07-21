@@ -1,12 +1,8 @@
-import type { AriesRestConfig } from './cliAgent.js'
+import type { AriesRestConfig } from './cliAgent'
 
-import dotenv from 'dotenv'
 import yargs from 'yargs'
-import { hideBin } from 'yargs/helpers'
 
-dotenv.config()
-
-import { runRestAgent } from './cliAgent.js'
+import { runRestAgent } from './cliAgent'
 
 interface IndyLedger {
   genesisTransactions: string
@@ -54,8 +50,6 @@ interface Parsed {
   chainId?: string
   chainName?: string
   registry?: string
-  apiKey?: string
-  updateJwtSecret?: boolean
 }
 
 interface InboundTransport {
@@ -66,32 +60,101 @@ interface InboundTransport {
 type Transports = 'http' | 'ws'
 
 async function parseArguments(): Promise<Parsed> {
-  return yargs(hideBin(process.argv))
+  return yargs
     .command('start', 'Start Credo Rest agent')
-    .option('label', { alias: 'l', string: true, demandOption: true })
-    .option('wallet-id', { string: true, demandOption: true })
-    .option('wallet-key', { string: true, demandOption: true })
-    .option('wallet-type', { string: true, demandOption: true })
-    .option('wallet-url', { string: true, demandOption: true })
-    .option('wallet-scheme', { string: true, demandOption: true })
-    .option('wallet-account', { string: true, demandOption: true })
-    .option('wallet-password', { string: true, demandOption: true })
-    .option('wallet-admin-account', { string: true, demandOption: true })
-    .option('wallet-admin-password', { string: true, demandOption: true })
+    .option('label', {
+      alias: 'l',
+      string: true,
+      demandOption: true,
+    })
+    .option('wallet-id', {
+      string: true,
+      demandOption: true,
+    })
+    .option('wallet-key', {
+      string: true,
+      demandOption: true,
+    })
+    .option('wallet-type', {
+      string: true,
+      demandOption: true,
+    })
+    .option('wallet-url', {
+      string: true,
+      demandOption: true,
+    })
+    .option('wallet-scheme', {
+      string: true,
+      demandOption: true,
+    })
+    .option('wallet-account', {
+      string: true,
+      demandOption: true,
+    })
+    .option('wallet-password', {
+      string: true,
+      demandOption: true,
+    })
+    .option('wallet-admin-account', {
+      string: true,
+      demandOption: true,
+    })
+    .option('wallet-admin-password', {
+      string: true,
+      demandOption: true,
+    })
+    .option('chainId', {
+      string: true,
+      demandOption: false,
+    })
+    .option('chainName', {
+      string: true,
+      demandOption: false,
+    })
+    .option('registry', {
+      string: true,
+      demandOption: false,
+    })
+    .option('ethereum-network-name', {
+      string: true,
+      demandOption: false,
+    })
+    .option('ethereum-chain-id', {
+      string: true,
+      demandOption: false,
+    })
+    .option('ethereum-registry', {
+      string: true,
+      demandOption: false,
+    })
+    .option('ethereum-schema-manager-contract-address', {
+      string: true,
+      demandOption: false,
+    })
+    .option('ethereum-rpc-url', {
+      string: true,
+      demandOption: false,
+    })
     .option('indy-ledger', {
       array: true,
       default: [],
-      coerce: (input) =>
-        input.map((item: { genesisTransactions: string; indyNamespace: string }) => ({
+      coerce: (input) => {
+        return input.map((item: { genesisTransactions: string; indyNamespace: string }) => ({
           genesisTransactions: item.genesisTransactions,
           indyNamespace: item.indyNamespace,
-        })),
+        }))
+      },
     })
     .option('endpoint', {
       array: true,
-      coerce: (input) => input.map((item: string) => String(item)),
+      coerce: (input) => {
+        return input.map((item: string) => String(item))
+      },
     })
-    .option('log-level', { number: true, default: 3 })
+    .option('log-level', {
+      number: true,
+      default: 3,
+    })
     .option('outbound-transport', {
       array: true,
       coerce: (input) => {
@@ -117,25 +180,30 @@ async function parseArguments(): Promise<Parsed> {
             'port' in item &&
             typeof item.port === 'number'
           ) {
-            transports.push({ transport: item.transport as Transports, port: item.port })
+            const transport: Transports = item.transport as Transports
+            const port: number = item.port
+            transports.push({ transport, port })
           } else {
             throw new Error(
-              'Inbound transport should be specified as an array of objects with transport and port properties.',
+              'Inbound transport should be specified as an array of objects with transport and port properties.'
             )
           }
         }
         return transports
       },
     })
-    .option('auto-accept-connections', { boolean: true, default: false })
+    .option('auto-accept-connections', {
+      boolean: true,
+      default: false,
+    })
     .option('auto-accept-credentials', {
       choices: ['always', 'never', 'contentApproved'],
       coerce: (input: string) => {
-        if (['always', 'never', 'contentApproved'].includes(input)) {
+        if (input === 'always' || input === 'never' || input === 'contentApproved') {
           return input as 'always' | 'never' | 'contentApproved'
         } else {
           throw new Error(
-            'Invalid value for auto-accept-credentials. Valid values are "always", "never", or "contentApproved".',
+            'Invalid value for auto-accept-credentials. Valid values are "always", "never", or "contentApproved".'
           )
         }
       },
@@ -143,38 +211,40 @@ async function parseArguments(): Promise<Parsed> {
     .option('auto-accept-proofs', {
       choices: ['always', 'never', 'contentApproved'],
       coerce: (input: string) => {
-        if (['always', 'never', 'contentApproved'].includes(input)) {
+        if (input === 'always' || input === 'never' || input === 'contentApproved') {
           return input as 'always' | 'never' | 'contentApproved'
         } else {
           throw new Error(
-            'Invalid value for auto-accept-proofs. Valid values are "always", "never", or "contentApproved".',
+            'Invalid value for auto-accept-proofs. Valid values are "always", "never", or "contentApproved".'
           )
         }
       },
     })
-    .option('webhook-url', { string: true })
-    .option('admin-port', { number: true, demandOption: true })
-    .option('tenancy', { boolean: true, default: false })
-    .option('did-registry-contract-address', { string: true })
-    .option('schema-manager-contract-address', { string: true })
-    .option('wallet-connect-timeout', { number: true })
-    .option('wallet-max-connections', { number: true })
-    .option('wallet-idle-timeout', { number: true })
-    .option('apiKey', {
+    .option('webhook-url', {
       string: true,
-      default: process.env.API_KEY,
-      coerce: (input: string | undefined) => {
-        if (!input) return input
-        input = input.trim()
-        if (input && input.length < 16) {
-          throw new Error('API key must be at least 16 characters long')
-        }
-        return input
-      },
     })
-    .option('updateJwtSecret', {
+    .option('admin-port', {
+      number: true,
+      demandOption: true,
+    })
+    .option('tenancy', {
       boolean: true,
-      default: process.env.UPDATE_JWT_SECRET === 'true',
+      default: false,
+    })
+    .option('did-registry-contract-address', {
+      string: true,
+    })
+    .option('schema-manager-contract-address', {
+      string: true,
+    })
+    .option('wallet-connect-timeout', {
+      number: true,
+    })
+    .option('wallet-max-connections', {
+      number: true,
+    })
+    .option('wallet-idle-timeout', {
+      number: true,
     })
     .config()
     .env('AFJ_REST')
@@ -189,7 +259,7 @@ export async function runCliServer() {
     walletConfig: {
       id: parsed['wallet-id'],
       key: parsed['wallet-key'],
-      database: {
+      storage: {
         type: parsed['wallet-type'],
         config: {
           host: parsed['wallet-url'],
@@ -215,19 +285,17 @@ export async function runCliServer() {
     outboundTransports: parsed['outbound-transport'],
     webhookUrl: parsed['webhook-url'],
     adminPort: parsed['admin-port'],
-    tenancy: parsed.tenancy,
-    schemaFileServerURL: parsed.schemaFileServerURL,
-    didRegistryContractAddress: parsed.didRegistryContractAddress,
-    schemaManagerContractAddress: parsed.schemaManagerContractAddress,
-    rpcUrl: parsed.rpcUrl,
-    fileServerUrl: parsed.fileServerUrl,
-    fileServerToken: parsed.fileServerToken,
-    ethereumNetworkName: parsed.ethereumNetworkName || parsed.chainName,
-    ethereumChainId: parsed.ethereumChainId || parsed.chainId,
-    ethereumRegistry: parsed.ethereumRegistry || parsed.registry,
-    ethereumSchemaManagerContractAddress: parsed.ethereumSchemaManagerContractAddress,
-    ethereumRpcUrl: parsed.ethereumRpcUrl,
-    apiKey: parsed['apiKey'],
-    updateJwtSecret: parsed['updateJwtSecret'],
+    tenancy: parsed['tenancy'],
+    schemaFileServerURL: parsed['schemaFileServerURL'],
+    didRegistryContractAddress: parsed['didRegistryContractAddress'],
+    schemaManagerContractAddress: parsed['schemaManagerContractAddress'],
+    rpcUrl: parsed['rpcUrl'],
+    fileServerUrl: parsed['fileServerUrl'],
+    fileServerToken: parsed['fileServerToken'],
+    ethereumNetworkName: parsed['ethereumNetworkName'] || parsed['chainName'],
+    ethereumChainId: parsed['ethereumChainId'] || parsed['chainId'],
+    ethereumRegistry: parsed['ethereumRegistry'] || parsed['registry'],
+    ethereumSchemaManagerContractAddress: parsed['ethereumSchemaManagerContractAddress'],
+    ethereumRpcUrl: parsed['ethereumRpcUrl'],
   } as unknown as AriesRestConfig)
 }

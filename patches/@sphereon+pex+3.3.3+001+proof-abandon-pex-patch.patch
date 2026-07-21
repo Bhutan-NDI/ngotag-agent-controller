@@ -1,0 +1,42 @@
+diff --git a/node_modules/@sphereon/pex/dist/main/lib/evaluation/handlers/uriEvaluationHandler.js b/node_modules/@sphereon/pex/dist/main/lib/evaluation/handlers/uriEvaluationHandler.js
+index 728096f..b035d3c 100644
+--- a/node_modules/@sphereon/pex/dist/main/lib/evaluation/handlers/uriEvaluationHandler.js
++++ b/node_modules/@sphereon/pex/dist/main/lib/evaluation/handlers/uriEvaluationHandler.js
+@@ -19,6 +19,8 @@ class UriEvaluationHandler extends abstractEvaluationHandler_1.AbstractEvaluatio
+         return 'UriEvaluation';
+     }
+     handle(definition, wrappedVcs) {
++        console.log("definition::" ,JSON.stringify(definition,null,2))
++        console.log("wrappedVcs" , JSON.stringify(wrappedVcs,null,2))
+         var _a, _b, _c;
+         // This filter is removed in V2
+         definition.input_descriptors.forEach((inDesc, descriptorIdx) => {
+@@ -32,6 +34,7 @@ class UriEvaluationHandler extends abstractEvaluationHandler_1.AbstractEvaluatio
+         const descriptorMap = this.getResults()
+             .filter((result) => result.status === ConstraintUtils_1.Status.INFO)
+             .map((result) => {
++            console.log(" inside handle function  of uriEvaluationHandler.js :: result,", result)
+             var _a, _b, _c, _d;
+             let format = (_a = result.payload) === null || _a === void 0 ? void 0 : _a.format;
+             // This checks if the new data integrity format should be used.
+@@ -56,13 +59,20 @@ class UriEvaluationHandler extends abstractEvaluationHandler_1.AbstractEvaluatio
+                     format = 'di_vc';
+                 }
+             }
++
++            console.log("jsonpath_1.JSONPath.nodes(definition, result.input_descriptor_path)[0]::", JSON.stringify(jsonpath_1.JSONPath.nodes(definition, result.input_descriptor_path)[0],null,2))
++            console.log("jsonpath_1.JSONPath.nodes(definition, result.input_descriptor_path)[0].value::", JSON.stringify(jsonpath_1.JSONPath.nodes(definition, result.input_descriptor_path)[0].value,null,2))
++
+             const inputDescriptor = jsonpath_1.JSONPath.nodes(definition, result.input_descriptor_path)[0].value;
++
++           
+             return {
+                 id: inputDescriptor.id,
+                 format,
+                 path: result.verifiable_credential_path,
+             };
+         });
++
+         // The presentation submission is being created in this handler, then updated in subsequent handler.
+         // TODO: This approach needs to be refactored for a new Major version.
+         // Also there is no apparent need for the indirection and state in this class.
