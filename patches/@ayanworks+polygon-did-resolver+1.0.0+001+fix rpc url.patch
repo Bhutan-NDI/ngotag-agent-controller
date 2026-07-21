@@ -1,5 +1,5 @@
 diff --git a/node_modules/@ayanworks/polygon-did-resolver/build/config.js b/node_modules/@ayanworks/polygon-did-resolver/build/config.js
-index 0ddbfa0..5e486b7 100644
+index 0ddbfa0..570a2e0 100644
 --- a/node_modules/@ayanworks/polygon-did-resolver/build/config.js
 +++ b/node_modules/@ayanworks/polygon-did-resolver/build/config.js
 @@ -3,12 +3,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
@@ -14,7 +14,7 @@ index 0ddbfa0..5e486b7 100644
      mainnet: {
 -        URL: 'https://polygon-rpc.com',
 -        CONTRACT_ADDRESS: '0x0C16958c4246271622201101C83B9F0Fc7180d15',
-+        URL: process.env.POLYGON_MAINNET_RPC_URL || process.env.RPC_URL || 'https://polygon-grpc.org',
++        URL: process.env.POLYGON_MAINNET_RPC_URL || process.env.RPC_URL || 'https://polygon.drpc.org',
 +        CONTRACT_ADDRESS: process.env.POLYGON_MAINNET_CONTRACT_ADDRESS || '0x0C16958c4246271622201101C83B9F0Fc7180d15',
      },
  };
