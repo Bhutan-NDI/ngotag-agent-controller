@@ -3,7 +3,7 @@ import type { ServerConfig } from '../utils/ServerConfig'
 import type { Agent } from '@credo-ts/core'
 import type { DidCommProofStateChangedEvent } from '@credo-ts/didcomm'
 
-import { DidCommProofEventTypes } from '@credo-ts/didcomm'
+import { DidCommProofEventTypes, DidCommProofState } from '@credo-ts/didcomm'
 
 import { sendWebSocketEvent } from './WebSocketEvents'
 import { sendWebhookEvent } from './WebhookEvent'
@@ -23,20 +23,32 @@ export const proofEvents = async (agent: Agent, config: ServerConfig) => {
       proofData: null,
     }
 
-    if (tenantId && tenantId !== 'default') {
-      await (agent as Agent<RestMultiTenantAgentModules>).modules.tenants.withTenantAgent(
-        { tenantId },
-        async (tenantAgent) => {
-          body.proofData = await tenantAgent.modules.didcomm.proofs.getFormatData(record.id)
-        },
-      )
-    } else if (tenantId === 'default') {
-      body.proofData = await agent.modules.didcomm.proofs.getFormatData(record.id)
+    if (record.state === DidCommProofState.Done) {
+      try {
+        if (tenantId && tenantId !== 'default') {
+          await (agent as Agent<RestMultiTenantAgentModules>).modules.tenants.withTenantAgent(
+            { tenantId },
+            async (tenantAgent) => {
+              body.proofData = await tenantAgent.modules.didcomm.proofs.getFormatData(record.id)
+            },
+          )
+        } else if (tenantId === 'default') {
+          body.proofData = await agent.modules.didcomm.proofs.getFormatData(record.id)
+        }
+      } catch (error) {
+        agent.config.logger.error(
+          `Failed to get proof format data for record ${record.id}, continuing with base record`,
+          {
+            cause: error,
+          },
+        )
+        body.proofData = null
+      }
     }
 
     // Only send webhook if webhook url is configured
     if (config.webhookUrl) {
-      await sendWebhookEvent(config.webhookUrl + '/proofs', body, agent.config.logger)
+      void sendWebhookEvent(config.webhookUrl + '/proofs', body, agent.config.logger)
     }
 
     if (config.socketServer) {
