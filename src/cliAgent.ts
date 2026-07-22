@@ -75,10 +75,9 @@ import {
 } from './purge/PurgeSchedulerFactory'
 import { buildPurgeConfig } from './purge/PurgeTypes'
 import { setupServer } from './server'
+import { CachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
 import { AuthTypes, getAuthType } from './utils/auth'
-import { isCustomDocumentLoaderEnabled } from './utils/config'
-import { CustomDocumentLoader } from './utils/customDocumentLoader'
 import { generateSecretKey } from './utils/helpers'
 import { TsLogger } from './utils/logger'
 import {
@@ -225,11 +224,9 @@ const getModules = (
       registries: [new IndyVdrAnonCredsRegistry()],
       anoncreds,
     }),
-    w3cCredentials: isCustomDocumentLoaderEnabled()
-      ? new W3cCredentialsModule({
-          documentLoader: CustomDocumentLoader,
-        })
-      : new W3cCredentialsModule(),
+    w3cCredentials: new W3cCredentialsModule({
+      documentLoader: CachedDocumentLoader,
+    }),
     didcomm: new DidCommModule({
       processDidCommMessagesConcurrently: true,
       mediationRecipient: true,
