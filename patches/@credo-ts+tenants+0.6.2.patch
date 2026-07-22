@@ -1,0 +1,79 @@
+diff --git a/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.mjs b/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.mjs
+index ad004af..d9cc3c2 100644
+--- a/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.mjs
++++ b/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.mjs
+@@ -3,9 +3,10 @@ import { __decorateParam } from "../_virtual/_@oxc-project_runtime@0.110.0/helpe
+ import { __decorate } from "../_virtual/_@oxc-project_runtime@0.110.0/helpers/decorate.mjs";
+ import { TenantAgent } from "../TenantAgent.mjs";
+ import { TenantRecordService } from "../services/TenantRecordService.mjs";
++import { TenantRecord } from "../repository/TenantRecord.mjs";
+ import "../services/index.mjs";
+ import { TenantSessionCoordinator } from "./TenantSessionCoordinator.mjs";
+-import { AgentContext, CredoError, EventEmitter, InjectionSymbols, JsonEncoder, Kms, TypedArrayEncoder, UpdateAssistant, inject, injectable, isJsonObject, isStorageUpToDate } from "@credo-ts/core";
++import { AgentContext, CacheModuleConfig, CredoError, EventEmitter, InjectionSymbols, JsonEncoder, JsonTransformer, Kms, TypedArrayEncoder, UpdateAssistant, inject, injectable, isJsonObject, isStorageUpToDate } from "@credo-ts/core";
+ import { DidCommRoutingEventTypes, isValidJweStructure } from "@credo-ts/didcomm";
+ 
+ //#region src/context/TenantAgentContextProvider.ts
+@@ -17,16 +18,53 @@ let TenantAgentContextProvider = class TenantAgentContextProvider {
+ 		this.eventEmitter = eventEmitter;
+ 		this.tenantSessionCoordinator = tenantSessionCoordinator;
+ 		this.logger = logger;
++		this.cache = undefined;
+ 		this.listenForRoutingKeyCreatedEvents();
+ 	}
+ 	getContextCorrelationIdForTenantId(tenantId) {
+ 		return this.tenantSessionCoordinator.getContextCorrelationIdForTenantId(tenantId);
+ 	}
++	getCache() {
++		if (this.cache !== undefined) return this.cache;
++		try {
++			const cacheModuleConfig = this.rootAgentContext.dependencyManager.resolve(CacheModuleConfig);
++			this.cache = cacheModuleConfig.cache;
++			this.logger.debug("Cache resolved via CacheModuleConfig");
++		} catch (err) {
++			this.logger.warn(`Failed to resolve CacheModuleConfig: ${err}`);
++			this.cache = null;
++		}
++		return this.cache;
++	}
++	async invalidateTenantCache(tenantId) {
++		const cache = this.getCache();
++		if (!cache) return;
++		try {
++			const cacheKey = `tenantRecord:${tenantId}`;
++			if (typeof cache.remove === "function") await cache.remove(this.rootAgentContext, cacheKey);
++			this.logger.debug(`Invalidated cache for tenant ${tenantId}`);
++		} catch (err) {
++			this.logger.error(`Failed to invalidate cache for tenant ${tenantId}: ${err}`);
++		}
++	}
+ 	async getAgentContextForContextCorrelationId(contextCorrelationId, { provisionContext = false } = {}) {
+ 		if (contextCorrelationId === this.rootAgentContext.contextCorrelationId) return this.rootAgentContext;
+ 		this.tenantSessionCoordinator.assertTenantContextCorrelationId(contextCorrelationId);
+ 		const tenantId = this.tenantSessionCoordinator.getTenantIdForContextCorrelationId(contextCorrelationId);
+-		const tenantRecord = await this.tenantRecordService.getTenantById(this.rootAgentContext, tenantId);
++		const cacheKey = `tenantRecord:${tenantId}`;
++		const cache = this.getCache();
++		let tenantRecord;
++		if (cache) {
++			const cached = await cache.get(this.rootAgentContext, cacheKey);
++			if (cached) tenantRecord = JsonTransformer.fromJSON(cached, TenantRecord);
++		}
++		if (!tenantRecord) {
++			tenantRecord = await this.tenantRecordService.getTenantById(this.rootAgentContext, tenantId);
++			if (cache) {
++				await cache.set(this.rootAgentContext, cacheKey, JsonTransformer.toJSON(tenantRecord));
++				this.logger.debug(`Cached tenant record for tenant '${tenantId}'`);
++			}
++		}
+ 		const shouldUpdate = !isStorageUpToDate(tenantRecord.storageVersion);
+ 		if (shouldUpdate && !this.rootAgentContext.config.autoUpdateStorageOnStartup) throw new CredoError(`Current agent storage for tenant ${tenantRecord.id} is not up to date. To prevent the tenant state from getting corrupted the tenant initialization is aborted. Make sure to update the tenant storage (currently at ${tenantRecord.storageVersion}) to the latest version (${UpdateAssistant.frameworkStorageVersion}). You can also downgrade your version of Credo.`);
+ 		const agentContext = await this.tenantSessionCoordinator.getContextForSession(tenantRecord, {
+@@ -126,6 +164,7 @@ let TenantAgentContextProvider = class TenantAgentContextProvider {
+ 			await updateAssistant.update(updateOptions);
+ 			tenantRecord.storageVersion = await updateAssistant.getCurrentAgentStorageVersion();
+ 			await this.rootAgentContext.dependencyManager.resolve(TenantRecordService).updateTenant(this.rootAgentContext, tenantRecord);
++			await this.invalidateTenantCache(tenantRecord.id);
+ 		} catch (error) {
+ 			this.logger.error(`Error occurred while updating tenant storage for tenant ${tenantRecord.id}`, error);
+ 			throw error;
