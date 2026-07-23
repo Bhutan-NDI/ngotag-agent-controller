@@ -1,8 +1,8 @@
 diff --git a/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.mjs b/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.mjs
-index ad004af..d9cc3c2 100644
+index ad004af..6792f2b 100644
 --- a/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.mjs
 +++ b/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.mjs
-@@ -3,9 +3,10 @@ import { __decorateParam } from "../_virtual/_@oxc-project_runtime@0.110.0/helpe
+@@ -3,13 +3,19 @@ import { __decorateParam } from "../_virtual/_@oxc-project_runtime@0.110.0/helpe
  import { __decorate } from "../_virtual/_@oxc-project_runtime@0.110.0/helpers/decorate.mjs";
  import { TenantAgent } from "../TenantAgent.mjs";
  import { TenantRecordService } from "../services/TenantRecordService.mjs";
@@ -14,7 +14,16 @@ index ad004af..d9cc3c2 100644
  import { DidCommRoutingEventTypes, isValidJweStructure } from "@credo-ts/didcomm";
  
  //#region src/context/TenantAgentContextProvider.ts
-@@ -17,16 +18,53 @@ let TenantAgentContextProvider = class TenantAgentContextProvider {
+ var _ref, _ref2, _ref3, _ref4;
++// Bounds tenant-record cache staleness and lets entries self-heal. TTL (seconds)
++// is tunable via TENANT_RECORD_CACHE_TTL_SECONDS (default 3600). NOTE: cross-instance
++// invalidation on tenant mutation only propagates with a shared cache (REDIS_URL);
++// with the in-memory cache each process is isolated and relies on this TTL to expire.
++const TENANT_RECORD_CACHE_TTL_SECONDS = Number(process.env.TENANT_RECORD_CACHE_TTL_SECONDS) || 3600;
+ let TenantAgentContextProvider = class TenantAgentContextProvider {
+ 	constructor(tenantRecordService, rootAgentContext, eventEmitter, tenantSessionCoordinator, logger) {
+ 		this.tenantRecordService = tenantRecordService;
+@@ -17,16 +23,53 @@ let TenantAgentContextProvider = class TenantAgentContextProvider {
  		this.eventEmitter = eventEmitter;
  		this.tenantSessionCoordinator = tenantSessionCoordinator;
  		this.logger = logger;
@@ -62,14 +71,14 @@ index ad004af..d9cc3c2 100644
 +		if (!tenantRecord) {
 +			tenantRecord = await this.tenantRecordService.getTenantById(this.rootAgentContext, tenantId);
 +			if (cache) {
-+				await cache.set(this.rootAgentContext, cacheKey, JsonTransformer.toJSON(tenantRecord));
++				await cache.set(this.rootAgentContext, cacheKey, JsonTransformer.toJSON(tenantRecord), TENANT_RECORD_CACHE_TTL_SECONDS);
 +				this.logger.debug(`Cached tenant record for tenant '${tenantId}'`);
 +			}
 +		}
  		const shouldUpdate = !isStorageUpToDate(tenantRecord.storageVersion);
  		if (shouldUpdate && !this.rootAgentContext.config.autoUpdateStorageOnStartup) throw new CredoError(`Current agent storage for tenant ${tenantRecord.id} is not up to date. To prevent the tenant state from getting corrupted the tenant initialization is aborted. Make sure to update the tenant storage (currently at ${tenantRecord.storageVersion}) to the latest version (${UpdateAssistant.frameworkStorageVersion}). You can also downgrade your version of Credo.`);
  		const agentContext = await this.tenantSessionCoordinator.getContextForSession(tenantRecord, {
-@@ -126,6 +164,7 @@ let TenantAgentContextProvider = class TenantAgentContextProvider {
+@@ -126,6 +169,7 @@ let TenantAgentContextProvider = class TenantAgentContextProvider {
  			await updateAssistant.update(updateOptions);
  			tenantRecord.storageVersion = await updateAssistant.getCurrentAgentStorageVersion();
  			await this.rootAgentContext.dependencyManager.resolve(TenantRecordService).updateTenant(this.rootAgentContext, tenantRecord);

@@ -1,7 +1,7 @@
 import type { RestMultiTenantAgentModules } from '../../cliAgent'
 import type { TenantRecord } from '@credo-ts/tenants'
 
-import { Agent, JsonTransformer, injectable, RecordNotFoundError } from '@credo-ts/core'
+import { Agent, CacheModuleConfig, JsonTransformer, injectable, RecordNotFoundError } from '@credo-ts/core'
 import { Request as Req } from 'express'
 import jwt from 'jsonwebtoken'
 import { Body, Controller, Delete, Post, Route, Tags, Path, Security, Request, Res, TsoaResponse, Get } from 'tsoa'
@@ -102,6 +102,14 @@ export class MultiTenancyController extends Controller {
     try {
       const agent = request.agent as Agent<RestMultiTenantAgentModules>
       const deleteTenant = await agent.modules.tenants.deleteTenantById(tenantId)
+      // Invalidate the cached tenant record so a deleted tenant no longer resolves from cache.
+      // Key matches the tenants cache patch (patches/@credo-ts+tenants+0.6.2.patch).
+      try {
+        const cache = agent.dependencyManager.resolve(CacheModuleConfig).cache
+        await cache.remove(agent.context, `tenantRecord:${tenantId}`)
+      } catch (cacheError) {
+        agent.config.logger.warn(`Failed to invalidate tenant cache for ${tenantId}: ${cacheError}`)
+      }
       return JsonTransformer.toJSON(deleteTenant)
     } catch (error) {
       if (error instanceof RecordNotFoundError) {
