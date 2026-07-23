@@ -101,12 +101,6 @@ export class RedisCache implements Cache {
     return this.connectionState === RedisCacheConnectionState.Ready
   }
 
-  public connect(): void {
-    this.client.connect().catch((err: Error) => {
-      this.logger.error(`RedisCache initial connection attempt failed: ${err.message}`)
-    })
-  }
-
   public async get<T>(_agentContext: AgentContext, key: string): Promise<T | null> {
     if (!this.isReady()) {
       this.logger.debug(`RedisCache not ready (${this.connectionState}) — cache miss for key ${key}`)
