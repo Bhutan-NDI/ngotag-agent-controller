@@ -24,6 +24,7 @@ import {
   KeyDidRegistrar,
   KeyDidResolver,
   CacheModule,
+  CacheModuleConfig,
   InMemoryLruCache,
   WebDidResolver,
   LogLevel,
@@ -612,6 +613,10 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     agent.config.logger.info('[Shutdown] Stopping services...')
     server.close()
     await stopPurgeSchedulers()
+    const cache = agent.dependencyManager.resolve(CacheModuleConfig).cache
+    if (cache instanceof RedisCache) {
+      await cache.disconnect()
+    }
     await agent.shutdown()
     process.exit(0)
   }

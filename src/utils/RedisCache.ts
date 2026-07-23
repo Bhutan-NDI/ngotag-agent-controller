@@ -1,5 +1,5 @@
 import type { TsLogger } from './logger'
-import type { AgentContext } from '@credo-ts/core'
+import type { AgentContext, Cache } from '@credo-ts/core'
 import type { RedisOptions } from 'ioredis'
 
 import { Redis } from 'ioredis'
@@ -18,7 +18,7 @@ const COMMAND_TIMEOUT_MS = 3000
 const KEEP_ALIVE_MS = 10000
 const MAX_RETRIES_PER_REQUEST = null
 
-export class RedisCache {
+export class RedisCache implements Cache {
   private client: Redis
   private readonly ttlSeconds: number
   private readonly logger: TsLogger
@@ -122,11 +122,11 @@ export class RedisCache {
     }
   }
 
-  public async set<T>(_agentContext: AgentContext, key: string, value: T, ttl?: number): Promise<void> {
+  public async set<T>(_agentContext: AgentContext, key: string, value: T, expiresInSeconds?: number): Promise<void> {
     if (!this.isReady()) return
     try {
       const serialized = JSON.stringify(value)
-      const expirySeconds = ttl ?? this.ttlSeconds
+      const expirySeconds = expiresInSeconds ?? this.ttlSeconds
       await this.client.set(key, serialized, 'EX', expirySeconds)
     } catch (err) {
       this.logger.error(`RedisCache set error for key ${key}: ${err}`)
