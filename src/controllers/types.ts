@@ -138,6 +138,7 @@ export interface CreateOfferOptions {
   comment?: string
   goalCode?: string
   goal?: string
+  parentThreadId?: string
 }
 
 type CredentialFormatType =

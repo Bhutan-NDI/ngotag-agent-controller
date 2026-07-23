@@ -4472,6 +4472,9 @@
 					},
 					"goal": {
 						"type": "string"
+					},
+					"parentThreadId": {
+						"type": "string"
 					}
 				},
 				"required": [

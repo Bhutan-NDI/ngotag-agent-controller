@@ -1929,6 +1929,7 @@ const models: TsoaRoute.Models = {
             "comment": {"dataType":"string"},
             "goalCode": {"dataType":"string"},
             "goal": {"dataType":"string"},
+            "parentThreadId": {"dataType":"string"},
         },
         "additionalProperties": false,
     },

@@ -214,9 +214,14 @@ export class CredentialController extends Controller {
         credentialFormats: outOfBandOption.credentialFormats,
         autoAcceptCredential: outOfBandOption.autoAcceptCredential,
         comment: outOfBandOption.comment,
+        // parentThreadId is threaded into the offer message + exchange record by the
+        // @credo-ts/didcomm patch (patches/@credo-ts+didcomm+0.6.2.patch), covering both this
+        // OOB path and the connection-based offerCredential path with a single mechanism.
+        parentThreadId: outOfBandOption.parentThreadId,
       })
 
       const credentialMessage = offerOob.message
+
       const outOfBandRecord = await request.agent.modules.didcomm.oob.createInvitation({
         label: outOfBandOption.label,
         messages: [credentialMessage],
