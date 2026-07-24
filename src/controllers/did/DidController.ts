@@ -104,7 +104,7 @@ export class DidController extends Controller {
           break
 
         case DidMethod.Ethereum:
-          result = await this.handleEthereum(createDidOptions)
+          result = await this.handleEthereum(request.agent, createDidOptions)
           break
 
         default:
@@ -623,7 +623,7 @@ export class DidController extends Controller {
     return didResponse
   }
 
-  public async handleEthereum(createDidOptions: DidCreate) {
+  public async handleEthereum(agent: AgentType, createDidOptions: DidCreate) {
     const { endpoint, network, privatekey } = createDidOptions
     const networkName = network?.split(':')[1]
     if (networkName !== 'mainnet' && networkName !== 'sepolia') {
@@ -633,7 +633,7 @@ export class DidController extends Controller {
       throw Error('Invalid private key or not supported')
     }
 
-    const createDidResponse = await this.agent.dids.create<EthereumDidCreateOptions>({
+    const createDidResponse = await agent.dids.create<EthereumDidCreateOptions>({
       method: DidMethod.Ethereum,
       options: {
         network: networkName === NetworkTypes.Mainnet ? '' : networkName,

@@ -530,6 +530,8 @@ export const supportedKeyTypesDID: Record<DidMethod, readonly { kty: string; crv
   ],
 
   [DidMethod.Polygon]: [{ kty: 'EC', crv: 'secp256k1' }],
+
+  [DidMethod.Ethereum]: [{ kty: 'EC', crv: 'secp256k1' }],
 }
 
 export type Curve = 'Ed25519' | 'X25519' | 'P-256' | 'P-384' | 'P-521' | 'secp256k1'
