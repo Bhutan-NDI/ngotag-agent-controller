@@ -3,7 +3,7 @@ import type { ServerConfig } from '../utils/ServerConfig'
 import type { Agent } from '@credo-ts/core'
 import type { DidCommCredentialStateChangedEvent } from '@credo-ts/didcomm'
 
-import { DidCommCredentialEventTypes } from '@credo-ts/didcomm'
+import { DidCommCredentialEventTypes, DidCommCredentialState } from '@credo-ts/didcomm'
 
 import { sendWebSocketEvent } from './WebSocketEvents'
 import { sendWebhookEvent } from './WebhookEvent'
@@ -26,39 +26,44 @@ export const credentialEvents = async (agent: Agent, config: ServerConfig) => {
         credentialData: null,
       }
 
-      if (record?.connectionId) {
-        let connectionRecord
-        if (tenantId && tenantId !== 'default') {
-          await (agent as Agent<RestMultiTenantAgentModules>).modules.tenants.withTenantAgent(
-            { tenantId: body.contextCorrelationId as string },
-            async (tenantAgent) => {
-              connectionRecord = await tenantAgent.modules.didcomm.connections.findById(
-                record.connectionId ? record.connectionId : '',
-              )
-            },
+      if (record.state === DidCommCredentialState.Done) {
+        try {
+          if (tenantId && tenantId !== 'default') {
+            await (agent as Agent<RestMultiTenantAgentModules>).modules.tenants.withTenantAgent(
+              { tenantId: body.contextCorrelationId as string },
+              async (tenantAgent) => {
+                const [data, connectionRecord] = await Promise.all([
+                  tenantAgent.modules.didcomm.credentials.getFormatData(record.id),
+                  record.connectionId
+                    ? tenantAgent.modules.didcomm.connections.findById(record.connectionId)
+                    : Promise.resolve(null),
+                ])
+                body.credentialData = data
+                body.outOfBandId = connectionRecord?.outOfBandId ?? null
+              },
+            )
+          } else {
+            const [data, connectionRecord] = await Promise.all([
+              agent.modules.didcomm.credentials.getFormatData(record.id),
+              record.connectionId
+                ? agent.modules.didcomm.connections.findById(record.connectionId)
+                : Promise.resolve(null),
+            ])
+            body.credentialData = data
+            body.outOfBandId = connectionRecord?.outOfBandId ?? null
+          }
+        } catch (error) {
+          agent.config.logger.error(
+            `Failed to get credential format data for record ${record.id}, continuing with base record`,
+            { cause: error },
           )
-        } else {
-          connectionRecord = await agent.modules.didcomm.connections.findById(record.connectionId)
+          body.credentialData = null
+          body.outOfBandId = null
         }
-        body.outOfBandId = connectionRecord?.outOfBandId
       }
-
-      let formatData = null
-      if (tenantId && tenantId !== 'default') {
-        await (agent as Agent<RestMultiTenantAgentModules>).modules.tenants.withTenantAgent(
-          { tenantId: body.contextCorrelationId as string },
-          async (tenantAgent) => {
-            formatData = await tenantAgent.modules.didcomm.credentials.getFormatData(record.id)
-          },
-        )
-      } else {
-        formatData = await agent.modules.didcomm.credentials.getFormatData(record.id)
-      }
-
-      body.credentialData = formatData
 
       if (config.webhookUrl) {
-        await sendWebhookEvent(config.webhookUrl + '/credentials', body, agent.config.logger)
+        void sendWebhookEvent(config.webhookUrl + '/credentials', body, agent.config.logger)
       }
 
       if (config.socketServer) {
