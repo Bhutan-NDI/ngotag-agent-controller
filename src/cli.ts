@@ -46,6 +46,14 @@ interface Parsed {
   rpcUrl?: string
   fileServerUrl?: string
   fileServerToken?: string
+  ethereumNetworkName?: string
+  ethereumChainId?: string
+  ethereumRegistry?: string
+  ethereumSchemaManagerContractAddress?: string
+  ethereumRpcUrl?: string
+  chainId?: string
+  chainName?: string
+  registry?: string
   apiKey?: string
   updateJwtSecret?: boolean
 }
@@ -214,7 +222,12 @@ export async function runCliServer() {
     rpcUrl: parsed.rpcUrl,
     fileServerUrl: parsed.fileServerUrl,
     fileServerToken: parsed.fileServerToken,
+    ethereumNetworkName: parsed.ethereumNetworkName || parsed.chainName,
+    ethereumChainId: parsed.ethereumChainId || parsed.chainId,
+    ethereumRegistry: parsed.ethereumRegistry || parsed.registry,
+    ethereumSchemaManagerContractAddress: parsed.ethereumSchemaManagerContractAddress,
+    ethereumRpcUrl: parsed.ethereumRpcUrl,
     apiKey: parsed['apiKey'],
     updateJwtSecret: parsed['updateJwtSecret'],
-  } as AriesRestConfig)
+  } as unknown as AriesRestConfig)
 }

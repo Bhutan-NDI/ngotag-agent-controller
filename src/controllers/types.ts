@@ -331,6 +331,7 @@ export interface DidCreate {
   didDocument?: DidDocument
   privatekey?: string
   endpoint?: string
+  address?: string
 }
 
 export interface CreateTenantOptions {

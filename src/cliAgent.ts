@@ -7,7 +7,10 @@ import type { AskarModuleConfigStoreOptions } from '@credo-ts/askar'
 import type { InitConfig } from '@credo-ts/core'
 import type { IndyVdrPoolConfig } from '@credo-ts/indy-vdr'
 
+// eslint-disable-next-line import/no-extraneous-dependencies
 import { PolygonDidRegistrar, PolygonDidResolver, PolygonModule } from '@ayanworks/credo-polygon-w3c-module'
+// eslint-disable-next-line import/no-extraneous-dependencies
+import { EthereumDidRegistrar, EthereumDidResolver, EthereumModule } from '@bhutan-ndi/ethr-credo-module'
 import {
   AnonCredsDidCommCredentialFormatService,
   AnonCredsModule,
@@ -128,6 +131,11 @@ export interface AriesRestConfig {
   rpcUrl?: string
   fileServerUrl?: string
   fileServerToken?: string
+  ethereumNetworkName?: string
+  ethereumChainId?: string | number
+  ethereumRegistry?: string
+  ethereumSchemaManagerContractAddress?: string
+  ethereumRpcUrl?: string
   walletScheme?: AskarMultiWalletDatabaseScheme
   schemaFileServerURL?: string
   apiKey: string
@@ -157,6 +165,14 @@ const initializeCache = (logger: TsLogger) => {
   return new InMemoryLruCache({ limit: Number(process.env.INMEMORY_LRU_CACHE_LIMIT) || Infinity })
 }
 
+interface EthereumModuleEnvironmentConfig {
+  ethereumNetworkName?: string
+  ethereumChainId?: string | number
+  ethereumRegistry?: string
+  ethereumSchemaManagerContractAddress?: string
+  ethereumRpcUrl?: string
+}
+
 function requireEnv(name: string): string {
   const value = process.env[name]
   if (!value) {
@@ -183,7 +199,15 @@ const getModules = (
   storeOptions: AskarModuleConfigStoreOptions,
   endpoints: string[],
   logger: TsLogger,
+  ethereumModuleConfig: EthereumModuleEnvironmentConfig = {},
 ) => {
+  const ethereumNetworkName = ethereumModuleConfig.ethereumNetworkName || process.env.ETHEREUM_NETWORK_NAME
+  const ethereumChainId = Number(ethereumModuleConfig.ethereumChainId || process.env.ETHEREUM_CHAIN_ID)
+  const ethereumRpcUrl = ethereumModuleConfig.ethereumRpcUrl || process.env.ETHEREUM_RPC_URL
+  const ethereumRegistry = ethereumModuleConfig.ethereumRegistry || process.env.ETHEREUM_DID_REGISTRY_CONTRACT_ADDRESS
+  const ethereumSchemaManagerContractAddress =
+    ethereumModuleConfig.ethereumSchemaManagerContractAddress || process.env.ETHEREUM_SCHEMA_MANAGER_CONTRACT_ADDRESS
+
   const legacyIndyCredentialFormat = new LegacyIndyDidCommCredentialFormatService()
   const legacyIndyProofFormat = new LegacyIndyDidCommProofFormatService()
   const jsonLdCredentialFormatService = new DidCommJsonLdCredentialFormatService()
@@ -210,6 +234,7 @@ const getModules = (
         new KeyDidRegistrar(),
         new JwkDidRegistrar(),
         new PolygonDidRegistrar(),
+        new EthereumDidRegistrar(),
       ],
       resolvers: [
         new IndyVdrIndyDidResolver(),
@@ -217,6 +242,7 @@ const getModules = (
         new WebDidResolver(),
         new JwkDidResolver(),
         new PolygonDidResolver(),
+        new EthereumDidResolver(),
       ],
     }),
 
@@ -282,6 +308,7 @@ const getModules = (
       rpcUrl: rpcUrl ? rpcUrl : (process.env.RPC_URL as string),
       serverUrl: fileServerUrl ? fileServerUrl : (process.env.SERVER_URL as string),
     }),
+
     sdJwtVc: new SdJwtVcModule(),
     openid4vc: new OpenId4VcModule({
       app: expressApp,
@@ -326,6 +353,22 @@ const getModules = (
         return await getX509CertsByUrl()
       },
     }),
+    ethereum: new EthereumModule({
+      config: {
+        networks: [
+          {
+            name: ethereumNetworkName as string,
+            chainId: ethereumChainId,
+            rpcUrl: ethereumRpcUrl as string,
+            registry: ethereumRegistry as string,
+          },
+        ],
+      },
+      schemaManagerContractAddress: ethereumSchemaManagerContractAddress as string,
+      serverUrl: fileServerUrl ? fileServerUrl : (process.env.SERVER_URL as string),
+      fileServerToken: fileServerToken ? fileServerToken : (process.env.FILE_SERVER_TOKEN as string),
+      rpcUrl: ethereumRpcUrl as string,
+    }),
   }
 }
 
@@ -344,6 +387,7 @@ const getWithTenantModules = (
   walletConfig: AskarModuleConfigStoreOptions,
   endpoints: string[],
   logger: TsLogger,
+  ethereumModuleConfig: EthereumModuleEnvironmentConfig = {},
 ) => {
   const modules = getModules(
     networkConfig,
@@ -359,6 +403,7 @@ const getWithTenantModules = (
     walletConfig,
     endpoints,
     logger,
+    ethereumModuleConfig,
   )
   return {
     tenants: new TenantsModule<typeof modules>({
@@ -401,6 +446,11 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     fileServerUrl,
     rpcUrl,
     schemaManagerContractAddress,
+    ethereumNetworkName,
+    ethereumChainId,
+    ethereumRegistry,
+    ethereumSchemaManagerContractAddress,
+    ethereumRpcUrl,
     walletConfig,
     autoAcceptConnections,
     autoAcceptCredentials,
@@ -479,6 +529,14 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   }
   let modules
 
+  const ethereumModuleConfig: EthereumModuleEnvironmentConfig = {
+    ethereumNetworkName,
+    ethereumChainId,
+    ethereumRegistry,
+    ethereumSchemaManagerContractAddress,
+    ethereumRpcUrl,
+  }
+
   if (afjConfig.tenancy) {
     modules = getWithTenantModules(
       networkConfig,
@@ -494,6 +552,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       walletConfig,
       endpoints || [],
       logger,
+      ethereumModuleConfig,
     )
   } else {
     modules = getModules(
@@ -510,6 +569,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       walletConfig,
       endpoints || [],
       logger,
+      ethereumModuleConfig,
     )
   }
 
