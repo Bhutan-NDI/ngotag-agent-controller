@@ -24,6 +24,7 @@ import {
   KeyDidRegistrar,
   KeyDidResolver,
   CacheModule,
+  CacheModuleConfig,
   InMemoryLruCache,
   WebDidResolver,
   LogLevel,
@@ -74,6 +75,7 @@ import {
 } from './purge/PurgeSchedulerFactory'
 import { buildPurgeConfig } from './purge/PurgeTypes'
 import { setupServer } from './server'
+import { RedisCache } from './utils/RedisCache'
 import { AuthTypes, getAuthType } from './utils/auth'
 import { isCustomDocumentLoaderEnabled } from './utils/config'
 import { CustomDocumentLoader } from './utils/customDocumentLoader'
@@ -143,6 +145,19 @@ export async function readRestConfig(path: string) {
 export type RestMultiTenantAgentModules = Awaited<ReturnType<typeof getWithTenantModules>>
 
 export type RestAgentModules = Awaited<ReturnType<typeof getModules>>
+
+const initializeCache = (logger: TsLogger) => {
+  const redisUrl = process.env.REDIS_URL
+
+  if (redisUrl) {
+    logger.info('Redis URL found — initializing RedisCache')
+    return new RedisCache(redisUrl, logger, Number(process.env.REDIS_CACHE_TTL_SECONDS) || 600)
+  }
+
+  logger.warn('Redis URL not found — falling back to InMemoryLruCache')
+  return new InMemoryLruCache({ limit: Number(process.env.INMEMORY_LRU_CACHE_LIMIT) || Infinity })
+}
+
 function requireEnv(name: string): string {
   const value = process.env[name]
   if (!value) {
@@ -168,6 +183,7 @@ const getModules = (
   walletScheme: AskarMultiWalletDatabaseScheme,
   storeOptions: AskarModuleConfigStoreOptions,
   endpoints: string[],
+  logger: TsLogger,
 ) => {
   const legacyIndyCredentialFormat = new LegacyIndyDidCommCredentialFormatService()
   const legacyIndyProofFormat = new LegacyIndyDidCommProofFormatService()
@@ -255,7 +271,7 @@ const getModules = (
       },
     }),
     cache: new CacheModule({
-      cache: new InMemoryLruCache({ limit: Number(process.env.INMEMORY_LRU_CACHE_LIMIT) || Infinity }),
+      cache: initializeCache(logger),
     }),
 
     questionAnswer: new QuestionAnswerModule(),
@@ -330,6 +346,7 @@ const getWithTenantModules = (
   walletScheme: AskarMultiWalletDatabaseScheme,
   walletConfig: AskarModuleConfigStoreOptions,
   endpoints: string[],
+  logger: TsLogger,
 ) => {
   const modules = getModules(
     networkConfig,
@@ -344,6 +361,7 @@ const getWithTenantModules = (
     walletScheme,
     walletConfig,
     endpoints,
+    logger,
   )
   return {
     tenants: new TenantsModule<typeof modules>({
@@ -478,6 +496,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet,
       walletConfig,
       endpoints || [],
+      logger,
     )
   } else {
     modules = getModules(
@@ -493,6 +512,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet,
       walletConfig,
       endpoints || [],
+      logger,
     )
   }
 
@@ -593,6 +613,10 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     agent.config.logger.info('[Shutdown] Stopping services...')
     server.close()
     await stopPurgeSchedulers()
+    const cache = agent.dependencyManager.resolve(CacheModuleConfig).cache
+    if (cache instanceof RedisCache) {
+      await cache.disconnect()
+    }
     await agent.shutdown()
     process.exit(0)
   }
