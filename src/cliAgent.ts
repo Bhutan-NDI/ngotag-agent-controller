@@ -7,9 +7,7 @@ import type { AskarModuleConfigStoreOptions } from '@credo-ts/askar'
 import type { InitConfig } from '@credo-ts/core'
 import type { IndyVdrPoolConfig } from '@credo-ts/indy-vdr'
 
-// eslint-disable-next-line import/no-extraneous-dependencies
 import { PolygonDidRegistrar, PolygonDidResolver, PolygonModule } from '@ayanworks/credo-polygon-w3c-module'
-// eslint-disable-next-line import/no-extraneous-dependencies
 import { EthereumDidRegistrar, EthereumDidResolver, EthereumModule } from '@bhutan-ndi/ethr-credo-module'
 import {
   AnonCredsDidCommCredentialFormatService,
