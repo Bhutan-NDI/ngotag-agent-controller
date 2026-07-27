@@ -1,0 +1,64 @@
+diff --git a/node_modules/@credo-ts/tenants/build/TenantsApi.mjs b/node_modules/@credo-ts/tenants/build/TenantsApi.mjs
+index 6d31ae9..69ffcca 100644
+--- a/node_modules/@credo-ts/tenants/build/TenantsApi.mjs
++++ b/node_modules/@credo-ts/tenants/build/TenantsApi.mjs
+@@ -85,7 +85,18 @@ let TenantsApi = class TenantsApi {
+ 		const tenantContext = await this.agentContextProvider.getAgentContextForContextCorrelationId(this.agentContextProvider.getContextCorrelationIdForTenantId(tenantId), { provisionContext });
+ 		this.logger.trace(`Got tenant context for tenant '${tenantId}'`);
+ 		const tenantAgent = new TenantAgent(tenantContext);
+-		await tenantAgent.initialize();
++		try {
++			await tenantAgent.initialize();
++		} catch (error) {
++			// PATCH(session-release): the session slot was already acquired inside
++			// getAgentContextForContextCorrelationId. If initialize() throws, withTenantAgent's
++			// finally is never reached, so release the slot here or the global session counter
++			// leaks and the pool wedges at the session limit.
++			try {
++				await tenantAgent.endSession();
++			} catch {}
++			throw error;
++		}
+ 		this.logger.trace(`Initializing tenant agent for tenant '${tenantId}'`);
+ 		return tenantAgent;
+ 	}
+diff --git a/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.mjs b/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.mjs
+index fa1353b..9461268 100644
+--- a/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.mjs
++++ b/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.mjs
+@@ -73,8 +73,13 @@ let TenantSessionCoordinator = class TenantSessionCoordinator {
+ 		const contextCorrelationId = agentContext.contextCorrelationId;
+ 		this.assertTenantContextCorrelationId(contextCorrelationId);
+ 		if (!this.hasTenantSessionMapping(contextCorrelationId)) {
+-			this.logger.error(`Unknown agent context with contextCorrelationId '${contextCorrelationId}'.  Cannot end session`);
+-			throw new CredoError(`Unknown agent context with contextCorrelationId '${contextCorrelationId}'. Cannot end session`);
++			// PATCH(session-release): a slot was acquired for this context, so it MUST be released on
++			// every exit path. Previously this early throw (mapping already closed by a concurrent
++			// sibling) skipped releaseSession(), leaking the slot and eventually wedging the pool at
++			// the session limit. Release the slot and return instead of throwing-and-stranding it.
++			this.logger.warn(`Unknown agent context with contextCorrelationId '${contextCorrelationId}' on endSession; releasing session slot anyway`);
++			this.sessionMutex.releaseSession();
++			return;
+ 		}
+ 		await this.mutexForTenant(contextCorrelationId).runExclusive(async () => {
+ 			this.logger.debug(`Acquired lock for tenant '${contextCorrelationId}' to end session context`);
+diff --git a/node_modules/@credo-ts/tenants/build/context/TenantSessionMutex.mjs b/node_modules/@credo-ts/tenants/build/context/TenantSessionMutex.mjs
+index 4e20c01..1099b82 100644
+--- a/node_modules/@credo-ts/tenants/build/context/TenantSessionMutex.mjs
++++ b/node_modules/@credo-ts/tenants/build/context/TenantSessionMutex.mjs
+@@ -40,7 +40,14 @@ var TenantSessionMutex = class {
+ 		this.currentSessions++;
+ 		if (this.currentSessions >= this.maxSessions) {
+ 			this.logger.debug(`Reached max number of sessions ${this.maxSessions}, locking mutex`);
+-			await this.sessionMutex.acquire();
++			try {
++				await this.sessionMutex.acquire();
++			} catch (error) {
++				// PATCH(session-release): the post-increment lock timed out. currentSessions was
++				// already incremented above, so undo it before propagating or the slot leaks permanently.
++				this.currentSessions--;
++				throw error;
++			}
+ 		}
+ 		this.logger.debug(`Acquired tenant session (${this.currentSessions} / ${this.maxSessions})`);
+ 	}
