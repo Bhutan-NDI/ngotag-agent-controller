@@ -1,12 +1,12 @@
 /**
- * Regression tests for the tenant-session-leak fix in ProofEvents.ts.
+ * Regression tests for ProofEvents.ts. Two behaviours are locked in here:
  *
- * The core regression: getTenantAgent() acquires a wallet session without ever releasing it.
- * withTenantAgent() scopes the session to the callback and releases it on exit — including on
- * error. These tests lock that in so an accidental revert surfaces immediately.
+ *   1. Tenant-session-leak fix — the tenant format-data fetch goes through withTenantAgent()
+ *      (session scoped to the callback and released on exit), never getTenantAgent().
  *
- * Also verifies that the webhook/socket payload is populated with proofData for both the tenant
- * and dedicated-agent code paths.
+ *   2. #61 event refactor — the webhook/socket payload gates `proofData` on the terminal `Done`
+ *      state: it is `null` (and no getFormatData call is made) for every non-Done state, and only
+ *      populated on `Done`. Webhook emission is fire-and-forget (not awaited).
  *
  * Runs under Jest ESM mode (see jest.config.base.ts) because the event module's dependency graph
  * is native ESM. WebhookEvent and WebSocketEvents are stubbed so no network I/O occurs.
@@ -24,6 +24,7 @@ jest.unstable_mockModule('../WebSocketEvents', () => ({
 const { proofEvents } = await import('../ProofEvents')
 const { sendWebhookEvent } = await import('../WebhookEvent')
 const { sendWebSocketEvent } = await import('../WebSocketEvents')
+const { DidCommProofState } = await import('@credo-ts/didcomm')
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -32,14 +33,19 @@ const { sendWebSocketEvent } = await import('../WebSocketEvents')
 const TENANT_FORMAT_DATA = { presentation: 'tenant-presentation' }
 const DEFAULT_FORMAT_DATA = { presentation: 'default-presentation' }
 const WEBHOOK_URL = 'http://example.com/webhook'
+const DONE = DidCommProofState.Done
+const NON_DONE = DidCommProofState.PresentationReceived // any pre-terminal state
 
-function makeProofEvent(contextCorrelationId: string | undefined) {
+// The handler reads `record.state` (property) for the gate and spreads `record.toJSON()` into the
+// body, so both carry the same state.
+function makeProofEvent(contextCorrelationId: string | undefined, state: string = NON_DONE) {
   return {
     metadata: { contextCorrelationId },
     payload: {
       proofRecord: {
         id: 'proof-record-id',
-        toJSON: () => ({ id: 'proof-record-id', state: 'presentation-received' }),
+        state,
+        toJSON: () => ({ id: 'proof-record-id', state }),
       },
     },
   }
@@ -101,9 +107,34 @@ describe('proofEvents', () => {
     expect(agent.events.on).toHaveBeenCalledWith('DidCommProofStateChanged', expect.any(Function))
   })
 
-  describe('tenant event — contextCorrelationId = "tenant-abc123"', () => {
+  describe('gate: non-Done state (presentation-received)', () => {
+    it('tenant — emits proofData: null and never fetches format data', async () => {
+      await capturedListener(makeProofEvent('tenant-abc123', NON_DONE))
+
+      expect(agent.modules.tenants.withTenantAgent).not.toHaveBeenCalled()
+      expect(agent.modules.tenants.getTenantAgent).not.toHaveBeenCalled()
+      expect(jest.mocked(sendWebhookEvent)).toHaveBeenCalledWith(
+        `${WEBHOOK_URL}/proofs`,
+        expect.objectContaining({ proofData: null }),
+        expect.anything(),
+      )
+    })
+
+    it('default — emits proofData: null and does not call getFormatData', async () => {
+      await capturedListener(makeProofEvent('default', NON_DONE))
+
+      expect(agent.modules.didcomm.proofs.getFormatData).not.toHaveBeenCalled()
+      expect(jest.mocked(sendWebhookEvent)).toHaveBeenCalledWith(
+        `${WEBHOOK_URL}/proofs`,
+        expect.objectContaining({ proofData: null }),
+        expect.anything(),
+      )
+    })
+  })
+
+  describe('Done state — tenant event (contextCorrelationId = "tenant-abc123")', () => {
     beforeEach(async () => {
-      await capturedListener(makeProofEvent('tenant-abc123'))
+      await capturedListener(makeProofEvent('tenant-abc123', DONE))
     })
 
     it('uses withTenantAgent to scope the session — never getTenantAgent', () => {
@@ -128,9 +159,9 @@ describe('proofEvents', () => {
     })
   })
 
-  describe('default agent event — contextCorrelationId = "default"', () => {
+  describe('Done state — default agent event (contextCorrelationId = "default")', () => {
     beforeEach(async () => {
-      await capturedListener(makeProofEvent('default'))
+      await capturedListener(makeProofEvent('default', DONE))
     })
 
     it('calls agent.modules.didcomm.proofs.getFormatData directly', () => {
@@ -154,7 +185,7 @@ describe('proofEvents', () => {
   describe('webhook and socket emission', () => {
     it('skips the webhook when webhookUrl is not configured', async () => {
       await proofEvents(agent as never, { port: 3000 })
-      await capturedListener(makeProofEvent('default'))
+      await capturedListener(makeProofEvent('default', DONE))
 
       expect(jest.mocked(sendWebhookEvent)).not.toHaveBeenCalled()
     })
@@ -162,7 +193,7 @@ describe('proofEvents', () => {
     it('emits a socket event when socketServer is configured', async () => {
       const socketServer = {} as never
       await proofEvents(agent as never, { port: 3000, webhookUrl: WEBHOOK_URL, socketServer })
-      await capturedListener(makeProofEvent('default'))
+      await capturedListener(makeProofEvent('default', DONE))
 
       expect(jest.mocked(sendWebSocketEvent)).toHaveBeenCalledWith(
         socketServer,
@@ -175,9 +206,16 @@ describe('proofEvents', () => {
     })
 
     it('skips the socket event when socketServer is not configured', async () => {
-      await capturedListener(makeProofEvent('default'))
+      await capturedListener(makeProofEvent('default', DONE))
 
       expect(jest.mocked(sendWebSocketEvent)).not.toHaveBeenCalled()
+    })
+
+    it('is fire-and-forget — the handler resolves without awaiting the webhook', async () => {
+      // A webhook that never settles must not block the handler (emission uses `void`).
+      jest.mocked(sendWebhookEvent).mockImplementationOnce(() => new Promise<void>(() => {}))
+
+      await expect(capturedListener(makeProofEvent('default', DONE))).resolves.toBeUndefined()
     })
   })
 })
