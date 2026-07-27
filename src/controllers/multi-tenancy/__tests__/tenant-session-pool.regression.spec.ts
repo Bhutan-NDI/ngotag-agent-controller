@@ -3,15 +3,17 @@
  *
  * Root cause (confirmed on staging 2026-07): a tenant session slot could be acquired
  * (TenantSessionMutex.currentSessions++) without a matching release when work failed on an
- * unguarded path — TenantsApi._getTenantAgent() -> tenantAgent.initialize() throwing, the
- * post-increment lock in acquireSession() timing out, or endAgentContextSession() throwing on an
- * already-closed mapping before releaseSession(). Leaked slots accumulate until currentSessions
- * pins at the limit; the session mutex then never unlocks and every subsequent request waits
- * SESSION_ACQUIRE_TIMEOUT and fails, until the process is restarted.
+ * unguarded path — TenantsApi._getTenantAgent() -> tenantAgent.initialize() throwing (slot already
+ * acquired in getContextForSession), or the post-increment lock in acquireSession() timing out after
+ * currentSessions was incremented. Leaked slots accumulate until currentSessions pins at the limit;
+ * the session mutex then never unlocks and every subsequent request waits SESSION_ACQUIRE_TIMEOUT
+ * and fails, until the process is restarted.
  *
- * Fix: patches/@credo-ts+tenants+0.6.2+002+session-release-exception-safe.patch — every acquired
- * slot is released on every path (release-on-initialize-failure, undo the increment on a failed
- * post-increment lock, and release-in-finally / release-on-unknown-mapping in the coordinator).
+ * Fix: patches/@credo-ts+tenants+0.6.2+002+session-release-exception-safe.patch — release the slot
+ * on _getTenantAgent's initialize() failure (via endSession, which takes the normal mapping-present
+ * path), and undo the increment when the post-increment lock rejects. (The coordinator's
+ * unknown-mapping branch is intentionally left as the upstream throw: a call reaching it owns no
+ * slot — sessionCount is already 0 — so releasing there would over-decrement another session.)
  *
  * These tests exercise the REAL vendored TenantSessionMutex and guard the invariant the fix
  * enforces: no matter how in-session work fails, the pool drains back to 0 and never wedges.

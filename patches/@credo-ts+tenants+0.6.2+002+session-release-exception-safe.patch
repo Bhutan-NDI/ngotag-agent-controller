@@ -22,26 +22,6 @@ index 6d31ae9..69ffcca 100644
  		this.logger.trace(`Initializing tenant agent for tenant '${tenantId}'`);
  		return tenantAgent;
  	}
-diff --git a/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.mjs b/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.mjs
-index fa1353b..9461268 100644
---- a/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.mjs
-+++ b/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.mjs
-@@ -73,8 +73,13 @@ let TenantSessionCoordinator = class TenantSessionCoordinator {
- 		const contextCorrelationId = agentContext.contextCorrelationId;
- 		this.assertTenantContextCorrelationId(contextCorrelationId);
- 		if (!this.hasTenantSessionMapping(contextCorrelationId)) {
--			this.logger.error(`Unknown agent context with contextCorrelationId '${contextCorrelationId}'.  Cannot end session`);
--			throw new CredoError(`Unknown agent context with contextCorrelationId '${contextCorrelationId}'. Cannot end session`);
-+			// PATCH(session-release): a slot was acquired for this context, so it MUST be released on
-+			// every exit path. Previously this early throw (mapping already closed by a concurrent
-+			// sibling) skipped releaseSession(), leaking the slot and eventually wedging the pool at
-+			// the session limit. Release the slot and return instead of throwing-and-stranding it.
-+			this.logger.warn(`Unknown agent context with contextCorrelationId '${contextCorrelationId}' on endSession; releasing session slot anyway`);
-+			this.sessionMutex.releaseSession();
-+			return;
- 		}
- 		await this.mutexForTenant(contextCorrelationId).runExclusive(async () => {
- 			this.logger.debug(`Acquired lock for tenant '${contextCorrelationId}' to end session context`);
 diff --git a/node_modules/@credo-ts/tenants/build/context/TenantSessionMutex.mjs b/node_modules/@credo-ts/tenants/build/context/TenantSessionMutex.mjs
 index 4e20c01..1099b82 100644
 --- a/node_modules/@credo-ts/tenants/build/context/TenantSessionMutex.mjs
