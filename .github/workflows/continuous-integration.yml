@@ -36,3 +36,9 @@ jobs:
 
       - name: Compile
         run: yarn check-types
+
+      - name: Compile tests
+        run: yarn check-types:test
+
+      - name: Test
+        run: yarn test
