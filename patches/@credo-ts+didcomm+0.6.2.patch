@@ -1,0 +1,60 @@
+diff --git a/node_modules/@credo-ts/didcomm/build/modules/credentials/DidCommCredentialsApi.mjs b/node_modules/@credo-ts/didcomm/build/modules/credentials/DidCommCredentialsApi.mjs
+index b596487..29088fd 100644
+--- a/node_modules/@credo-ts/didcomm/build/modules/credentials/DidCommCredentialsApi.mjs
++++ b/node_modules/@credo-ts/didcomm/build/modules/credentials/DidCommCredentialsApi.mjs
+@@ -132,7 +132,8 @@ let DidCommCredentialsApi = class DidCommCredentialsApi {
+ 			comment: options.comment,
+ 			connectionRecord,
+ 			goalCode: options.goalCode,
+-			goal: options.goal
++			goal: options.goal,
++			parentThreadId: options.parentThreadId
+ 		});
+ 		this.logger.debug("Offer Message successfully created; message= ", message);
+ 		const outboundMessageContext = await getOutboundDidCommMessageContext(this.agentContext, {
+@@ -221,7 +222,8 @@ let DidCommCredentialsApi = class DidCommCredentialsApi {
+ 			comment: options.comment,
+ 			autoAcceptCredential: options.autoAcceptCredential,
+ 			goalCode: options.goalCode,
+-			goal: options.goal
++			goal: options.goal,
++			parentThreadId: options.parentThreadId
+ 		});
+ 		this.logger.debug("Offer Message successfully created", { message });
+ 		return {
+diff --git a/node_modules/@credo-ts/didcomm/build/modules/credentials/DidCommCredentialsApiOptions.d.mts b/node_modules/@credo-ts/didcomm/build/modules/credentials/DidCommCredentialsApiOptions.d.mts
+index bb22488..176bc17 100644
+--- a/node_modules/@credo-ts/didcomm/build/modules/credentials/DidCommCredentialsApiOptions.d.mts
++++ b/node_modules/@credo-ts/didcomm/build/modules/credentials/DidCommCredentialsApiOptions.d.mts
+@@ -55,6 +55,7 @@ interface NegotiateCredentialProposalOptions<CPs extends DidCommCredentialProtoc
+ interface CreateCredentialOfferOptions<CPs extends DidCommCredentialProtocol[] = DidCommCredentialProtocol[]> extends BaseOptions {
+   protocolVersion: CredentialProtocolVersionType<CPs>;
+   credentialFormats: DidCommCredentialFormatPayload<CredentialFormatsFromProtocols<CPs>, 'createOffer'>;
++  parentThreadId?: string;
+ }
+ /**
+  * Interface for CredentialsApi.offerCredential. Extends CreateCredentialOfferOptions, will send an offer
+diff --git a/node_modules/@credo-ts/didcomm/build/modules/credentials/protocol/v2/DidCommCredentialV2Protocol.mjs b/node_modules/@credo-ts/didcomm/build/modules/credentials/protocol/v2/DidCommCredentialV2Protocol.mjs
+index 864ac89..ac26260 100644
+--- a/node_modules/@credo-ts/didcomm/build/modules/credentials/protocol/v2/DidCommCredentialV2Protocol.mjs
++++ b/node_modules/@credo-ts/didcomm/build/modules/credentials/protocol/v2/DidCommCredentialV2Protocol.mjs
+@@ -230,7 +230,7 @@ var DidCommCredentialV2Protocol = class extends DidCommBaseCredentialProtocol {
+ 	* @returns Object containing offer message and associated credential record
+ 	*
+ 	*/
+-	async createOffer(agentContext, { credentialFormats, autoAcceptCredential, comment, goal, goalCode, connectionRecord }) {
++	async createOffer(agentContext, { credentialFormats, autoAcceptCredential, comment, goal, goalCode, connectionRecord, parentThreadId }) {
+ 		const credentialRepository = agentContext.dependencyManager.resolve(DidCommCredentialExchangeRepository);
+ 		const formatServices = this.getFormatServices(credentialFormats);
+ 		if (formatServices.length === 0) throw new CredoError("Unable to create offer. No supported formats");
+@@ -250,6 +250,10 @@ var DidCommCredentialV2Protocol = class extends DidCommBaseCredentialProtocol {
+ 			goal,
+ 			goalCode
+ 		});
++		if (parentThreadId) {
++			offerMessage.setThread({ threadId: credentialExchangeRecord.threadId, parentThreadId });
++			credentialExchangeRecord.parentThreadId = parentThreadId;
++		}
+ 		agentContext.config.logger.debug(`Saving record and emitting state changed for credential exchange record ${credentialExchangeRecord.id}`);
+ 		await credentialRepository.save(agentContext, credentialExchangeRecord);
+ 		this.emitStateChangedEvent(agentContext, credentialExchangeRecord, null);
