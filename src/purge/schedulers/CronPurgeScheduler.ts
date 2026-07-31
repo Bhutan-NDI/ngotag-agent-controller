@@ -1,14 +1,29 @@
-import type { PurgeConfig } from '../PurgeTypes'
+/**
+ * Steady-state purge trigger. Owns scheduling, tenant enumeration and the per-run audit log; all
+ * scanning and deleting lives in `PurgeEngine`.
+ *
+ * This is the "Tier B" purge from INTEGRATION-PLAN-develop.md §3 — the recurring job runs inside the
+ * agent process precisely so no second service needs a copy of `WALLET_KEY` and no second writer
+ * touches the Askar store. Heavy one-off backfills stay with the operator-run `credo-data-purge`
+ * tool (Tier A).
+ */
+import type { PurgeTenantResult } from '../PurgeEngine'
+import type { PurgeConfig, PurgeRecordType } from '../PurgeTypes'
 import type { Agent } from '@credo-ts/core'
 import type { ScheduledTask } from 'node-cron'
 
-import { RecordNotFoundError } from '@credo-ts/core'
-import { OpenId4VcIssuanceSessionRepository, OpenId4VcVerificationSessionRepository } from '@credo-ts/openid4vc'
 import cron from 'node-cron'
+import { randomUUID } from 'node:crypto'
 
-import { deletePurgeRecord } from '../PurgeDeleteRecord'
-import { PurgeRecordType } from '../PurgeTypes'
-import { sendPurgeWebhook, PurgeDeletionStatus } from '../PurgeWebhook'
+import { purgeTenant } from '../PurgeEngine'
+import { PurgeDeletionStatus, sendPurgeWebhook } from '../PurgeWebhook'
+
+type DeletionNotifier = (
+  recordType: PurgeRecordType,
+  recordId: string,
+  tenantId: string,
+  alreadyAbsent: boolean,
+) => Promise<void>
 
 export class CronPurgeScheduler {
   private job: ScheduledTask | null = null
@@ -18,6 +33,8 @@ export class CronPurgeScheduler {
     const { cronConfig } = config
 
     this.job = cron.schedule(cronConfig.cronSchedule, () => {
+      // Overlapping runs would double the DB load the throttle exists to cap, so a tick that
+      // arrives while the previous run is still going is dropped rather than queued.
       if (this.isRunning) {
         agent.config.logger.warn('[Purge] Cron scan still running — skipping this tick')
         return
@@ -32,10 +49,25 @@ export class CronPurgeScheduler {
         })
     })
 
+    if (cronConfig.dryRun) {
+      agent.config.logger.warn(
+        '[Purge] DRY-RUN mode — the cron purge will scan and report but delete nothing. ' +
+          'Set PURGE_CRON_DRY_RUN=false to enable deletion.',
+      )
+    } else {
+      agent.config.logger.warn('[Purge] LIVE mode — the cron purge will permanently delete records past TTL.')
+    }
+
     agent.config.logger.info('[Purge] CronPurgeScheduler started', {
       cronSchedule: cronConfig.cronSchedule,
       ttlSeconds: cronConfig.ttlSeconds,
       recordTypes: cronConfig.recordTypes,
+      dryRun: cronConfig.dryRun,
+      batchSize: cronConfig.batchSize,
+      throttleMs: cronConfig.throttleMs,
+      timeBudgetMs: cronConfig.timeBudgetMs,
+      staleProofEnabled: cronConfig.staleProofEnabled,
+      staleProofTtlSeconds: cronConfig.staleProofEnabled ? cronConfig.staleProofTtlSeconds : undefined,
     })
   }
 
@@ -46,133 +78,88 @@ export class CronPurgeScheduler {
 
   private async runScan(agent: Agent, config: PurgeConfig, webhookUrl: string | undefined): Promise<void> {
     const logger = agent.config.logger
+    const { cronConfig } = config
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const isShared = typeof (agent as any).modules?.tenants?.getAllTenants === 'function'
+    const runId = randomUUID()
+    const startedAt = Date.now()
 
-    logger.info('[Purge] Cron scan started', { agentMode: isShared ? 'shared' : 'dedicated' })
+    logger.info('[Purge] Cron scan started', {
+      runId,
+      agentMode: isShared ? 'shared' : 'dedicated',
+      dryRun: cronConfig.dryRun,
+    })
 
-    let totalDeleted = 0
+    const notify = this.buildDeletionNotifier(agent, webhookUrl)
+    const results: PurgeTenantResult[] = []
+    let tenantsFailed = 0
 
     if (isShared) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const tenants: Array<{ id: string }> = await (agent as any).modules.tenants.getAllTenants()
 
       for (const tenant of tenants) {
         try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           await (agent as any).modules.tenants.withTenantAgent({ tenantId: tenant.id }, async (tenantAgent: Agent) => {
-            const count = await this.scanTenant(tenantAgent, tenant.id, config, webhookUrl)
-            totalDeleted += count
+            results.push(await purgeTenant(tenantAgent, tenant.id, cronConfig, runId, scopeNotifier(notify, tenant.id)))
           })
-        } catch (err: any) {
-          logger.error('[Purge] Failed to scan tenant', { tenantId: tenant.id, error: err?.message })
+        } catch (err) {
+          // Tenants are isolated: one unopenable wallet must not stop the rest of the run.
+          tenantsFailed++
+          logger.error('[Purge] Failed to purge tenant', { runId, tenantId: tenant.id, error: (err as Error)?.message })
         }
       }
     } else {
-      totalDeleted = await this.scanTenant(agent, '', config, webhookUrl)
+      results.push(await purgeTenant(agent, '', cronConfig, runId, scopeNotifier(notify, '')))
     }
 
-    logger.info('[Purge] Cron scan completed', { totalDeleted })
+    // Per-run audit record. This — not the deprecated per-record webhook — is the purge's
+    // notification surface (INTEGRATION-PLAN-develop.md §4.5).
+    logger.info('[Purge] Cron scan completed', {
+      runId,
+      dryRun: cronConfig.dryRun,
+      durationMs: Date.now() - startedAt,
+      tenantsProcessed: results.length,
+      tenantsFailed,
+      tenantsTruncated: results.filter((result) => result.truncated).length,
+      eligible: sum(results.map((result) => result.eligible)),
+      parentsDeleted: sum(results.map((result) => result.parentsDeleted)),
+      childrenDeleted: sum(results.map((result) => result.childrenDeleted)),
+      failed: sum(results.map((result) => result.failed)),
+    })
   }
 
-  private async scanTenant(
-    tenantAgent: Agent,
-    tenantId: string,
-    config: PurgeConfig,
-    webhookUrl: string | undefined,
-  ): Promise<number> {
-    let deleted = 0
-    const { cronConfig } = config
+  /**
+   * @deprecated Builds the per-record webhook notifier, or returns undefined when the webhook is
+   * disabled (the default). Retained for reversibility only — see `PurgeWebhook.ts`.
+   */
+  private buildDeletionNotifier(agent: Agent, webhookUrl: string | undefined): DeletionNotifier | undefined {
+    if (!webhookUrl) return undefined
 
-    for (const recordType of cronConfig.recordTypes) {
+    return async (recordType, recordId, tenantId, alreadyAbsent) => {
+      const status = alreadyAbsent ? PurgeDeletionStatus.ALREADY_ABSENT : PurgeDeletionStatus.DELETED
       try {
-        const expiredIds = await this.queryExpiredRecords(tenantAgent, recordType, cronConfig.ttlSeconds)
-
-        for (const recordId of expiredIds) {
-          if (await this.deleteAndNotify(tenantAgent, recordId, recordType, tenantId, webhookUrl)) {
-            deleted++
-          }
-        }
-      } catch (err: any) {
-        tenantAgent.config.logger.error('[Purge] Error scanning record type', {
-          tenantId,
+        await sendPurgeWebhook(webhookUrl, recordId, recordType, tenantId, status, agent.config.logger)
+      } catch (err) {
+        // Notification is best-effort — a webhook failure must never make a completed delete look
+        // like a failed purge.
+        agent.config.logger.warn('[Purge] Webhook delivery failed after deletion', {
+          recordId,
           recordType,
-          error: err?.message,
+          error: (err as Error)?.message,
         })
       }
     }
-
-    return deleted
   }
+}
 
-  private async queryExpiredRecords(agent: Agent, recordType: PurgeRecordType, ttlSeconds: number): Promise<string[]> {
-    const cutoffMs = Date.now() - ttlSeconds * 1000
-    const ids: string[] = []
+function scopeNotifier(notify: DeletionNotifier | undefined, tenantId: string) {
+  if (!notify) return undefined
+  return (recordType: PurgeRecordType, recordId: string, alreadyAbsent: boolean) =>
+    notify(recordType, recordId, tenantId, alreadyAbsent)
+}
 
-    switch (recordType) {
-      case PurgeRecordType.DIDCOMM_CREDENTIAL: {
-        const records = await (agent as any).modules.didcomm.credentials.findAllByQuery({})
-        for (const r of records) {
-          if (r.createdAt && new Date(r.createdAt).getTime() < cutoffMs) ids.push(r.id)
-        }
-        break
-      }
-
-      case PurgeRecordType.DIDCOMM_PROOF: {
-        const records = await (agent as any).modules.didcomm.proofs.findAllByQuery({})
-        for (const r of records) {
-          if (r.createdAt && new Date(r.createdAt).getTime() < cutoffMs) ids.push(r.id)
-        }
-        break
-      }
-
-      case PurgeRecordType.OID4VC_ISSUANCE: {
-        const repo = agent.dependencyManager.resolve(OpenId4VcIssuanceSessionRepository)
-        const records = await repo.findByQuery(agent.context, {})
-        for (const r of records) {
-          if (r.createdAt && new Date(r.createdAt).getTime() < cutoffMs) ids.push(r.id)
-        }
-        break
-      }
-
-      case PurgeRecordType.OID4VC_VERIFICATION: {
-        const repo = agent.dependencyManager.resolve(OpenId4VcVerificationSessionRepository)
-        const records = await repo.findByQuery(agent.context, {})
-        for (const r of records) {
-          if (r.createdAt && new Date(r.createdAt).getTime() < cutoffMs) ids.push(r.id)
-        }
-        break
-      }
-    }
-
-    return ids
-  }
-
-  private async deleteAndNotify(
-    agent: Agent,
-    recordId: string,
-    recordType: PurgeRecordType,
-    tenantId: string,
-    webhookUrl: string | undefined,
-  ): Promise<boolean> {
-    const logger = agent.config.logger
-    let status: PurgeDeletionStatus
-
-    try {
-      await deletePurgeRecord(agent, recordType, recordId)
-      logger.info('[Purge] Record deleted by cron', { recordId, recordType, tenantId })
-      status = PurgeDeletionStatus.DELETED
-    } catch (err: any) {
-      if (err instanceof RecordNotFoundError) {
-        logger.warn('[Purge] Record already absent — skipping', { recordId, recordType })
-        status = PurgeDeletionStatus.ALREADY_ABSENT
-      } else {
-        logger.error('[Purge] Failed to delete record', { recordId, recordType, error: err?.message })
-        return false
-      }
-    }
-
-    if (webhookUrl) {
-      await sendPurgeWebhook(webhookUrl, recordId, recordType, tenantId, status, logger)
-    }
-
-    return true
-  }
+function sum(values: number[]): number {
+  return values.reduce((total, value) => total + value, 0)
 }
