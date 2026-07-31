@@ -14,7 +14,30 @@ export async function validatePurgeConfig(config: PurgeConfig): Promise<void> {
     )
   }
 
+  if (cronConfig.enabled && cronConfig.staleProofEnabled && cronConfig.staleProofTtlSeconds < cronConfig.ttlSeconds) {
+    // The stale-proof policy targets records that are still open, so a TTL shorter than the terminal
+    // one would delete in-flight verifications sooner than completed ones — always a
+    // misconfiguration, and one that silently destroys live flows if allowed through.
+    throw new Error(
+      `[Purge] PURGE_CRON_STALE_PROOF_TTL_SECONDS (${cronConfig.staleProofTtlSeconds}) must be >= ` +
+        `PURGE_CRON_TTL_SECONDS (${cronConfig.ttlSeconds}). Incomplete proof exchanges must never be ` +
+        'purged more aggressively than completed ones.',
+    )
+  }
+
   if (natsConfig.enabled) {
+    // Deprecated flow (INTEGRATION-PLAN-develop.md §4.4). It is kept for reversibility, but enabling
+    // it must be a deliberate, documented act rather than a flag someone flips by analogy with the
+    // cron flow — it deletes without re-checking record state.
+    if (!natsConfig.ackStateBlind) {
+      throw new Error(
+        '[Purge] PURGE_NATS_ENABLED=true is deprecated and refused by default. The NATS ' +
+          'schedule-at-create flow fixes a record’s deletion time when the record is created, so it fires ' +
+          'without re-checking state and can delete exchanges that are still in flight. Use the cron flow ' +
+          '(PURGE_CRON_ENABLED=true), which re-checks state at delete time. To override anyway, set ' +
+          'PURGE_NATS_ACK_STATE_BLIND=true.',
+      )
+    }
     await verifyNatsJetStream(natsConfig.nats)
   }
 }

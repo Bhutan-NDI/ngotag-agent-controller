@@ -1,0 +1,159 @@
+/**
+ * Tests for purge configuration defaults and startup guards.
+ *
+ * The defaults are the last line of defence for a subsystem that permanently deletes data, so each
+ * one is asserted explicitly:
+ *   - deletion is opt-in (dry-run unless `PURGE_CRON_DRY_RUN=false`)
+ *   - the deprecated per-record webhook is off unless explicitly enabled
+ *   - the deprecated state-blind NATS flow refuses to start without an explicit acknowledgement
+ *   - a stale-proof TTL shorter than the terminal TTL is rejected rather than applied
+ *
+ * Runs under Jest ESM mode (see jest.config.base.ts).
+ */
+import { jest } from '@jest/globals'
+
+// `nats` is imported by PurgeConfigValidator for the JetStream reachability probe. Stub it so the
+// validator's non-NATS branches can be tested without a broker, and so the deprecation guard is
+// proven to fire *before* any connection is attempted.
+const connect = jest.fn(async () => ({
+  jetstreamManager: jest.fn(async () => ({})),
+  close: jest.fn(async () => {}),
+}))
+
+jest.unstable_mockModule('nats', () => ({
+  connect,
+  // Also consumed by `utils/NatsAuthenticator`, which PurgeConfigValidator imports.
+  credsAuthenticator: jest.fn(),
+  nkeyAuthenticator: jest.fn(),
+  usernamePasswordAuthenticator: jest.fn(),
+}))
+
+const { buildPurgeConfig, PurgeRecordType } = await import('../PurgeTypes')
+const { validatePurgeConfig } = await import('../PurgeConfigValidator')
+
+const PURGE_ENV_KEYS = Object.keys(process.env).filter((key) => key.startsWith('PURGE_'))
+
+function withEnv<T>(env: Record<string, string | undefined>, run: () => T): T {
+  const saved = new Map<string, string | undefined>()
+  for (const key of [...PURGE_ENV_KEYS, ...Object.keys(env)]) {
+    saved.set(key, process.env[key])
+    delete process.env[key]
+  }
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined) process.env[key] = value
+  }
+  try {
+    return run()
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
+const CRON_ENABLED = { PURGE_ENABLED: 'true', PURGE_CRON_ENABLED: 'true' }
+
+describe('buildPurgeConfig — fail-safe defaults', () => {
+  test('returns undefined unless PURGE_ENABLED is the literal "true"', () => {
+    expect(withEnv({}, buildPurgeConfig)).toBeUndefined()
+    expect(withEnv({ PURGE_ENABLED: 'yes', PURGE_CRON_ENABLED: 'true' }, buildPurgeConfig)).toBeUndefined()
+    // Enabled but with no flow selected is also nothing to do.
+    expect(withEnv({ PURGE_ENABLED: 'true' }, buildPurgeConfig)).toBeUndefined()
+  })
+
+  test('dry-run is the default — only the literal "false" enables deletion', () => {
+    expect(withEnv(CRON_ENABLED, buildPurgeConfig)!.cronConfig.dryRun).toBe(true)
+    // A typo must not silently arm deletion.
+    expect(withEnv({ ...CRON_ENABLED, PURGE_CRON_DRY_RUN: 'no' }, buildPurgeConfig)!.cronConfig.dryRun).toBe(true)
+    expect(withEnv({ ...CRON_ENABLED, PURGE_CRON_DRY_RUN: '' }, buildPurgeConfig)!.cronConfig.dryRun).toBe(true)
+    expect(withEnv({ ...CRON_ENABLED, PURGE_CRON_DRY_RUN: 'false' }, buildPurgeConfig)!.cronConfig.dryRun).toBe(false)
+  })
+
+  test('the deprecated webhook is off unless explicitly enabled', () => {
+    expect(withEnv(CRON_ENABLED, buildPurgeConfig)!.webhookEnabled).toBe(false)
+    expect(withEnv({ ...CRON_ENABLED, PURGE_WEBHOOK_ENABLED: 'true' }, buildPurgeConfig)!.webhookEnabled).toBe(true)
+  })
+
+  test('batching, throttle and TTL defaults match the validated batch tool', () => {
+    const { cronConfig } = withEnv(CRON_ENABLED, buildPurgeConfig)!
+
+    expect(cronConfig.ttlSeconds).toBe(2_592_000) // 30 days
+    expect(cronConfig.batchSize).toBe(100)
+    expect(cronConfig.throttleMs).toBe(250)
+    expect(cronConfig.timeBudgetMs).toBe(0) // unbudgeted unless an operator opts in
+    expect(cronConfig.staleProofEnabled).toBe(false)
+    expect(cronConfig.staleProofTtlSeconds).toBe(7_776_000) // 90 days
+  })
+
+  test('all five record types are purged by default, and flags narrow the set', () => {
+    expect(withEnv(CRON_ENABLED, buildPurgeConfig)!.cronConfig.recordTypes).toEqual([
+      PurgeRecordType.DIDCOMM_CREDENTIAL,
+      PurgeRecordType.DIDCOMM_PROOF,
+      PurgeRecordType.DIDCOMM_OOB,
+      PurgeRecordType.OID4VC_ISSUANCE,
+      PurgeRecordType.OID4VC_VERIFICATION,
+    ])
+
+    const narrowed = withEnv({ ...CRON_ENABLED, PURGE_DIDCOMM_OOB: 'true' }, buildPurgeConfig)!
+    expect(narrowed.cronConfig.recordTypes).toEqual([PurgeRecordType.DIDCOMM_OOB])
+  })
+
+  test('rejects non-positive and malformed numeric settings instead of falling back silently', () => {
+    for (const value of ['0', '-1', 'abc', '1.5']) {
+      expect(() => withEnv({ ...CRON_ENABLED, PURGE_CRON_TTL_SECONDS: value }, buildPurgeConfig)).toThrow(
+        /PURGE_CRON_TTL_SECONDS/,
+      )
+    }
+    // A zero throttle is legitimate (disables the sleep); a negative one is not.
+    expect(withEnv({ ...CRON_ENABLED, PURGE_CRON_THROTTLE_MS: '0' }, buildPurgeConfig)!.cronConfig.throttleMs).toBe(0)
+    expect(() => withEnv({ ...CRON_ENABLED, PURGE_CRON_THROTTLE_MS: '-1' }, buildPurgeConfig)).toThrow(
+      /PURGE_CRON_THROTTLE_MS/,
+    )
+  })
+})
+
+describe('validatePurgeConfig — startup guards', () => {
+  beforeEach(() => {
+    connect.mockClear()
+  })
+
+  test('accepts a cron-only configuration', async () => {
+    const config = withEnv(CRON_ENABLED, buildPurgeConfig)!
+    await expect(validatePurgeConfig(config)).resolves.toBeUndefined()
+    expect(connect).not.toHaveBeenCalled()
+  })
+
+  test('rejects a stale-proof TTL shorter than the terminal TTL', async () => {
+    const config = withEnv(
+      {
+        ...CRON_ENABLED,
+        PURGE_CRON_STALE_PROOF_ENABLED: 'true',
+        PURGE_CRON_TTL_SECONDS: '2592000',
+        PURGE_CRON_STALE_PROOF_TTL_SECONDS: '86400',
+      },
+      buildPurgeConfig,
+    )!
+
+    // Purging in-flight verifications sooner than completed ones is always a misconfiguration.
+    await expect(validatePurgeConfig(config)).rejects.toThrow(/must be >=/)
+  })
+
+  test('refuses the deprecated NATS flow unless the state-blind behaviour is acknowledged', async () => {
+    const config = withEnv({ PURGE_ENABLED: 'true', PURGE_NATS_ENABLED: 'true' }, buildPurgeConfig)!
+
+    await expect(validatePurgeConfig(config)).rejects.toThrow(/deprecated and refused by default/)
+    // The guard must fire before any broker connection is attempted.
+    expect(connect).not.toHaveBeenCalled()
+  })
+
+  test('allows the NATS flow once acknowledged, and then probes JetStream', async () => {
+    const config = withEnv(
+      { PURGE_ENABLED: 'true', PURGE_NATS_ENABLED: 'true', PURGE_NATS_ACK_STATE_BLIND: 'true' },
+      buildPurgeConfig,
+    )!
+
+    await expect(validatePurgeConfig(config)).resolves.toBeUndefined()
+    expect(connect).toHaveBeenCalledTimes(1)
+  })
+})

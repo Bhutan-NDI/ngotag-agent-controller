@@ -12,6 +12,16 @@ import { sendPurgeWebhook, PurgeDeletionStatus } from './PurgeWebhook'
 
 const sc = StringCodec()
 
+/**
+ * @deprecated Consumer for the dormant NATS schedule-at-create flow. See `NatsPurgeScheduler` for
+ * why that flow is deprecated, and INTEGRATION-PLAN-develop.md §4.4.
+ *
+ * Note what this worker does *not* do: it deletes whatever record id its job names, without
+ * re-reading the record's state. It now goes through the storage-level delete
+ * (`deletePurgeRecord`), so a purge here no longer destroys the stored holder credential — but it is
+ * still state-blind, and it does not cascade `DidCommMessageRecord` children, so enabling this flow
+ * leaves orphaned messages that only `credo-data-purge`'s orphan sweep can clean up.
+ */
 export class PurgeWorker {
   private recordType: PurgeRecordType
   private consumerName: string

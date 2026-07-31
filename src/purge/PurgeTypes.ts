@@ -1,3 +1,10 @@
+// Cron defaults live here rather than in PurgeConstants.ts because PurgeConstants imports
+// PurgeRecordType from this module, and `import/no-cycle` is an error in this repo.
+const DEFAULT_TTL_SECONDS = 2_592_000 // 30 days
+const DEFAULT_STALE_PROOF_TTL_SECONDS = 7_776_000 // 90 days — deliberately far more conservative
+const DEFAULT_BATCH_SIZE = 100 // matches credo-data-purge BATCH_SIZE
+const DEFAULT_THROTTLE_MS = 250 // matches credo-data-purge THROTTLE_MS
+
 export interface NatsConfig {
   servers: string[]
   nkeySeed?: string
@@ -11,6 +18,7 @@ export type AgentMode = 'shared' | 'dedicated'
 export enum PurgeRecordType {
   DIDCOMM_CREDENTIAL = 'didcomm_credential',
   DIDCOMM_PROOF = 'didcomm_proof',
+  DIDCOMM_OOB = 'didcomm_oob',
   OID4VC_ISSUANCE = 'oid4vc_issuance',
   OID4VC_VERIFICATION = 'oid4vc_verification',
 }
@@ -23,23 +31,51 @@ export interface PurgeJob {
   scheduledAt: string
 }
 
+/**
+ * @deprecated The NATS schedule-at-create flow is retained only for reversibility and is dormant by
+ * default (`PURGE_NATS_ENABLED=false`). It fixes the deletion time when the record is *created*, so
+ * it fires state-blind at TTL and can delete records that are still in flight; it also depends on
+ * the JetStream `allow_msg_schedules` feature. Prefer the cron flow, which re-checks state at delete
+ * time. See INTEGRATION-PLAN-develop.md §4.4 — slated for removal once cron parity is proven in prod.
+ */
 export interface PurgeNatsConfig {
   enabled: boolean
   ttlSeconds: number
   nats: NatsConfig
   recordTypes: PurgeRecordType[]
+  /** Operator acknowledgement that this flow deletes records without re-checking their state. */
+  ackStateBlind: boolean
 }
 
 export interface PurgeCronConfig {
   enabled: boolean
+  /** Terminal-state records whose `updatedAt` is older than this are eligible. */
   ttlSeconds: number
   cronSchedule: string
   recordTypes: PurgeRecordType[]
+  /** When true, scan and report but never delete. Defaults to true — deletion is opt-in. */
+  dryRun: boolean
+  /** Records processed between throttle sleeps. */
+  batchSize: number
+  /** Milliseconds slept between batches so the scan cannot monopolise the shared DB pool. */
+  throttleMs: number
+  /** Per-tenant wall-clock budget; 0 disables. A truncated tenant resumes on the next run. */
+  timeBudgetMs: number
+  /** Opt-in purge of non-terminal PROOF exchanges. Never applies to credentials. */
+  staleProofEnabled: boolean
+  /** Separate, more conservative TTL for the stale-proof policy. */
+  staleProofTtlSeconds: number
 }
 
 export interface PurgeConfig {
   natsConfig: PurgeNatsConfig
   cronConfig: PurgeCronConfig
+  /**
+   * @deprecated Per-record HTTP notification. Defaults to false — the receiving platform endpoints
+   * (`/purge/*`) do not exist, and now that the purge no longer deletes stored holder credentials
+   * there is nothing notification-worthy; the per-run audit log is the right level.
+   * See INTEGRATION-PLAN-develop.md §4.5.
+   */
   webhookEnabled: boolean
 }
 
@@ -54,7 +90,7 @@ export function buildPurgeConfig(): PurgeConfig | undefined {
   return {
     natsConfig: {
       enabled: natsEnabled,
-      ttlSeconds: parseTtlSeconds(process.env.PURGE_NATS_TTL_SECONDS, 'PURGE_NATS_TTL_SECONDS'),
+      ttlSeconds: parsePositiveInt(process.env.PURGE_NATS_TTL_SECONDS, 'PURGE_NATS_TTL_SECONDS', DEFAULT_TTL_SECONDS),
       nats: {
         servers: (process.env.NATS_SERVERS || 'nats://localhost:4222')
           .split(',')
@@ -66,22 +102,48 @@ export function buildPurgeConfig(): PurgeConfig | undefined {
         password: process.env.NATS_PASSWORD,
       },
       recordTypes: buildPurgeRecordTypes(),
+      ackStateBlind: process.env.PURGE_NATS_ACK_STATE_BLIND === 'true',
     },
     cronConfig: {
       enabled: cronEnabled,
-      ttlSeconds: parseTtlSeconds(process.env.PURGE_CRON_TTL_SECONDS, 'PURGE_CRON_TTL_SECONDS'),
+      ttlSeconds: parsePositiveInt(process.env.PURGE_CRON_TTL_SECONDS, 'PURGE_CRON_TTL_SECONDS', DEFAULT_TTL_SECONDS),
       cronSchedule: process.env.PURGE_CRON_SCHEDULE || '0 * * * *',
       recordTypes: buildPurgeRecordTypes(),
+      // Fail-safe: only the explicit literal "false" enables deletion. A missing, empty or
+      // misspelled value always falls back to dry-run, matching credo-data-purge's DRY_RUN default.
+      dryRun: process.env.PURGE_CRON_DRY_RUN !== 'false',
+      batchSize: parsePositiveInt(process.env.PURGE_CRON_BATCH_SIZE, 'PURGE_CRON_BATCH_SIZE', DEFAULT_BATCH_SIZE),
+      throttleMs: parseNonNegativeInt(
+        process.env.PURGE_CRON_THROTTLE_MS,
+        'PURGE_CRON_THROTTLE_MS',
+        DEFAULT_THROTTLE_MS,
+      ),
+      timeBudgetMs: parseNonNegativeInt(process.env.PURGE_CRON_TIME_BUDGET_MS, 'PURGE_CRON_TIME_BUDGET_MS', 0),
+      staleProofEnabled: process.env.PURGE_CRON_STALE_PROOF_ENABLED === 'true',
+      staleProofTtlSeconds: parsePositiveInt(
+        process.env.PURGE_CRON_STALE_PROOF_TTL_SECONDS,
+        'PURGE_CRON_STALE_PROOF_TTL_SECONDS',
+        DEFAULT_STALE_PROOF_TTL_SECONDS,
+      ),
     },
-    webhookEnabled: process.env.PURGE_WEBHOOK_ENABLED !== 'false',
+    webhookEnabled: process.env.PURGE_WEBHOOK_ENABLED === 'true',
   }
 }
 
-function parseTtlSeconds(value: string | undefined, envKey: string, defaultSeconds = 2592000): number {
-  if (value === undefined || value === '') return defaultSeconds
+function parsePositiveInt(value: string | undefined, envKey: string, defaultValue: number): number {
+  if (value === undefined || value.trim() === '') return defaultValue
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`[Purge] ${envKey} must be a positive integer, got: "${value}"`)
+  }
+  return parsed
+}
+
+function parseNonNegativeInt(value: string | undefined, envKey: string, defaultValue: number): number {
+  if (value === undefined || value.trim() === '') return defaultValue
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`[Purge] ${envKey} must be a non-negative integer, got: "${value}"`)
   }
   return parsed
 }
@@ -90,6 +152,7 @@ function buildPurgeRecordTypes(): PurgeRecordType[] {
   const envFlags: Record<string, PurgeRecordType> = {
     PURGE_DIDCOMM_CREDENTIAL: PurgeRecordType.DIDCOMM_CREDENTIAL,
     PURGE_DIDCOMM_PROOF: PurgeRecordType.DIDCOMM_PROOF,
+    PURGE_DIDCOMM_OOB: PurgeRecordType.DIDCOMM_OOB,
     PURGE_OID4VC_ISSUANCE: PurgeRecordType.OID4VC_ISSUANCE,
     PURGE_OID4VC_VERIFICATION: PurgeRecordType.OID4VC_VERIFICATION,
   }
@@ -114,6 +177,7 @@ function buildPurgeRecordTypes(): PurgeRecordType[] {
   return [
     PurgeRecordType.DIDCOMM_CREDENTIAL,
     PurgeRecordType.DIDCOMM_PROOF,
+    PurgeRecordType.DIDCOMM_OOB,
     PurgeRecordType.OID4VC_ISSUANCE,
     PurgeRecordType.OID4VC_VERIFICATION,
   ]
