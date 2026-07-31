@@ -1,40 +1,37 @@
 import type { PurgeRecordType } from './PurgeTypes'
-import type { Agent, BaseRecord, BaseRecordConstructor, StorageService } from '@credo-ts/core'
+import type { Agent } from '@credo-ts/core'
 
-import { InjectionSymbols, RecordNotFoundError } from '@credo-ts/core'
+import { RecordNotFoundError } from '@credo-ts/core'
 import {
-  DidCommCredentialExchangeRecord,
-  DidCommMessageRecord,
-  DidCommOutOfBandRecord,
-  DidCommProofExchangeRecord,
+  DidCommCredentialExchangeRepository,
+  DidCommMessageRepository,
+  DidCommProofExchangeRepository,
 } from '@credo-ts/didcomm'
 import { OpenId4VcIssuanceSessionRepository, OpenId4VcVerificationSessionRepository } from '@credo-ts/openid4vc'
 
 import { PurgeRecordType as RecordType } from './PurgeTypes'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyRecord = BaseRecord<any, any, any>
-
 /**
- * The exchange record classes deleted at the STORAGE layer.
+ * Deletion is performed at the REPOSITORY layer, never the protocol layer.
  *
- * Why storage-level and not `agent.modules.didcomm.credentials.deleteById(id)`:
- * `DidCommBaseCredentialProtocol.delete()` defaults `deleteAssociatedCredentials` to `true`, so the
- * protocol-level delete also destroys the stored `W3cCredentialRecord` / `AnonCredsCredentialRecord`
- * the exchange produced. For a holder cloud wallet that is data loss — the holder loses the actual
- * credential, not just the (already-completed) exchange bookkeeping. Going through the
- * `StorageService` deletes the parent exchange record and nothing else.
+ * Why not `agent.modules.didcomm.credentials.deleteById(id)`:
+ * `DidCommBaseCredentialProtocol.delete()` defaults `deleteAssociatedCredentials` to `true`, and on
+ * this deployment's format-service ordering that resolves to `legacyIndyCredentialFormat` →
+ * `AnonCredsRsHolderService.deleteCredential()` → `W3cCredentialRepository.delete()`. For a holder
+ * cloud wallet issuing JSON-LD over DIDComm, a routine retention purge would destroy the holder's
+ * actual credential. See `__tests__/PurgeDeleteRecord.spec.ts` and INTEGRATION-PLAN-develop.md §4.1.
  *
- * This mirrors `credo-data-purge`'s "bypass the protocol layer entirely" decision
- * (INTEGRATION-PLAN-develop.md §4.1) and is covered by `__tests__/PurgeDeleteRecord.spec.ts`.
+ * Why the repository rather than the raw `StorageService`: `Repository.deleteById()` is exactly
+ * `storageService.deleteById()` plus a `RepositoryEventTypes.RecordDeleted` emit — no extra read, no
+ * cascade — so it keeps the credential-safety property while preserving the lifecycle event that
+ * every other delete path in Credo produces.
  *
- * DIDComm message children are NOT cascaded by the storage layer, so the purge engine removes them
- * explicitly per parent before deleting the parent — see `deleteDidCommMessageChildren`.
+ * OOB is the one exception and goes through its API on purpose — see `deletePurgeRecord`.
  */
-const STORAGE_LEVEL_RECORD_CLASSES: Partial<Record<PurgeRecordType, BaseRecordConstructor<AnyRecord>>> = {
-  [RecordType.DIDCOMM_CREDENTIAL]: DidCommCredentialExchangeRecord as BaseRecordConstructor<AnyRecord>,
-  [RecordType.DIDCOMM_PROOF]: DidCommProofExchangeRecord as BaseRecordConstructor<AnyRecord>,
-  [RecordType.DIDCOMM_OOB]: DidCommOutOfBandRecord as BaseRecordConstructor<AnyRecord>,
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyRepository = {
+  deleteById(agentContext: any, id: string): Promise<void>
+  findById(agentContext: any, id: string): Promise<any>
 }
 
 /**
@@ -49,42 +46,57 @@ export const RECORD_TYPES_WITH_DIDCOMM_MESSAGE_CHILDREN: ReadonlySet<PurgeRecord
   RecordType.DIDCOMM_PROOF,
 ])
 
-export function resolveStorageService(agent: Agent): StorageService<AnyRecord> {
-  return agent.dependencyManager.resolve<StorageService<AnyRecord>>(InjectionSymbols.StorageService)
+function resolveRepository(agent: Agent, recordType: PurgeRecordType): AnyRepository | undefined {
+  switch (recordType) {
+    case RecordType.DIDCOMM_CREDENTIAL:
+      return agent.dependencyManager.resolve(DidCommCredentialExchangeRepository) as unknown as AnyRepository
+    case RecordType.DIDCOMM_PROOF:
+      return agent.dependencyManager.resolve(DidCommProofExchangeRepository) as unknown as AnyRepository
+    case RecordType.OID4VC_ISSUANCE:
+      return agent.dependencyManager.resolve(OpenId4VcIssuanceSessionRepository) as unknown as AnyRepository
+    case RecordType.OID4VC_VERIFICATION:
+      return agent.dependencyManager.resolve(OpenId4VcVerificationSessionRepository) as unknown as AnyRepository
+    // OOB has no repository branch — it must go through the API for the routing cleanup.
+    default:
+      return undefined
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function oobApi(agent: Agent): any {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (agent as any).modules.didcomm.oob
 }
 
 /** IDs of the `DidCommMessageRecord`s associated with an exchange record. */
 export async function findDidCommMessageChildIds(agent: Agent, parentRecordId: string): Promise<string[]> {
-  const storageService = resolveStorageService(agent)
-  const messages = await storageService.findByQuery(agent.context, DidCommMessageRecord, {
-    associatedRecordId: parentRecordId,
-  })
+  const repository = agent.dependencyManager.resolve(DidCommMessageRepository)
+  const messages = await repository.findByQuery(agent.context, { associatedRecordId: parentRecordId })
   return messages.map((message) => message.id)
 }
 
 /**
  * Delete the `DidCommMessageRecord` children of an exchange record.
  *
- * Callers must run this to completion BEFORE deleting the parent: the storage-level parent delete
- * no longer cascades, so a parent removed while a child delete is still outstanding leaves an
- * orphaned message that only a full-wallet orphan sweep can find. The steady-state job deliberately
- * does not run that sweep (INTEGRATION-PLAN-develop.md §8), so this per-parent cascade is the only
- * thing keeping orphans from accumulating — and that only holds if the ordering is respected.
+ * Callers must run this to completion BEFORE deleting the parent: the parent delete no longer
+ * cascades, so a parent removed while a child delete is still outstanding leaves an orphaned message
+ * that only a full-wallet orphan sweep can find. The steady-state job deliberately does not run that
+ * sweep (INTEGRATION-PLAN-develop.md §8), so this per-parent cascade is the only thing keeping
+ * orphans from accumulating — and that only holds if the ordering is respected.
  *
  * A child that is ALREADY gone is skipped rather than treated as an error: for a delete, "absent" is
  * the desired end state. Letting `RecordNotFoundError` escape here would abort the cascade and, via
  * the caller's error handling, leave the parent undeleted while reporting the record as successfully
- * already-absent — so a wallet with a partially-completed previous run could make only partial
- * progress on every subsequent run while looking healthy.
+ * already-absent.
  *
  * @returns the number of children that are no longer present (deleted here or already gone).
  */
 export async function deleteDidCommMessageChildren(agent: Agent, childIds: string[]): Promise<number> {
-  const storageService = resolveStorageService(agent)
+  const repository = agent.dependencyManager.resolve(DidCommMessageRepository)
   let removed = 0
   for (const childId of childIds) {
     try {
-      await storageService.deleteById(agent.context, DidCommMessageRecord, childId)
+      await repository.deleteById(agent.context, childId)
     } catch (error) {
       // Real failures (lock, I/O) still propagate, so the parent is not deleted and is retried.
       if (!(error instanceof RecordNotFoundError)) throw error
@@ -95,35 +107,43 @@ export async function deleteDidCommMessageChildren(agent: Agent, childIds: strin
 }
 
 /**
+ * Re-read a record immediately before deleting it, so eligibility is decided on its CURRENT state
+ * rather than on the snapshot taken when the page was scanned.
+ *
+ * @returns the record, or undefined if it no longer exists.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function findPurgeRecordById(agent: Agent, recordType: PurgeRecordType, id: string): Promise<any> {
+  if (recordType === RecordType.DIDCOMM_OOB) return oobApi(agent).findById(id)
+
+  const repository = resolveRepository(agent, recordType)
+  if (!repository) throw new Error(`[Purge] No repository for record type: ${recordType}`)
+  return repository.findById(agent.context, id)
+}
+
+/**
  * Delete a single purgeable record — the parent record ONLY.
  *
  * @throws {RecordNotFoundError} if the record is already gone. Callers treat this as an idempotent
  * success: for a delete, "already absent" is the desired end state.
  */
 export async function deletePurgeRecord(agent: Agent, recordType: PurgeRecordType, recordId: string): Promise<void> {
-  const recordClass = STORAGE_LEVEL_RECORD_CLASSES[recordType]
-  if (recordClass) {
-    await resolveStorageService(agent).deleteById(agent.context, recordClass, recordId)
+  if (recordType === RecordType.DIDCOMM_OOB) {
+    // OOB deliberately goes through the API rather than the repository. `DidCommOutOfBandApi
+    // .deleteById()` deregisters the invitation's recipient keys from the mediator first, when the
+    // record has a `mediatorId`, carries only inline services, and has no related connection (or is
+    // reusable). The 7-day `await-response` non-reusable track is exactly that "no related
+    // connection" case, and `create-request-oob` routes through `mediationRecipient.getRouting()`,
+    // so every purged invitation would otherwise leave its recipient keys registered at the mediator
+    // forever. Unlike the credential API, this one cascades nothing else — the hazard that forces
+    // credentials off the protocol layer simply does not exist here.
+    await oobApi(agent).deleteById(recordId)
     return
   }
 
-  switch (recordType) {
-    // The OID4VC repositories are already parent-only — no protocol cascade to bypass.
-    case RecordType.OID4VC_ISSUANCE: {
-      const repo = agent.dependencyManager.resolve(OpenId4VcIssuanceSessionRepository)
-      await repo.deleteById(agent.context, recordId)
-      break
-    }
-
-    case RecordType.OID4VC_VERIFICATION: {
-      const repo = agent.dependencyManager.resolve(OpenId4VcVerificationSessionRepository)
-      await repo.deleteById(agent.context, recordId)
-      break
-    }
-
-    default: {
-      const _exhaustive: never = recordType as never
-      throw new Error(`[Purge] Unhandled record type: ${_exhaustive}`)
-    }
+  const repository = resolveRepository(agent, recordType)
+  if (!repository) {
+    throw new Error(`[Purge] Unhandled record type: ${recordType}`)
   }
+  await repository.deleteById(agent.context, recordId)
 }

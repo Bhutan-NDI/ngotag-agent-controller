@@ -9,8 +9,12 @@
  * Every state here is written as a Credo enum member rather than a string literal, so a Credo
  * upgrade that renames or removes a state fails the build instead of silently producing a list
  * that matches nothing (which would make the purge a no-op) or, worse, matches the wrong thing.
- * The non-terminal lists are *derived* by exclusion, so a Credo upgrade that adds a new state
- * automatically classifies it as non-terminal — i.e. fails safe (never purged by the default path).
+ *
+ * Note on derivation: deriving a purgeable list by *exclusion* fails OPEN, not closed — a state
+ * added by a future Credo release would land in it and become purgeable with nobody having reviewed
+ * whether deleting it is safe. So every list the engine actually queries is an explicit allowlist.
+ * Derivation is used only for `DIDCOMM_CREDENTIAL_NON_TERMINAL_STATES`, which exists to be asserted
+ * against and is never queried, and for the coverage check that forces a decision on upgrade.
  */
 import { DidCommCredentialState, DidCommOutOfBandState, DidCommProofState } from '@credo-ts/didcomm'
 import { OpenId4VcIssuanceSessionState, OpenId4VcVerificationSessionState } from '@credo-ts/openid4vc'
@@ -57,6 +61,33 @@ export const DIDCOMM_CREDENTIAL_NON_TERMINAL_STATES: string[] = Object.values(Di
 export const DIDCOMM_PROOF_NON_TERMINAL_STATES: string[] = Object.values(DidCommProofState).filter(
   (state) => !DIDCOMM_PROOF_TERMINAL_STATES.includes(state),
 )
+
+/**
+ * The non-terminal proof states the abandoned sweep is allowed to delete — an explicit allowlist,
+ * NOT the derived list above.
+ *
+ * This sweep is on by default, so derivation would mean a state introduced by a future Credo release
+ * silently became purgeable on upgrade. Enumerating them forces that to be a deliberate decision:
+ * a new state is not purged until someone adds it here, and `PurgeStates.spec.ts` fails the build
+ * until it is classified either way.
+ *
+ * Each entry is a flow that stalled and has no remaining value:
+ *   proposal-sent / proposal-received — a proposal nobody acted on
+ *   request-sent / request-received   — the dominant case: an unanswered proof request
+ *   presentation-sent                 — a presentation the verifier never acknowledged
+ *   presentation-received             — ~0.03% of incomplete proofs in production, and near-empty
+ *                                       in practice because autoAcceptProofs defaults
+ *                                       to ContentApproved, which moves a matching presentation
+ *                                       straight to `done`
+ */
+export const DIDCOMM_PROOF_ABANDONABLE_STATES: string[] = [
+  DidCommProofState.ProposalSent,
+  DidCommProofState.ProposalReceived,
+  DidCommProofState.RequestSent,
+  DidCommProofState.RequestReceived,
+  DidCommProofState.PresentationSent,
+  DidCommProofState.PresentationReceived,
+]
 
 /**
  * OOB purge tracks (INTEGRATION-PLAN-develop.md §4.2, mirroring `credo-data-purge` `purgeOob`):

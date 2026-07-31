@@ -85,6 +85,11 @@ export class NatsPurgeScheduler {
   ): Promise<void> {
     if (!this.js) throw new Error('[Purge] NatsPurgeScheduler not started')
 
+    // Consumers are only provisioned for the configured record types, so publishing for an excluded
+    // type produces execution messages nothing will ever consume. They sit in the stream until
+    // max_age and would all be replayed at once if that type were later enabled.
+    if (!this.recordTypes.includes(recordType)) return
+
     const fireAt = new Date(Date.now() + this.ttlSeconds * 1000).toISOString()
     const job: PurgeJob = { recordId, recordType, tenantId, agentMode, scheduledAt: fireAt }
 

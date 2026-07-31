@@ -37,11 +37,12 @@ import {
   deleteDidCommMessageChildren,
   deletePurgeRecord,
   findDidCommMessageChildIds,
+  findPurgeRecordById,
 } from './PurgeDeleteRecord'
 import {
   DIDCOMM_CREDENTIAL_TERMINAL_STATES,
   DIDCOMM_OOB_PURGEABLE_STATES,
-  DIDCOMM_PROOF_NON_TERMINAL_STATES,
+  DIDCOMM_PROOF_ABANDONABLE_STATES,
   DIDCOMM_PROOF_TERMINAL_STATES,
   OID4VC_ISSUANCE_TERMINAL_STATES,
   OID4VC_VERIFICATION_TERMINAL_STATES,
@@ -51,6 +52,8 @@ import { PurgeRecordType } from './PurgeTypes'
 /** The subset of a Credo record the engine reads. Kept structural so the engine stays testable. */
 export interface PurgeableRecord {
   id: string
+  /** Re-checked immediately before deletion; a record that has moved on is left alone. */
+  state?: string
   createdAt?: Date | string
   updatedAt?: Date | string
   /** Present on `DidCommOutOfBandRecord`; drives the reusable-invitation retention rule. */
@@ -84,6 +87,8 @@ export interface PurgeCategoryResult {
   childrenDeleted: number
   /** Deletes that found the record already gone — an idempotent success, not a failure. */
   alreadyAbsent: number
+  /** Eligible at scan time but no longer eligible at delete time; left alone, not an error. */
+  skippedChanged: number
   failed: number
   /** True when the per-tenant time budget cut this category short; it resumes next run. */
   truncated: boolean
@@ -229,6 +234,7 @@ export async function purgeTenant(
       parentsDeleted: c.parentsDeleted,
       childrenDeleted: c.childrenDeleted,
       alreadyAbsent: c.alreadyAbsent,
+      skippedChanged: c.skippedChanged,
       failed: c.failed,
     })),
   })
@@ -269,7 +275,7 @@ export function buildScanPlans(recordType: PurgeRecordTypeValue, config: PurgeCr
       // re-requests — no credential data is at risk. The equivalent for credentials is unsafe and
       // is not offered at all.
       if (config.staleProofEnabled) {
-        for (const state of DIDCOMM_PROOF_NON_TERMINAL_STATES) {
+        for (const state of DIDCOMM_PROOF_ABANDONABLE_STATES) {
           plans.push({ label: `abandoned state=${state}`, query: { state }, cutoff: abandonedCutoff })
         }
       }
@@ -409,17 +415,20 @@ async function runScanPlan(
     }
     result.eligible += eligible.length
 
-    const before = { parents: result.parentsDeleted, absent: result.alreadyAbsent }
+    const before = { parents: result.parentsDeleted, absent: result.alreadyAbsent, skipped: result.skippedChanged }
     for (const record of eligible) {
-      await processRecord(ctx, recordType, record, result)
+      await processRecord(ctx, recordType, plan, record, result)
     }
+    // A record skipped because it changed under us counts as progress: it is gone from the eligible
+    // set for the right reason, and the offset must advance past it or the drain would stall.
     const removed = result.parentsDeleted - before.parents + (result.alreadyAbsent - before.absent)
+    const settled = removed + (result.skippedChanged - before.skipped)
 
     // Zero-progress guard (credo-data-purge `assertDeleteProgress`): if a page had eligible records
     // and not one of them could be removed, something systemic is wrong — a lock, a poison record, a
     // broken store. Aborting the record type beats grinding through the rest logging the same error.
     // It also prevents an infinite loop: with nothing removed the offset below would not advance.
-    if (!dryRun && eligible.length > 0 && removed === 0) {
+    if (!dryRun && eligible.length > 0 && settled === 0) {
       throw new Error(
         `[Purge] ${recordType} ${plan.label}: 0/${eligible.length} deletes succeeded on this page — ` +
           'possible lock or poison record. Aborting this record type.',
@@ -441,6 +450,7 @@ async function runScanPlan(
       scanned: records.length,
       eligible: eligible.length,
       removed,
+      skippedChanged: result.skippedChanged - before.skipped,
       nextOffset: offset,
       dryRun,
     })
@@ -455,12 +465,42 @@ async function runScanPlan(
 async function processRecord(
   ctx: EngineContext,
   recordType: PurgeRecordTypeValue,
+  plan: ScanPlan,
   record: PurgeableRecord,
   result: PurgeCategoryResult,
 ): Promise<void> {
   const cascade = RECORD_TYPES_WITH_DIDCOMM_MESSAGE_CHILDREN.has(recordType)
 
   try {
+    // Re-read and re-evaluate immediately before deleting. The page was a snapshot, and records are
+    // processed sequentially behind a throttle, so a record can move on while it waits its turn —
+    // a holder can answer a long-abandoned proof request in exactly that window. Deleting on the
+    // stale snapshot would take out a flow that had just become live again. This is also what makes
+    // the claim that the cron path (unlike the NATS one) decides at DELETE time rather than at
+    // schedule time actually true.
+    //
+    // It closes the cascade race too: a concurrent response creates a new DidCommMessageRecord as
+    // part of a state transition on the parent, so a parent that still matches its plan here has not
+    // gained children since the scan.
+    const fresh = await findPurgeRecordById(ctx.agent, recordType, record.id)
+    if (!fresh) {
+      result.alreadyAbsent++
+      ctx.onDeleted?.(recordType, record.id, true)
+      return
+    }
+    if (!stillMatchesPlan(fresh, plan)) {
+      result.skippedChanged++
+      ctx.logger.debug('[Purge] Record changed since the scan — leaving it alone', {
+        runId: ctx.runId,
+        tenantId: ctx.tenantId,
+        recordType,
+        recordId: record.id,
+        plan: plan.label,
+        state: fresh.state,
+      })
+      return
+    }
+
     const childIds = cascade ? await findDidCommMessageChildIds(ctx.agent, record.id) : []
 
     if (ctx.config.dryRun) {
@@ -515,6 +555,17 @@ async function processRecord(
  * A record with neither timestamp is never eligible: without an age there is no way to show it is
  * past TTL, and refusing to delete is the safe default.
  */
+/**
+ * Whether a freshly-read record still satisfies the plan that selected it: same state, still past
+ * the cutoff, and still not retained by policy.
+ */
+function stillMatchesPlan(record: PurgeableRecord, plan: ScanPlan): boolean {
+  const expectedState = plan.query.state
+  if (expectedState !== undefined && record.state !== expectedState) return false
+  if (!isPastCutoff(record, plan.cutoff)) return false
+  return !plan.retain?.(record)
+}
+
 function isPastCutoff(record: PurgeableRecord, cutoff: Date): boolean {
   const timestamp = toDate(record.updatedAt) ?? toDate(record.createdAt)
   if (!timestamp) return false
@@ -546,6 +597,7 @@ function emptyCategoryResult(recordType: PurgeRecordTypeValue): PurgeCategoryRes
     parentsDeleted: 0,
     childrenDeleted: 0,
     alreadyAbsent: 0,
+    skippedChanged: 0,
     failed: 0,
     truncated: false,
   }

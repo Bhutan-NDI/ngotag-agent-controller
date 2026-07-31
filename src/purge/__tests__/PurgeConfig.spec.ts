@@ -58,8 +58,18 @@ describe('buildPurgeConfig — fail-safe defaults', () => {
   test('returns undefined unless PURGE_ENABLED is the literal "true"', () => {
     expect(withEnv({}, buildPurgeConfig)).toBeUndefined()
     expect(withEnv({ PURGE_ENABLED: 'yes', PURGE_CRON_ENABLED: 'true' }, buildPurgeConfig)).toBeUndefined()
-    // Enabled but with no flow selected is also nothing to do.
-    expect(withEnv({ PURGE_ENABLED: 'true' }, buildPurgeConfig)).toBeUndefined()
+  })
+
+  test('PURGE_ENABLED=true with no flow selected fails loudly rather than silently doing nothing', () => {
+    // Previously this returned undefined, and cliAgent only validates a truthy config — so the
+    // validator's own "enable at least one mode" error was unreachable and a typo in
+    // PURGE_CRON_ENABLED produced a purge that never ran while the master switch reported it on.
+    expect(() => withEnv({ PURGE_ENABLED: 'true' }, buildPurgeConfig)).toThrow(
+      /neither PURGE_NATS_ENABLED nor PURGE_CRON_ENABLED/,
+    )
+    expect(() => withEnv({ PURGE_ENABLED: 'true', PURGE_CRON_ENABLED: 'ture' }, buildPurgeConfig)).toThrow(
+      /neither PURGE_NATS_ENABLED nor PURGE_CRON_ENABLED/,
+    )
   })
 
   test('an enabled cron purge deletes — dry-run is an opt-in census mode, not the default', () => {

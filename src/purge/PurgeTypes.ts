@@ -117,7 +117,16 @@ export function buildPurgeConfig(): PurgeConfig | undefined {
   const natsEnabled = process.env.PURGE_NATS_ENABLED === 'true'
   const cronEnabled = process.env.PURGE_CRON_ENABLED === 'true'
 
-  if (!natsEnabled && !cronEnabled) return undefined
+  if (!natsEnabled && !cronEnabled) {
+    // Fail loudly rather than returning undefined. cliAgent only validates a truthy config, so
+    // returning undefined here made the validator's own "enable at least one mode" error dead code
+    // and turned a typo in PURGE_CRON_ENABLED into a purge that silently never runs while the master
+    // switch reports it as on.
+    throw new Error(
+      '[Purge] PURGE_ENABLED=true but neither PURGE_NATS_ENABLED nor PURGE_CRON_ENABLED is set to "true". ' +
+        'Enable the cron flow with PURGE_CRON_ENABLED=true, or set PURGE_ENABLED=false to disable purging.',
+    )
+  }
 
   return {
     natsConfig: {

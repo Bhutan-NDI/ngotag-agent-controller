@@ -10,13 +10,6 @@ import { MIN_ABANDONED_TTL_SECONDS } from './PurgeTypes'
 export async function validatePurgeConfig(config: PurgeConfig): Promise<void> {
   const { natsConfig, cronConfig } = config
 
-  if (!natsConfig.enabled && !cronConfig.enabled) {
-    throw new Error(
-      '[Purge] PURGE_ENABLED=true but neither PURGE_NATS_ENABLED nor PURGE_CRON_ENABLED is set to true. ' +
-        'Enable at least one mode.',
-    )
-  }
-
   if (cronConfig.enabled && !cron.validate(cronConfig.cronSchedule)) {
     // node-cron does validate, but only when the task is created, and it fails with a bare
     // "Cannot read properties of undefined (reading 'replace')" that names neither the purge nor the

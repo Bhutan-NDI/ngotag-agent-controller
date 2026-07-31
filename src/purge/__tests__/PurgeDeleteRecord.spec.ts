@@ -13,8 +13,8 @@
  */
 import { jest } from '@jest/globals'
 
-const { InjectionSymbols, RecordNotFoundError, W3cCredentialRepository } = await import('@credo-ts/core')
-const { DidCommCredentialExchangeRecord, DidCommMessageRecord, DidCommOutOfBandRecord, DidCommProofExchangeRecord } =
+const { RecordNotFoundError, W3cCredentialRepository } = await import('@credo-ts/core')
+const { DidCommCredentialExchangeRepository, DidCommMessageRepository, DidCommProofExchangeRepository } =
   await import('@credo-ts/didcomm')
 const { OpenId4VcIssuanceSessionRepository, OpenId4VcVerificationSessionRepository } =
   await import('@credo-ts/openid4vc')
@@ -23,6 +23,7 @@ const {
   deleteDidCommMessageChildren,
   deletePurgeRecord,
   findDidCommMessageChildIds,
+  findPurgeRecordById,
 } = await import('../PurgeDeleteRecord')
 const { PurgeRecordType } = await import('../PurgeTypes')
 
@@ -32,52 +33,36 @@ const { PurgeRecordType } = await import('../PurgeTypes')
 
 const AGENT_CONTEXT = { contextCorrelationId: 'tenant-abc' }
 
-interface Harness {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  agent: any
-  storageService: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    deleteById: jest.Mock<any>
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    findByQuery: jest.Mock<any>
-  }
-  protocolApis: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    credentialsDeleteById: jest.Mock<any>
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    proofsDeleteById: jest.Mock<any>
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    oobDeleteById: jest.Mock<any>
-  }
-  repositories: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    issuanceDeleteById: jest.Mock<any>
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    verificationDeleteById: jest.Mock<any>
-    /** The holder's stored JSON-LD credential. Must never be reached. */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    w3cDelete: jest.Mock<any>
-  }
-  /** Tokens the code under test asked the container for. */
-  resolved: unknown[]
-}
+function makeHarness(messages: Array<{ id: string }> = []) {
+  const calls: Array<{ repo: string; op: string; id: string }> = []
+  const resolved: unknown[] = []
+  const deleteErrors: Record<string, Error> = {}
 
-function makeHarness(messages: Array<{ id: string }> = []): Harness {
-  const storageService = {
-    deleteById: jest.fn(async () => {}),
+  const repo = (name: string) => ({
+    deleteById: jest.fn(async (_ctx: unknown, id: string) => {
+      const error = deleteErrors[id]
+      if (error) throw error
+      calls.push({ repo: name, op: 'delete', id })
+    }),
+    findById: jest.fn(async (_ctx: unknown, id: string) => ({ id })),
     findByQuery: jest.fn(async () => messages),
-  }
+  })
+
+  const credentials = repo('credentialExchange')
+  const proofs = repo('proofExchange')
+  const didcommMessages = repo('didcommMessage')
+  const issuance = repo('oid4vcIssuance')
+  const verification = repo('oid4vcVerification')
+  const w3c = repo('w3cCredential')
+
+  // Protocol-layer entry points. Reaching ANY of these is the bug this file exists to prevent.
   const protocolApis = {
     credentialsDeleteById: jest.fn(async () => {}),
     proofsDeleteById: jest.fn(async () => {}),
-    oobDeleteById: jest.fn(async () => {}),
   }
-  const repositories = {
-    issuanceDeleteById: jest.fn(async () => {}),
-    verificationDeleteById: jest.fn(async () => {}),
-    w3cDelete: jest.fn(async () => {}),
-  }
-  const resolved: unknown[] = []
+  // The OOB API is the one exception: it must be used, for the mediator routing cleanup.
+  const oobDeleteById = jest.fn(async () => {})
+  const oobFindById = jest.fn(async (id: string) => ({ id }))
 
   const agent = {
     context: AGENT_CONTEXT,
@@ -85,10 +70,12 @@ function makeHarness(messages: Array<{ id: string }> = []): Harness {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       resolve: (token: any) => {
         resolved.push(token)
-        if (token === InjectionSymbols.StorageService) return storageService
-        if (token === OpenId4VcIssuanceSessionRepository) return { deleteById: repositories.issuanceDeleteById }
-        if (token === OpenId4VcVerificationSessionRepository) return { deleteById: repositories.verificationDeleteById }
-        if (token === W3cCredentialRepository) return { delete: repositories.w3cDelete, findById: jest.fn() }
+        if (token === DidCommCredentialExchangeRepository) return credentials
+        if (token === DidCommProofExchangeRepository) return proofs
+        if (token === DidCommMessageRepository) return didcommMessages
+        if (token === OpenId4VcIssuanceSessionRepository) return issuance
+        if (token === OpenId4VcVerificationSessionRepository) return verification
+        if (token === W3cCredentialRepository) return w3c
         throw new Error(`unexpected token: ${String(token)}`)
       },
     },
@@ -96,130 +83,111 @@ function makeHarness(messages: Array<{ id: string }> = []): Harness {
       didcomm: {
         credentials: { deleteById: protocolApis.credentialsDeleteById },
         proofs: { deleteById: protocolApis.proofsDeleteById },
-        oob: { deleteById: protocolApis.oobDeleteById },
+        oob: { deleteById: oobDeleteById, findById: oobFindById },
       },
     },
   }
 
-  return { agent, storageService, protocolApis, repositories, resolved }
+  return {
+    agent,
+    calls,
+    resolved,
+    deleteErrors,
+    repos: { credentials, proofs, didcommMessages, issuance, verification, w3c },
+    protocolApis,
+    oobDeleteById,
+    oobFindById,
+  }
 }
 
-function expectNoProtocolDeletes(harness: Harness) {
+type Harness = ReturnType<typeof makeHarness>
+
+function expectNoProtocolCredentialDeletes(harness: Harness) {
   expect(harness.protocolApis.credentialsDeleteById).not.toHaveBeenCalled()
   expect(harness.protocolApis.proofsDeleteById).not.toHaveBeenCalled()
-  expect(harness.protocolApis.oobDeleteById).not.toHaveBeenCalled()
+  expect(harness.repos.w3c.deleteById).not.toHaveBeenCalled()
+  expect(harness.resolved).not.toContain(W3cCredentialRepository)
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('deletePurgeRecord — storage-level deletes only (§4.1)', () => {
-  test('credential exchange: deletes the exchange record via StorageService, never via the protocol API', async () => {
-    const harness = makeHarness()
-
-    await deletePurgeRecord(harness.agent, PurgeRecordType.DIDCOMM_CREDENTIAL, 'cred-exchange-1')
-
-    expect(harness.storageService.deleteById).toHaveBeenCalledTimes(1)
-    expect(harness.storageService.deleteById).toHaveBeenCalledWith(
-      AGENT_CONTEXT,
-      DidCommCredentialExchangeRecord,
-      'cred-exchange-1',
-    )
-
-    // The whole point of the fix: the protocol delete (which cascades into the stored credential)
-    // must never be reached.
-    expectNoProtocolDeletes(harness)
-  })
-
-  test('credential exchange: no W3c / AnonCreds credential record is ever deleted', async () => {
-    const harness = makeHarness()
-
-    await deletePurgeRecord(harness.agent, PurgeRecordType.DIDCOMM_CREDENTIAL, 'cred-exchange-1')
-
-    // Only ONE delete happened, and it named the exchange record class. Any cascade into a stored
-    // credential would have to go through either an extra storage delete with a different record
-    // class, or the protocol API — both of which are asserted absent.
-    const deletedClasses = harness.storageService.deleteById.mock.calls.map((call) => call[1])
-    expect(deletedClasses).toEqual([DidCommCredentialExchangeRecord])
-    for (const recordClass of deletedClasses) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect((recordClass as any).type).toBe('CredentialRecord')
-    }
-    expectNoProtocolDeletes(harness)
-  })
-
+describe('deletePurgeRecord — parent-only, never the credential-cascading protocol layer (§4.1)', () => {
   test('JSON-LD over DIDComm: the holder\u2019s stored W3cCredentialRecord is never reached', async () => {
-    // This is the exact production stack (JSON-LD credentials over DIDComm, holder cloud wallet) and
-    // the exact chain the old protocol delete followed:
-    //
+    // The exact production stack, and the exact chain the old protocol delete followed:
     //   credentials.deleteById(id)
-    //     -> DidCommCredentialV2Protocol.delete()            deleteAssociatedCredentials ?? true
-    //     -> getFormatServiceForRecordType('w3c')            FIRST format service claiming 'w3c',
-    //                                                        which in cliAgent.ts is legacyIndy,
-    //                                                        NOT the JSON-LD service
+    //     -> DidCommCredentialV2Protocol.delete()        deleteAssociatedCredentials ?? true
+    //     -> getFormatServiceForRecordType('w3c')        FIRST service claiming 'w3c', which in
+    //                                                    cliAgent.ts is legacyIndy, NOT jsonLd
     //     -> AnonCredsRsHolderService.deleteCredential(id)
-    //     -> W3cCredentialRepository.findById(id) hits       the binding IS a W3cCredentialRecord id
-    //     -> W3cCredentialRepository.delete(...)             holder's credential destroyed
-    //
-    // Note the JSON-LD format service's own deleteCredentialById() throws 'Not implemented', so it
-    // would have been harmless — but it never runs, because legacyIndy is registered first and also
-    // declares credentialRecordType 'w3c'. There was no accidental protection.
+    //     -> W3cCredentialRepository.findById(id) hits   the binding IS a W3cCredentialRecord id
+    //     -> W3cCredentialRepository.delete(...)         holder's credential destroyed
     const harness = makeHarness()
-    // The binding the exchange record would carry for an issued JSON-LD credential.
-    const exchangeRecordId = 'cred-exchange-1'
 
-    await deletePurgeRecord(harness.agent, PurgeRecordType.DIDCOMM_CREDENTIAL, exchangeRecordId)
+    await deletePurgeRecord(harness.agent as never, PurgeRecordType.DIDCOMM_CREDENTIAL, 'cred-exchange-1')
 
-    // The stored credential's repository is never even asked for, let alone called.
-    expect(harness.resolved).not.toContain(W3cCredentialRepository)
-    expect(harness.repositories.w3cDelete).not.toHaveBeenCalled()
-    // And the protocol entry point that starts the chain is never invoked.
-    expectNoProtocolDeletes(harness)
-    // Exactly one delete, naming the exchange record class.
-    expect(harness.storageService.deleteById.mock.calls).toEqual([
-      [AGENT_CONTEXT, DidCommCredentialExchangeRecord, exchangeRecordId],
-    ])
+    expect(harness.calls).toEqual([{ repo: 'credentialExchange', op: 'delete', id: 'cred-exchange-1' }])
+    expectNoProtocolCredentialDeletes(harness)
   })
 
-  test('proof exchange: deletes via StorageService with the proof record class', async () => {
+  test('credential and proof exchanges go through their repositories, which emit lifecycle events', async () => {
+    // Repository.deleteById is storageService.deleteById plus a RecordDeleted emit — no extra read
+    // and no cascade — so it keeps the safety property while preserving the event every other Credo
+    // delete path produces.
     const harness = makeHarness()
 
-    await deletePurgeRecord(harness.agent, PurgeRecordType.DIDCOMM_PROOF, 'proof-1')
+    await deletePurgeRecord(harness.agent as never, PurgeRecordType.DIDCOMM_CREDENTIAL, 'cred-1')
+    await deletePurgeRecord(harness.agent as never, PurgeRecordType.DIDCOMM_PROOF, 'proof-1')
 
-    expect(harness.storageService.deleteById).toHaveBeenCalledWith(AGENT_CONTEXT, DidCommProofExchangeRecord, 'proof-1')
-    expectNoProtocolDeletes(harness)
+    expect(harness.repos.credentials.deleteById).toHaveBeenCalledWith(AGENT_CONTEXT, 'cred-1')
+    expect(harness.repos.proofs.deleteById).toHaveBeenCalledWith(AGENT_CONTEXT, 'proof-1')
+    expectNoProtocolCredentialDeletes(harness)
   })
 
-  test('OOB: deletes via StorageService with the OOB record class', async () => {
+  test('OOB uses its API so mediator routing is cleaned up, not the repository', async () => {
+    // DidCommOutOfBandApi.deleteById deregisters the invitation's recipient keys from the mediator
+    // when the record has a mediatorId, carries only inline services, and has no related connection.
+    // The 7-day await-response track is exactly that case, and create-request-oob routes through
+    // mediationRecipient.getRouting() — so a raw delete would leak keylist entries at the mediator
+    // for every purged invitation. Unlike the credential API, this one cascades nothing else.
     const harness = makeHarness()
 
-    await deletePurgeRecord(harness.agent, PurgeRecordType.DIDCOMM_OOB, 'oob-1')
+    await deletePurgeRecord(harness.agent as never, PurgeRecordType.DIDCOMM_OOB, 'oob-1')
 
-    expect(harness.storageService.deleteById).toHaveBeenCalledWith(AGENT_CONTEXT, DidCommOutOfBandRecord, 'oob-1')
-    expectNoProtocolDeletes(harness)
+    expect(harness.oobDeleteById).toHaveBeenCalledWith('oob-1')
+    expect(harness.calls).toEqual([])
   })
 
-  test('OID4VC issuance/verification: stay on their repositories, which are already parent-only', async () => {
+  test('OID4VC issuance/verification stay on their repositories', async () => {
     const harness = makeHarness()
 
-    await deletePurgeRecord(harness.agent, PurgeRecordType.OID4VC_ISSUANCE, 'issuance-1')
-    await deletePurgeRecord(harness.agent, PurgeRecordType.OID4VC_VERIFICATION, 'verification-1')
+    await deletePurgeRecord(harness.agent as never, PurgeRecordType.OID4VC_ISSUANCE, 'issuance-1')
+    await deletePurgeRecord(harness.agent as never, PurgeRecordType.OID4VC_VERIFICATION, 'verification-1')
 
-    expect(harness.repositories.issuanceDeleteById).toHaveBeenCalledWith(AGENT_CONTEXT, 'issuance-1')
-    expect(harness.repositories.verificationDeleteById).toHaveBeenCalledWith(AGENT_CONTEXT, 'verification-1')
-    expect(harness.storageService.deleteById).not.toHaveBeenCalled()
+    expect(harness.repos.issuance.deleteById).toHaveBeenCalledWith(AGENT_CONTEXT, 'issuance-1')
+    expect(harness.repos.verification.deleteById).toHaveBeenCalledWith(AGENT_CONTEXT, 'verification-1')
   })
 
   test('propagates RecordNotFoundError so callers can treat "already gone" as idempotent success', async () => {
     const harness = makeHarness()
-    harness.storageService.deleteById.mockImplementation(async () => {
-      throw new RecordNotFoundError('gone', { recordType: 'CredentialRecord' })
-    })
+    harness.deleteErrors['cred-1'] = new RecordNotFoundError('gone', { recordType: 'CredentialRecord' })
 
-    await expect(deletePurgeRecord(harness.agent, PurgeRecordType.DIDCOMM_CREDENTIAL, 'cred-1')).rejects.toBeInstanceOf(
-      RecordNotFoundError,
-    )
+    await expect(
+      deletePurgeRecord(harness.agent as never, PurgeRecordType.DIDCOMM_CREDENTIAL, 'cred-1'),
+    ).rejects.toBeInstanceOf(RecordNotFoundError)
+  })
+})
+
+describe('findPurgeRecordById — re-read before deleting', () => {
+  test('reads through the same repository / API used for deletion', async () => {
+    const harness = makeHarness()
+
+    await findPurgeRecordById(harness.agent as never, PurgeRecordType.DIDCOMM_PROOF, 'proof-1')
+    await findPurgeRecordById(harness.agent as never, PurgeRecordType.DIDCOMM_OOB, 'oob-1')
+
+    expect(harness.repos.proofs.findById).toHaveBeenCalledWith(AGENT_CONTEXT, 'proof-1')
+    expect(harness.oobFindById).toHaveBeenCalledWith('oob-1')
   })
 })
 
@@ -227,8 +195,7 @@ describe('DidCommMessageRecord cascade', () => {
   test('only credential and proof exchanges own message children', () => {
     expect(RECORD_TYPES_WITH_DIDCOMM_MESSAGE_CHILDREN.has(PurgeRecordType.DIDCOMM_CREDENTIAL)).toBe(true)
     expect(RECORD_TYPES_WITH_DIDCOMM_MESSAGE_CHILDREN.has(PurgeRecordType.DIDCOMM_PROOF)).toBe(true)
-    // OOB carries its invitation inline; the OID4VC sessions are not DIDComm at all. Querying for
-    // children there would be a wasted round-trip per record on the largest category.
+    // OOB carries its invitation inline; the OID4VC sessions are not DIDComm at all.
     expect(RECORD_TYPES_WITH_DIDCOMM_MESSAGE_CHILDREN.has(PurgeRecordType.DIDCOMM_OOB)).toBe(false)
     expect(RECORD_TYPES_WITH_DIDCOMM_MESSAGE_CHILDREN.has(PurgeRecordType.OID4VC_ISSUANCE)).toBe(false)
     expect(RECORD_TYPES_WITH_DIDCOMM_MESSAGE_CHILDREN.has(PurgeRecordType.OID4VC_VERIFICATION)).toBe(false)
@@ -237,22 +204,40 @@ describe('DidCommMessageRecord cascade', () => {
   test('children are looked up by the associatedRecordId tag', async () => {
     const harness = makeHarness([{ id: 'msg-1' }, { id: 'msg-2' }])
 
-    const childIds = await findDidCommMessageChildIds(harness.agent, 'cred-exchange-1')
+    const childIds = await findDidCommMessageChildIds(harness.agent as never, 'cred-exchange-1')
 
-    expect(harness.storageService.findByQuery).toHaveBeenCalledWith(AGENT_CONTEXT, DidCommMessageRecord, {
+    expect(harness.repos.didcommMessages.findByQuery).toHaveBeenCalledWith(AGENT_CONTEXT, {
       associatedRecordId: 'cred-exchange-1',
     })
     expect(childIds).toEqual(['msg-1', 'msg-2'])
   })
 
-  test('children are deleted as DidCommMessageRecords', async () => {
+  test('children are deleted through the message repository', async () => {
     const harness = makeHarness()
 
-    await deleteDidCommMessageChildren(harness.agent, ['msg-1', 'msg-2'])
+    const removed = await deleteDidCommMessageChildren(harness.agent as never, ['msg-1', 'msg-2'])
 
-    expect(harness.storageService.deleteById.mock.calls).toEqual([
-      [AGENT_CONTEXT, DidCommMessageRecord, 'msg-1'],
-      [AGENT_CONTEXT, DidCommMessageRecord, 'msg-2'],
+    expect(removed).toBe(2)
+    expect(harness.calls).toEqual([
+      { repo: 'didcommMessage', op: 'delete', id: 'msg-1' },
+      { repo: 'didcommMessage', op: 'delete', id: 'msg-2' },
     ])
+  })
+
+  test('an already-gone child is counted as removed and does not abort the cascade', async () => {
+    const harness = makeHarness()
+    harness.deleteErrors['msg-1'] = new RecordNotFoundError('gone', { recordType: 'DidCommMessageRecord' })
+
+    const removed = await deleteDidCommMessageChildren(harness.agent as never, ['msg-1', 'msg-2'])
+
+    expect(removed).toBe(2)
+    expect(harness.calls).toEqual([{ repo: 'didcommMessage', op: 'delete', id: 'msg-2' }])
+  })
+
+  test('a real child failure propagates so the parent is left in place', async () => {
+    const harness = makeHarness()
+    harness.deleteErrors['msg-1'] = new Error('storage locked')
+
+    await expect(deleteDidCommMessageChildren(harness.agent as never, ['msg-1'])).rejects.toThrow('storage locked')
   })
 })

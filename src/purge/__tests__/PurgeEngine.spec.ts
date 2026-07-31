@@ -17,8 +17,10 @@
  */
 import { jest } from '@jest/globals'
 
-const { InjectionSymbols, RecordNotFoundError } = await import('@credo-ts/core')
+const { RecordNotFoundError } = await import('@credo-ts/core')
 const { DidCommCredentialState, DidCommProofState } = await import('@credo-ts/didcomm')
+const { DidCommCredentialExchangeRepository, DidCommMessageRepository, DidCommProofExchangeRepository } =
+  await import('@credo-ts/didcomm')
 const { OpenId4VcIssuanceSessionRepository, OpenId4VcVerificationSessionRepository } =
   await import('@credo-ts/openid4vc')
 const { buildScanPlans, purgeTenant } = await import('../PurgeEngine')
@@ -82,7 +84,11 @@ function makeAgent(options: AgentOptions = {}) {
   // (or an offset that fails to advance) would loop forever here instead of being caught.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const store: Record<string, any[]> = {}
-  for (const [state, records] of Object.entries(recordsByState)) store[state] = [...records]
+  // Stamp `state` from the key. Real records carry it, and the engine re-reads each record and
+  // re-checks its state immediately before deleting, so the fixtures must carry it too.
+  for (const [state, records] of Object.entries(recordsByState)) {
+    store[state] = records.map((record) => ({ state, ...record }))
+  }
   const childStore: Record<string, Array<{ id: string }>> = {}
   for (const [parentId, msgs] of Object.entries(children)) childStore[parentId] = [...msgs]
 
@@ -97,18 +103,48 @@ function makeAgent(options: AgentOptions = {}) {
     }
   }
 
-  const storageService = {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    findByQuery: jest.fn(
-      async (_ctx: any, _recordClass: any, query: any) => childStore[query.associatedRecordId] ?? [],
-    ),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    deleteById: jest.fn(async (_ctx: any, _recordClass: any, id: string) => {
+  // Repository-shaped mocks over the mutable store. `deleteById` removes, `findById` re-reads —
+  // the engine re-reads every record immediately before deleting it, so the mock has to reflect
+  // live mutations for the state-change tests to mean anything.
+  const findRecord = (id: string) => {
+    for (const records of Object.values(store)) {
+      const found = records.find((record) => record.id === id)
+      if (found) return found
+    }
+    return null
+  }
+
+  const exchangeRepo = () => ({
+    deleteById: jest.fn(async (_ctx: unknown, id: string) => {
       const error = deleteErrors[id]
       if (error) throw error
       deletedIds.push(id)
       removeById(id)
     }),
+    findById: jest.fn(async (_ctx: unknown, id: string) => findRecord(id)),
+  })
+  const credentialRepo = exchangeRepo()
+  const proofRepo = exchangeRepo()
+
+  const messageRepo = {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    findByQuery: jest.fn(async (_ctx: unknown, query: any) => childStore[query.associatedRecordId] ?? []),
+    deleteById: jest.fn(async (_ctx: unknown, id: string) => {
+      const error = deleteErrors[id]
+      if (error) throw error
+      deletedIds.push(id)
+      removeById(id)
+    }),
+  }
+
+  const oobApi = {
+    deleteById: jest.fn(async (id: string) => {
+      const error = deleteErrors[id]
+      if (error) throw error
+      deletedIds.push(id)
+      removeById(id)
+    }),
+    findById: jest.fn(async (id: string) => findRecord(id)),
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -126,9 +162,15 @@ function makeAgent(options: AgentOptions = {}) {
     dependencyManager: {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       resolve: (token: any) => {
-        if (token === InjectionSymbols.StorageService) return storageService
+        if (token === DidCommCredentialExchangeRepository) return credentialRepo
+        if (token === DidCommProofExchangeRepository) return proofRepo
+        if (token === DidCommMessageRepository) return messageRepo
         if (token === OpenId4VcIssuanceSessionRepository || token === OpenId4VcVerificationSessionRepository) {
-          return { findByQuery: jest.fn(async () => []), deleteById: jest.fn(async () => {}) }
+          return {
+            findByQuery: jest.fn(async () => []),
+            deleteById: jest.fn(async () => {}),
+            findById: jest.fn(async () => null),
+          }
         }
         throw new Error(`unexpected token: ${String(token)}`)
       },
@@ -137,12 +179,12 @@ function makeAgent(options: AgentOptions = {}) {
       didcomm: {
         credentials: { findAllByQuery: jest.fn(scanFor('credentials')) },
         proofs: { findAllByQuery: jest.fn(scanFor('proofs')) },
-        oob: { findAllByQuery: jest.fn(scanFor('oob')) },
+        oob: Object.assign(oobApi, { findAllByQuery: jest.fn(scanFor('oob')) }),
       },
     },
   }
 
-  return { agent, logger, storageService, deletedIds, queriedStates }
+  return { agent, logger, store, deletedIds, queriedStates }
 }
 
 // ---------------------------------------------------------------------------
@@ -335,6 +377,66 @@ describe('purgeTenant — DidCommMessageRecord cascade', () => {
     expect(result.parentsDeleted).toBe(1)
   })
 
+  test('a record that changes state between scan and delete is left alone', async () => {
+    // Requested in review. The page is a snapshot and records are processed sequentially behind a
+    // throttle, so a holder can answer a long-abandoned proof request while it waits its turn.
+    // Deleting on the stale snapshot would take out a flow that had just become live again.
+    const { agent, deletedIds, logger, store } = makeAgent({
+      recordsByState: {
+        'request-sent': [
+          { id: 'answered', updatedAt: daysAgo(60) },
+          { id: 'still-dead', updatedAt: daysAgo(60) },
+        ],
+      },
+    })
+
+    // Simulate the holder responding after the scan but before this record's turn: the exchange
+    // advances to presentation-received and gets a fresh updatedAt.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const proofRepo = agent.dependencyManager.resolve(DidCommProofExchangeRepository) as any
+    const realFindById = proofRepo.findById
+    proofRepo.findById = jest.fn(async (ctx: unknown, id: string) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const record = await (realFindById as any)(ctx, id)
+      if (id === 'answered') return { ...record, state: 'presentation-received', updatedAt: new Date() }
+      return record
+    }) as never
+
+    const result = await purgeTenant(
+      agent as never,
+      'tenant-abc',
+      makeConfig({ recordTypes: [PurgeRecordType.DIDCOMM_PROOF] }),
+      'run-1',
+    )
+
+    // The revived exchange survives; the genuinely dead one is still purged.
+    expect(deletedIds).toEqual(['still-dead'])
+    expect(store['request-sent'].map((record) => record.id)).toEqual(['answered'])
+    const proofs = result.categories.find((category) => category.recordType === PurgeRecordType.DIDCOMM_PROOF)!
+    expect(proofs.skippedChanged).toBe(1)
+    expect(proofs.parentsDeleted).toBe(1)
+    expect(proofs.failed).toBe(0)
+    expect(logger.debug).toHaveBeenCalledWith(
+      '[Purge] Record changed since the scan — leaving it alone',
+      expect.objectContaining({ recordId: 'answered', state: 'presentation-received' }),
+    )
+  })
+
+  test('a record deleted by someone else between scan and delete counts as already absent', async () => {
+    const { agent, deletedIds } = makeAgent({
+      recordsByState: { done: [{ id: 'vanished', updatedAt: daysAgo(60) }] },
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const credentialRepo = agent.dependencyManager.resolve(DidCommCredentialExchangeRepository) as any
+    credentialRepo.findById = jest.fn(async () => null) as never
+
+    const result = await purgeTenant(agent as never, 'tenant-abc', makeConfig(), 'run-1')
+
+    expect(deletedIds).toEqual([])
+    expect(result.categories[0].alreadyAbsent).toBe(1)
+    expect(result.failed).toBe(0)
+  })
+
   test('an already-gone child does not abort the cascade or block the parent', async () => {
     // Regression: RecordNotFoundError from a CHILD used to escape the cascade and be handled as
     // "parent already absent" — so the parent survived while being reported as successfully
@@ -383,14 +485,13 @@ describe('purgeTenant — DidCommMessageRecord cascade', () => {
 
 describe('purgeTenant — modes and guards', () => {
   test('dry-run deletes nothing but still reports the census', async () => {
-    const { agent, deletedIds, storageService } = makeAgent({
+    const { agent, deletedIds } = makeAgent({
       recordsByState: { done: [{ id: 'cred-1', updatedAt: daysAgo(60) }] },
       children: { 'cred-1': [{ id: 'msg-1' }, { id: 'msg-2' }] },
     })
 
     const result = await purgeTenant(agent as never, 'tenant-abc', makeConfig({ dryRun: true }), 'run-1')
 
-    expect(storageService.deleteById).not.toHaveBeenCalled()
     expect(deletedIds).toEqual([])
     // Counts mirror what a live run would remove, so a dry-run census is directly comparable.
     expect(result.eligible).toBe(1)
@@ -459,15 +560,19 @@ describe('purgeTenant — modes and guards', () => {
   })
 
   test('the per-tenant time budget truncates the run instead of overrunning', async () => {
-    const { agent, logger, deletedIds } = makeAgent()
+    const { agent, logger, deletedIds } = makeAgent({
+      recordsByState: { done: [{ id: 'cred-1', updatedAt: daysAgo(60) }] },
+    })
 
-    // The budget is checked at plan and batch boundaries, so make the first scan outlast it: the
-    // credential category has three state plans, and the second one must find the budget spent.
+    // The budget is checked on plan entry and between pages, so make the first scan outlast it: the
+    // credential category has three state plans, and the second must find the budget already spent.
     let scanCount = 0
-    agent.modules.didcomm.credentials.findAllByQuery = jest.fn(async () => {
+    const inner = agent.modules.didcomm.credentials.findAllByQuery
+    agent.modules.didcomm.credentials.findAllByQuery = jest.fn(async (query, queryOptions) => {
       scanCount++
       await new Promise((resolve) => setTimeout(resolve, 20))
-      return [{ id: `cred-${scanCount}`, updatedAt: daysAgo(60) }]
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (inner as any)(query, queryOptions)
     }) as never
 
     const result = await purgeTenant(agent as never, 'tenant-abc', makeConfig({ timeBudgetMs: 10 }), 'run-1')

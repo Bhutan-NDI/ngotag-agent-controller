@@ -7,7 +7,12 @@ import { RecordNotFoundError } from '@credo-ts/core'
 import { StringCodec } from 'nats'
 
 import { PURGE_CONSUMER_MAX_DELIVER, PURGE_WORKER_RESTART_DELAY_MS } from './PurgeConstants'
-import { deletePurgeRecord } from './PurgeDeleteRecord'
+import {
+  RECORD_TYPES_WITH_DIDCOMM_MESSAGE_CHILDREN,
+  deleteDidCommMessageChildren,
+  deletePurgeRecord,
+  findDidCommMessageChildIds,
+} from './PurgeDeleteRecord'
 import { sendPurgeWebhook, PurgeDeletionStatus } from './PurgeWebhook'
 
 const sc = StringCodec()
@@ -16,11 +21,11 @@ const sc = StringCodec()
  * @deprecated Consumer for the dormant NATS schedule-at-create flow. See `NatsPurgeScheduler` for
  * why that flow is deprecated, and INTEGRATION-PLAN-develop.md §4.4.
  *
- * Note what this worker does *not* do: it deletes whatever record id its job names, without
- * re-reading the record's state. It now goes through the storage-level delete
- * (`deletePurgeRecord`), so a purge here no longer destroys the stored holder credential — but it is
- * still state-blind, and it does not cascade `DidCommMessageRecord` children, so enabling this flow
- * leaves orphaned messages that only `credo-data-purge`'s orphan sweep can clean up.
+ * It shares the cron path's deletion primitives, so a purge here neither destroys the stored holder
+ * credential nor orphans DIDComm messages — the children-before-parent cascade runs here too. What
+ * it still does not do is re-read the record's state before deleting: the job names a record id
+ * fixed at creation time, so this flow remains state-blind and can delete an exchange that is still
+ * in flight. That is the reason it is deprecated and gated behind PURGE_NATS_ACK_STATE_BLIND.
  */
 export class PurgeWorker {
   private recordType: PurgeRecordType
@@ -59,6 +64,19 @@ export class PurgeWorker {
     }
   }
 
+  /**
+   * Children-before-parent, matching the cron engine. `deletePurgeRecord` is parent-only, so without
+   * this every credential/proof purged through the NATS path would leave its `DidCommMessageRecord`s
+   * permanently orphaned — findable only by a full-wallet sweep that the steady-state job never runs.
+   */
+  private async deleteWithCascade(agent: Agent, recordId: string): Promise<void> {
+    if (RECORD_TYPES_WITH_DIDCOMM_MESSAGE_CHILDREN.has(this.recordType)) {
+      const childIds = await findDidCommMessageChildIds(agent, recordId)
+      if (childIds.length > 0) await deleteDidCommMessageChildren(agent, childIds)
+    }
+    await deletePurgeRecord(agent, this.recordType, recordId)
+  }
+
   private async processMessage(msg: any, agent: Agent): Promise<void> {
     let job: PurgeJob | undefined
 
@@ -89,10 +107,10 @@ export class PurgeWorker {
     try {
       if (agentMode === 'shared') {
         await (agent as any).modules.tenants.withTenantAgent({ tenantId }, async (tenantAgent: Agent) => {
-          await deletePurgeRecord(tenantAgent, this.recordType, recordId)
+          await this.deleteWithCascade(tenantAgent, recordId)
         })
       } else {
-        await deletePurgeRecord(agent, this.recordType, recordId)
+        await this.deleteWithCascade(agent, recordId)
       }
 
       logger.info('[Purge] Record deleted', { recordId, recordType, tenantId })
