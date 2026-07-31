@@ -53,7 +53,17 @@ export interface PurgeCronConfig {
   ttlSeconds: number
   cronSchedule: string
   recordTypes: PurgeRecordType[]
-  /** When true, scan and report but never delete. Defaults to true — deletion is opt-in. */
+  /**
+   * When true, scan and report a census but never delete. Opt-in (default false).
+   *
+   * Not the default, unlike `credo-data-purge`: that tool's dry-run default is safe because an
+   * operator reads the census and immediately re-runs live, whereas a cron job silently doing
+   * nothing while looking enabled means unbounded storage growth found weeks later. What keeps this
+   * job safe is structural — storage-level deletes, state-scoped scans, the retention rules in
+   * `PurgeStates.ts`, and children-before-parent ordering — not the absence of deletion. The mode
+   * exists for the pre-enable census (plan §7 step 5) and for §8's measure-don't-guess decision on
+   * whether the largest tenant needs the batch tool instead.
+   */
   dryRun: boolean
   /** Records processed between throttle sleeps. */
   batchSize: number
@@ -109,9 +119,7 @@ export function buildPurgeConfig(): PurgeConfig | undefined {
       ttlSeconds: parsePositiveInt(process.env.PURGE_CRON_TTL_SECONDS, 'PURGE_CRON_TTL_SECONDS', DEFAULT_TTL_SECONDS),
       cronSchedule: process.env.PURGE_CRON_SCHEDULE || '0 * * * *',
       recordTypes: buildPurgeRecordTypes(),
-      // Fail-safe: only the explicit literal "false" enables deletion. A missing, empty or
-      // misspelled value always falls back to dry-run, matching credo-data-purge's DRY_RUN default.
-      dryRun: process.env.PURGE_CRON_DRY_RUN !== 'false',
+      dryRun: parseStrictBoolean(process.env.PURGE_CRON_DRY_RUN, 'PURGE_CRON_DRY_RUN', false),
       batchSize: parsePositiveInt(process.env.PURGE_CRON_BATCH_SIZE, 'PURGE_CRON_BATCH_SIZE', DEFAULT_BATCH_SIZE),
       throttleMs: parseNonNegativeInt(
         process.env.PURGE_CRON_THROTTLE_MS,
@@ -128,6 +136,21 @@ export function buildPurgeConfig(): PurgeConfig | undefined {
     },
     webhookEnabled: process.env.PURGE_WEBHOOK_ENABLED === 'true',
   }
+}
+
+/**
+ * Strict boolean: accepts only `true`, `false`, or unset/blank. Every other purge boolean is parsed
+ * leniently (`=== 'true'`), which is fine because a typo there lands on the non-destructive side —
+ * the feature simply stays off. `PURGE_CRON_DRY_RUN` is the one flag where lenient parsing would be
+ * asymmetric in the dangerous direction, so a malformed value fails startup rather than silently
+ * picking either mode.
+ */
+function parseStrictBoolean(value: string | undefined, envKey: string, defaultValue: boolean): boolean {
+  const normalized = value?.trim()
+  if (normalized === undefined || normalized === '') return defaultValue
+  if (normalized === 'true') return true
+  if (normalized === 'false') return false
+  throw new Error(`[Purge] ${envKey} must be exactly "true" or "false", got: "${value}"`)
 }
 
 function parsePositiveInt(value: string | undefined, envKey: string, defaultValue: number): number {

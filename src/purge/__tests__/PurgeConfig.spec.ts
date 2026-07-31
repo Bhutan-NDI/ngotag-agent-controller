@@ -62,12 +62,23 @@ describe('buildPurgeConfig — fail-safe defaults', () => {
     expect(withEnv({ PURGE_ENABLED: 'true' }, buildPurgeConfig)).toBeUndefined()
   })
 
-  test('dry-run is the default — only the literal "false" enables deletion', () => {
-    expect(withEnv(CRON_ENABLED, buildPurgeConfig)!.cronConfig.dryRun).toBe(true)
-    // A typo must not silently arm deletion.
-    expect(withEnv({ ...CRON_ENABLED, PURGE_CRON_DRY_RUN: 'no' }, buildPurgeConfig)!.cronConfig.dryRun).toBe(true)
-    expect(withEnv({ ...CRON_ENABLED, PURGE_CRON_DRY_RUN: '' }, buildPurgeConfig)!.cronConfig.dryRun).toBe(true)
+  test('an enabled cron purge deletes — dry-run is an opt-in census mode, not the default', () => {
+    // Enabling the purge is already a two-flag statement of intent; a third flag standing between
+    // "enabled" and "actually deleting" would let the job look healthy while data grew unbounded.
+    expect(withEnv(CRON_ENABLED, buildPurgeConfig)!.cronConfig.dryRun).toBe(false)
+    expect(withEnv({ ...CRON_ENABLED, PURGE_CRON_DRY_RUN: '' }, buildPurgeConfig)!.cronConfig.dryRun).toBe(false)
     expect(withEnv({ ...CRON_ENABLED, PURGE_CRON_DRY_RUN: 'false' }, buildPurgeConfig)!.cronConfig.dryRun).toBe(false)
+    expect(withEnv({ ...CRON_ENABLED, PURGE_CRON_DRY_RUN: 'true' }, buildPurgeConfig)!.cronConfig.dryRun).toBe(true)
+  })
+
+  test('a malformed PURGE_CRON_DRY_RUN fails startup instead of silently picking a mode', () => {
+    // The one boolean whose lenient parsing would be asymmetric in the dangerous direction, so it
+    // is strict in BOTH directions rather than trading one silent failure for another.
+    for (const value of ['no', 'ture', 'TRUE', '1', 'yes']) {
+      expect(() => withEnv({ ...CRON_ENABLED, PURGE_CRON_DRY_RUN: value }, buildPurgeConfig)).toThrow(
+        /PURGE_CRON_DRY_RUN must be exactly "true" or "false"/,
+      )
+    }
   })
 
   test('the deprecated webhook is off unless explicitly enabled', () => {

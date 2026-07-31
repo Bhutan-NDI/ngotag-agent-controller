@@ -51,8 +51,9 @@ export class CronPurgeScheduler {
 
     if (cronConfig.dryRun) {
       agent.config.logger.warn(
-        '[Purge] DRY-RUN mode — the cron purge will scan and report but delete nothing. ' +
-          'Set PURGE_CRON_DRY_RUN=false to enable deletion.',
+        '[Purge] DRY-RUN mode (PURGE_CRON_DRY_RUN=true) — the cron purge will scan and report a census ' +
+          'but delete nothing, so retained data will keep growing. Unset PURGE_CRON_DRY_RUN once the ' +
+          'census has been reviewed.',
       )
     } else {
       agent.config.logger.warn('[Purge] LIVE mode — the cron purge will permanently delete records past TTL.')
