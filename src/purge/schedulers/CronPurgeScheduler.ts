@@ -23,11 +23,14 @@ type DeletionNotifier = (
   recordId: string,
   tenantId: string,
   alreadyAbsent: boolean,
-) => Promise<void>
+) => void
 
 export class CronPurgeScheduler {
   private job: ScheduledTask | null = null
   private isRunning = false
+  /** Rotates which record type each tenant starts with, so a time-budget truncation cannot starve
+   *  the types at the back of a fixed order. */
+  private runCount = 0
 
   public async start(agent: Agent, config: PurgeConfig, webhookUrl: string | undefined): Promise<void> {
     const { cronConfig } = config
@@ -84,6 +87,7 @@ export class CronPurgeScheduler {
     const isShared = typeof (agent as any).modules?.tenants?.getAllTenants === 'function'
     const runId = randomUUID()
     const startedAt = Date.now()
+    const rotation = this.runCount++
 
     logger.info('[Purge] Cron scan started', {
       runId,
@@ -103,7 +107,9 @@ export class CronPurgeScheduler {
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           await (agent as any).modules.tenants.withTenantAgent({ tenantId: tenant.id }, async (tenantAgent: Agent) => {
-            results.push(await purgeTenant(tenantAgent, tenant.id, cronConfig, runId, scopeNotifier(notify, tenant.id)))
+            results.push(
+              await purgeTenant(tenantAgent, tenant.id, cronConfig, runId, scopeNotifier(notify, tenant.id), rotation),
+            )
           })
         } catch (err) {
           // Tenants are isolated: one unopenable wallet must not stop the rest of the run.
@@ -112,7 +118,7 @@ export class CronPurgeScheduler {
         }
       }
     } else {
-      results.push(await purgeTenant(agent, '', cronConfig, runId, scopeNotifier(notify, '')))
+      results.push(await purgeTenant(agent, '', cronConfig, runId, scopeNotifier(notify, ''), rotation))
     }
 
     // Per-run audit record. This — not the deprecated per-record webhook — is the purge's
@@ -138,19 +144,18 @@ export class CronPurgeScheduler {
   private buildDeletionNotifier(agent: Agent, webhookUrl: string | undefined): DeletionNotifier | undefined {
     if (!webhookUrl) return undefined
 
-    return async (recordType, recordId, tenantId, alreadyAbsent) => {
+    return (recordType, recordId, tenantId, alreadyAbsent) => {
       const status = alreadyAbsent ? PurgeDeletionStatus.ALREADY_ABSENT : PurgeDeletionStatus.DELETED
-      try {
-        await sendPurgeWebhook(webhookUrl, recordId, recordType, tenantId, status, agent.config.logger)
-      } catch (err) {
-        // Notification is best-effort — a webhook failure must never make a completed delete look
-        // like a failed purge.
+      // Fire-and-forget. sendPurgeWebhook retries [1s, 5s, 30s] with a 10s per-attempt timeout, so
+      // awaiting it would stall the sequential delete loop by up to ~46s per record against an
+      // endpoint that does not exist. Delivery is best-effort; the per-run audit log is the record.
+      void sendPurgeWebhook(webhookUrl, recordId, recordType, tenantId, status, agent.config.logger).catch((err) => {
         agent.config.logger.warn('[Purge] Webhook delivery failed after deletion', {
           recordId,
           recordType,
           error: (err as Error)?.message,
         })
-      }
+      })
     }
   }
 }

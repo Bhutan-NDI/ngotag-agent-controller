@@ -77,21 +77,47 @@ function makeAgent(options: AgentOptions = {}) {
   const deletedIds: string[] = []
   const queriedStates: Record<string, string[]> = { credentials: [], proofs: [], oob: [] }
 
+  // A mutable in-memory store. The engine pages with {limit, offset} and advances the offset only
+  // past records it did NOT remove, so the mock must actually remove them — otherwise a paging bug
+  // (or an offset that fails to advance) would loop forever here instead of being caught.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const store: Record<string, any[]> = {}
+  for (const [state, records] of Object.entries(recordsByState)) store[state] = [...records]
+  const childStore: Record<string, Array<{ id: string }>> = {}
+  for (const [parentId, msgs] of Object.entries(children)) childStore[parentId] = [...msgs]
+
+  const removeById = (id: string) => {
+    for (const records of Object.values(store)) {
+      const index = records.findIndex((record) => record.id === id)
+      if (index >= 0) return void records.splice(index, 1)
+    }
+    for (const msgs of Object.values(childStore)) {
+      const index = msgs.findIndex((msg) => msg.id === id)
+      if (index >= 0) return void msgs.splice(index, 1)
+    }
+  }
+
   const storageService = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    findByQuery: jest.fn(async (_ctx: any, _recordClass: any, query: any) => children[query.associatedRecordId] ?? []),
+    findByQuery: jest.fn(
+      async (_ctx: any, _recordClass: any, query: any) => childStore[query.associatedRecordId] ?? [],
+    ),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     deleteById: jest.fn(async (_ctx: any, _recordClass: any, id: string) => {
       const error = deleteErrors[id]
       if (error) throw error
       deletedIds.push(id)
+      removeById(id)
     }),
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const scanFor = (bucket: string) => async (query: any) => {
+  const scanFor = (bucket: string) => async (query: any, queryOptions?: { limit?: number; offset?: number }) => {
     queriedStates[bucket].push(query.state)
-    return recordsByState[query.state] ?? []
+    const all = store[query.state] ?? []
+    const offset = queryOptions?.offset ?? 0
+    const limit = queryOptions?.limit ?? all.length
+    return all.slice(offset, offset + limit)
   }
 
   const agent = {
@@ -452,9 +478,49 @@ describe('purgeTenant — modes and guards', () => {
     expect(scanCount).toBe(1)
     expect(deletedIds).toEqual(['cred-1'])
     expect(logger.warn).toHaveBeenCalledWith(
-      '[Purge] Time budget exhausted — tenant will resume on the next run',
-      expect.objectContaining({ timeBudgetMs: 10 }),
+      '[Purge] Time budget exhausted — remaining work continues on subsequent runs',
+      expect.objectContaining({ timeBudgetMs: 10, stoppedAt: PurgeRecordType.DIDCOMM_CREDENTIAL }),
     )
+  })
+
+  test('the time budget is per tenant, so a truncated tenant does not starve the next one', async () => {
+    const config = makeConfig({ timeBudgetMs: 10 })
+
+    // Tenant A burns its whole budget on a slow scan and truncates.
+    const a = makeAgent()
+    a.agent.modules.didcomm.credentials.findAllByQuery = jest.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return [{ id: 'a-1', updatedAt: daysAgo(60) }]
+    }) as never
+    const resultA = await purgeTenant(a.agent as never, 'tenant-a', config, 'run-1')
+    expect(resultA.truncated).toBe(true)
+
+    // Tenant B, processed after it in the same run, still gets a full allowance and does its work.
+    const b = makeAgent({ recordsByState: { done: [{ id: 'b-1', updatedAt: daysAgo(60) }] } })
+    const resultB = await purgeTenant(b.agent as never, 'tenant-b', config, 'run-1')
+
+    expect(resultB.truncated).toBe(false)
+    expect(b.deletedIds).toEqual(['b-1'])
+  })
+
+  test('record-type order rotates so a truncated tenant cannot starve the trailing types', () => {
+    const config = makeConfig({
+      recordTypes: [PurgeRecordType.DIDCOMM_CREDENTIAL, PurgeRecordType.DIDCOMM_PROOF, PurgeRecordType.DIDCOMM_OOB],
+    })
+
+    const order = async (rotation: number) => {
+      const { agent } = makeAgent()
+      const result = await purgeTenant(agent as never, 't', config, 'run', undefined, rotation)
+      return result.categories.map((category) => category.recordType)
+    }
+
+    // Without rotation, a budget that only covers the first type would mean OOB — the largest
+    // category in production — never runs on any tick.
+    return Promise.all([order(0), order(1), order(2)]).then(([first, second, third]) => {
+      expect(first[0]).toBe(PurgeRecordType.DIDCOMM_CREDENTIAL)
+      expect(second[0]).toBe(PurgeRecordType.DIDCOMM_PROOF)
+      expect(third[0]).toBe(PurgeRecordType.DIDCOMM_OOB)
+    })
   })
 
   test('scans are state-scoped — findAllByQuery is never called with an empty query', async () => {
@@ -478,15 +544,55 @@ describe('purgeTenant — modes and guards', () => {
     }
   })
 
-  test('processes eligible records in batches of batchSize', async () => {
+  test('never holds more than one page in memory, however large the state set', async () => {
+    // The regression this guards: the scan used to fetch the entire state-scoped result set in one
+    // call. On an undrained wallet state=request-sent alone was the clear majority of all proof
+    // exchanges, and materialising those decrypted into the heap means an OOM or GC pauses that hit
+    // live traffic. Nothing forces the backfill to run first, so the scan itself must be bounded.
+    const total = 1_000
+    const records = Array.from({ length: total }, (_, index) => ({ id: `cred-${index}`, updatedAt: daysAgo(60) }))
+    const { agent, deletedIds } = makeAgent({ recordsByState: { done: records } })
+
+    let largestPage = 0
+    const inner = agent.modules.didcomm.credentials.findAllByQuery
+    agent.modules.didcomm.credentials.findAllByQuery = jest.fn(async (query, queryOptions) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const page = await (inner as any)(query, queryOptions)
+      largestPage = Math.max(largestPage, page.length)
+      return page
+    }) as never
+
+    const result = await purgeTenant(agent as never, 'tenant-abc', makeConfig({ batchSize: 50 }), 'run-1')
+
+    // Every record is drained, but never more than one page is resident at a time.
+    expect(deletedIds).toHaveLength(total)
+    expect(result.parentsDeleted).toBe(total)
+    expect(largestPage).toBe(50)
+  })
+
+  test('a page of records that are all too recent advances the offset instead of looping', async () => {
+    // Nothing is removed from such a page, so the offset must advance by the full page or the drain
+    // would re-read the same page forever.
+    const recent = Array.from({ length: 5 }, (_, index) => ({ id: `fresh-${index}`, updatedAt: daysAgo(1) }))
+    const { agent, deletedIds, logger } = makeAgent({ recordsByState: { done: [...recent] } })
+
+    const result = await purgeTenant(agent as never, 'tenant-abc', makeConfig({ batchSize: 2 }), 'run-1')
+
+    expect(deletedIds).toEqual([])
+    expect(result.eligible).toBe(0)
+    // 5 records at page size 2 → 3 pages, then the short page ends it. No infinite loop.
+    expect(logger.debug.mock.calls.filter((call) => call[0] === '[Purge] Page complete')).toHaveLength(3)
+  })
+
+  test('pages the scan by batchSize instead of loading the whole state set', async () => {
     const records = Array.from({ length: 5 }, (_, index) => ({ id: `cred-${index}`, updatedAt: daysAgo(60) }))
     const { agent, deletedIds, logger } = makeAgent({ recordsByState: { done: records } })
 
     await purgeTenant(agent as never, 'tenant-abc', makeConfig({ batchSize: 2 }), 'run-1')
 
     expect(deletedIds).toHaveLength(5)
-    const batchLogs = logger.debug.mock.calls.filter((call) => call[0] === '[Purge] Batch complete')
-    // 5 records at batchSize 2 → 3 batches.
-    expect(batchLogs).toHaveLength(3)
+    const pageLogs = logger.debug.mock.calls.filter((call) => call[0] === '[Purge] Page complete')
+    // 5 records at page size 2 → pages of 2, 2, 1; the short final page ends the drain.
+    expect(pageLogs).toHaveLength(3)
   })
 })

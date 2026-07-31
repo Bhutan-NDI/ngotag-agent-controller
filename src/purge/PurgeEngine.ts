@@ -25,7 +25,7 @@
  * purged every day, the terminal-state set stays bounded to roughly one TTL window (§8).
  */
 import type { PurgeCronConfig, PurgeRecordType as PurgeRecordTypeValue } from './PurgeTypes'
-import type { Agent, Logger } from '@credo-ts/core'
+import type { Agent, Logger, QueryOptions } from '@credo-ts/core'
 
 import { RecordNotFoundError } from '@credo-ts/core'
 import { OpenId4VcIssuanceSessionRepository, OpenId4VcVerificationSessionRepository } from '@credo-ts/openid4vc'
@@ -123,11 +123,17 @@ interface EngineContext {
   runId: string
   /** Absolute time after which the tenant is abandoned for this run; undefined when unbudgeted. */
   deadline?: number
-  /** Invoked after each successful parent delete — used for the deprecated webhook notification. */
-  onDeleted?: (recordType: PurgeRecordTypeValue, recordId: string, alreadyAbsent: boolean) => Promise<void>
+  /**
+   * Invoked after each parent delete for the deprecated webhook notification. Deliberately
+   * synchronous / fire-and-forget: `sendPurgeWebhook` retries [1s, 5s, 30s] with a 10s per-attempt
+   * timeout, so awaiting it inline would stall the sequential delete loop by up to ~46s PER RECORD
+   * against an endpoint that does not exist — holding the tenant session open for hours. Delivery is
+   * best-effort; the per-run audit log is the authoritative record.
+   */
+  onDeleted?: (recordType: PurgeRecordTypeValue, recordId: string, alreadyAbsent: boolean) => void
 }
 
-type ScanFn = (query: Record<string, unknown>) => Promise<PurgeableRecord[]>
+type ScanFn = (query: Record<string, unknown>, queryOptions: QueryOptions) => Promise<PurgeableRecord[]>
 
 /**
  * Purge one wallet (a tenant agent in shared mode, or the root agent in dedicated mode).
@@ -141,6 +147,12 @@ export async function purgeTenant(
   config: PurgeCronConfig,
   runId: string,
   onDeleted?: EngineContext['onDeleted'],
+  /**
+   * Rotates which record type is processed first. Only meaningful with a time budget: without
+   * rotation a truncated tenant always spends its budget on the same leading types, so the ones at
+   * the back of a fixed order (OOB is third, and the largest category in production) would never run.
+   */
+  rotation = 0,
 ): Promise<PurgeTenantResult> {
   const startedAt = Date.now()
   const ctx: EngineContext = {
@@ -155,7 +167,7 @@ export async function purgeTenant(
 
   const categories: PurgeCategoryResult[] = []
 
-  for (const recordType of config.recordTypes) {
+  for (const recordType of rotate(config.recordTypes, rotation)) {
     const result = emptyCategoryResult(recordType)
     categories.push(result)
 
@@ -167,11 +179,14 @@ export async function purgeTenant(
     } catch (error) {
       if (error instanceof TimeBudgetExceededError) {
         result.truncated = true
-        ctx.logger.warn('[Purge] Time budget exhausted — tenant will resume on the next run', {
+        // Note the budget is PER TENANT (the deadline is computed from this tenant's own start), so
+        // truncating here does not eat into any later tenant's allowance.
+        ctx.logger.warn('[Purge] Time budget exhausted — remaining work continues on subsequent runs', {
           runId,
           tenantId,
-          recordType,
+          stoppedAt: recordType,
           timeBudgetMs: config.timeBudgetMs,
+          note: 'record-type order rotates each run so no type is starved',
         })
         break
       }
@@ -315,24 +330,24 @@ function buildScanFn(agent: Agent, recordType: PurgeRecordTypeValue): ScanFn {
   switch (recordType) {
     case PurgeRecordType.DIDCOMM_CREDENTIAL:
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (query) => (agent as any).modules.didcomm.credentials.findAllByQuery(query)
+      return (query, queryOptions) => (agent as any).modules.didcomm.credentials.findAllByQuery(query, queryOptions)
 
     case PurgeRecordType.DIDCOMM_PROOF:
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (query) => (agent as any).modules.didcomm.proofs.findAllByQuery(query)
+      return (query, queryOptions) => (agent as any).modules.didcomm.proofs.findAllByQuery(query, queryOptions)
 
     case PurgeRecordType.DIDCOMM_OOB:
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (query) => (agent as any).modules.didcomm.oob.findAllByQuery(query)
+      return (query, queryOptions) => (agent as any).modules.didcomm.oob.findAllByQuery(query, queryOptions)
 
     case PurgeRecordType.OID4VC_ISSUANCE: {
       const repo = agent.dependencyManager.resolve(OpenId4VcIssuanceSessionRepository)
-      return (query) => repo.findByQuery(agent.context, query)
+      return (query, queryOptions) => repo.findByQuery(agent.context, query, queryOptions)
     }
 
     case PurgeRecordType.OID4VC_VERIFICATION: {
       const repo = agent.dependencyManager.resolve(OpenId4VcVerificationSessionRepository)
-      return (query) => repo.findByQuery(agent.context, query)
+      return (query, queryOptions) => repo.findByQuery(agent.context, query, queryOptions)
     }
 
     default: {
@@ -349,79 +364,89 @@ async function runScanPlan(
   scan: ScanFn,
   result: PurgeCategoryResult,
 ): Promise<void> {
+  const { batchSize, throttleMs, dryRun } = ctx.config
+
+  // Drain the plan one bounded page at a time. The earlier revision fetched the whole state-scoped
+  // result set in a single call, which is only survivable once the wallet is already drained: on an
+  // undrained wallet `state=request-sent` alone was the clear majority of all proof exchanges,
+  // and materialising them decrypted into the live agent's heap means an OOM or GC pauses that hit
+  // credential and proof traffic. Nothing forces the backfill to run first, so the scan itself has
+  // to be bounded rather than relying on the steady state described in §8.
+  //
+  // Askar gives no stable sort across separate scan calls, so paging can skip or re-see a record.
+  // For a DELETE workload both are benign and self-correcting: a skipped record is picked up by the
+  // next run, and a re-seen one is already gone and counts as an idempotent already-absent. (This is
+  // exactly why credo-data-purge forbids paging in its ORPHAN SWEEP but uses offset-reset loops in
+  // bulk-purge — completeness is load-bearing there, not here.)
+  // Gate on entry, before paying for this plan's first scan. Without this a plan is only checked
+  // between its own pages, so a category made of many single-page plans would run all of them no
+  // matter how far past the budget it already was.
   assertWithinTimeBudget(ctx)
 
-  // One continuous scan per plan, with no {limit, offset} paging. Askar applies no stable sort
-  // across separate scan calls, so paginating a category over multiple queries silently skips or
-  // double-counts rows — a hazard measured and documented in credo-data-purge's purgeOrphans. The
-  // `state` tag keeps the result set bounded to roughly one TTL window in steady state (§8); the
-  // *deletes* are what get batched and throttled below.
-  const records = await scan(plan.query)
-  result.scanned += records.length
+  let offset = 0
+  let page = 0
 
-  const eligible: PurgeableRecord[] = []
-  for (const record of records) {
-    if (!isPastCutoff(record, plan.cutoff)) continue
-    if (plan.retain?.(record)) {
-      result.retainedByPolicy++
-      continue
+  for (;;) {
+    // Within a plan the first page is never budget-gated, so a plan that has already paid for a scan
+    // always makes some forward progress; otherwise a tenant whose scan alone outlasts the budget
+    // would pay for the scan and delete nothing on every run, forever. Overshoot is one page.
+    if (page > 0) assertWithinTimeBudget(ctx)
+
+    const records = await scan(plan.query, { limit: batchSize, offset })
+    if (records.length === 0) break
+
+    page++
+    result.scanned += records.length
+
+    const eligible: PurgeableRecord[] = []
+    for (const record of records) {
+      if (!isPastCutoff(record, plan.cutoff)) continue
+      if (plan.retain?.(record)) {
+        result.retainedByPolicy++
+        continue
+      }
+      eligible.push(record)
     }
-    eligible.push(record)
-  }
-  result.eligible += eligible.length
+    result.eligible += eligible.length
 
-  ctx.logger.debug('[Purge] Scan plan complete', {
-    runId: ctx.runId,
-    tenantId: ctx.tenantId,
-    recordType,
-    plan: plan.label,
-    scanned: records.length,
-    eligible: eligible.length,
-  })
-
-  if (eligible.length === 0) return
-
-  const { batchSize, throttleMs } = ctx.config
-
-  for (let offset = 0; offset < eligible.length; offset += batchSize) {
-    // The first batch of a plan is never budget-gated. The scan has already been paid for by this
-    // point, so bailing out before deleting anything would burn the expensive half of the work and
-    // make no progress — and a tenant whose scan alone outlasts the budget would then never purge
-    // anything, on any run. Letting one batch through guarantees forward progress; the overshoot is
-    // bounded by batchSize.
-    if (offset > 0) assertWithinTimeBudget(ctx)
-
-    const batch = eligible.slice(offset, offset + batchSize)
-    const before = { parents: result.parentsDeleted, absent: result.alreadyAbsent, failed: result.failed }
-
-    for (const record of batch) {
+    const before = { parents: result.parentsDeleted, absent: result.alreadyAbsent }
+    for (const record of eligible) {
       await processRecord(ctx, recordType, record, result)
     }
+    const removed = result.parentsDeleted - before.parents + (result.alreadyAbsent - before.absent)
 
-    const progressed =
-      result.parentsDeleted - before.parents > 0 ||
-      result.alreadyAbsent - before.absent > 0 ||
-      // In dry-run nothing is deleted, so "no progress" is the expected outcome, not a failure.
-      ctx.config.dryRun
-
-    // Zero-progress guard (credo-data-purge `assertDeleteProgress`): if every delete in a batch
-    // genuinely failed, something systemic is wrong — a lock, a poison record, a broken store.
-    // Aborting the category beats grinding through the whole eligible set logging the same error.
-    if (!progressed) {
+    // Zero-progress guard (credo-data-purge `assertDeleteProgress`): if a page had eligible records
+    // and not one of them could be removed, something systemic is wrong — a lock, a poison record, a
+    // broken store. Aborting the record type beats grinding through the rest logging the same error.
+    // It also prevents an infinite loop: with nothing removed the offset below would not advance.
+    if (!dryRun && eligible.length > 0 && removed === 0) {
       throw new Error(
-        `[Purge] ${recordType} ${plan.label}: 0/${batch.length} deletes succeeded in this batch — ` +
+        `[Purge] ${recordType} ${plan.label}: 0/${eligible.length} deletes succeeded on this page — ` +
           'possible lock or poison record. Aborting this record type.',
       )
     }
 
-    ctx.logger.debug('[Purge] Batch complete', {
+    // Advance past only the records left behind (too recent, retained by policy, or failed).
+    // Removed records are gone from the result set, so the next page starts where they were. In
+    // dry-run nothing is removed, so the offset must advance by the full page or it would re-read
+    // the same page forever.
+    offset += dryRun ? records.length : records.length - removed
+
+    ctx.logger.debug('[Purge] Page complete', {
       runId: ctx.runId,
       tenantId: ctx.tenantId,
       recordType,
       plan: plan.label,
-      progress: `${Math.min(offset + batch.length, eligible.length)}/${eligible.length}`,
-      dryRun: ctx.config.dryRun,
+      page,
+      scanned: records.length,
+      eligible: eligible.length,
+      removed,
+      nextOffset: offset,
+      dryRun,
     })
+
+    // A short page means the query is exhausted.
+    if (records.length < batchSize) break
 
     if (throttleMs > 0) await sleep(throttleMs)
   }
@@ -454,7 +479,7 @@ async function processRecord(
 
     await deletePurgeRecord(ctx.agent, recordType, record.id)
     result.parentsDeleted++
-    await ctx.onDeleted?.(recordType, record.id, false)
+    ctx.onDeleted?.(recordType, record.id, false)
   } catch (error) {
     if (error instanceof RecordNotFoundError) {
       // Idempotent success: the desired end state (record gone) already holds. Happens on retries
@@ -466,7 +491,7 @@ async function processRecord(
         recordType,
         recordId: record.id,
       })
-      await ctx.onDeleted?.(recordType, record.id, true)
+      ctx.onDeleted?.(recordType, record.id, true)
       return
     }
 
@@ -524,6 +549,13 @@ function emptyCategoryResult(recordType: PurgeRecordTypeValue): PurgeCategoryRes
     failed: 0,
     truncated: false,
   }
+}
+
+/** Left-rotate so a different record type leads each run. */
+function rotate<T>(items: T[], by: number): T[] {
+  if (items.length === 0) return items
+  const shift = ((by % items.length) + items.length) % items.length
+  return shift === 0 ? items : [...items.slice(shift), ...items.slice(0, shift)]
 }
 
 function sumBy<T>(items: T[], pick: (item: T) => number): number {
