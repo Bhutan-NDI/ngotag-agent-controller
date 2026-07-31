@@ -1,7 +1,7 @@
 import type { PurgeRecordType } from './PurgeTypes'
 import type { Agent, BaseRecord, BaseRecordConstructor, StorageService } from '@credo-ts/core'
 
-import { InjectionSymbols } from '@credo-ts/core'
+import { InjectionSymbols, RecordNotFoundError } from '@credo-ts/core'
 import {
   DidCommCredentialExchangeRecord,
   DidCommMessageRecord,
@@ -70,12 +70,28 @@ export async function findDidCommMessageChildIds(agent: Agent, parentRecordId: s
  * orphaned message that only a full-wallet orphan sweep can find. The steady-state job deliberately
  * does not run that sweep (INTEGRATION-PLAN-develop.md §8), so this per-parent cascade is the only
  * thing keeping orphans from accumulating — and that only holds if the ordering is respected.
+ *
+ * A child that is ALREADY gone is skipped rather than treated as an error: for a delete, "absent" is
+ * the desired end state. Letting `RecordNotFoundError` escape here would abort the cascade and, via
+ * the caller's error handling, leave the parent undeleted while reporting the record as successfully
+ * already-absent — so a wallet with a partially-completed previous run could make only partial
+ * progress on every subsequent run while looking healthy.
+ *
+ * @returns the number of children that are no longer present (deleted here or already gone).
  */
-export async function deleteDidCommMessageChildren(agent: Agent, childIds: string[]): Promise<void> {
+export async function deleteDidCommMessageChildren(agent: Agent, childIds: string[]): Promise<number> {
   const storageService = resolveStorageService(agent)
+  let removed = 0
   for (const childId of childIds) {
-    await storageService.deleteById(agent.context, DidCommMessageRecord, childId)
+    try {
+      await storageService.deleteById(agent.context, DidCommMessageRecord, childId)
+    } catch (error) {
+      // Real failures (lock, I/O) still propagate, so the parent is not deleted and is retried.
+      if (!(error instanceof RecordNotFoundError)) throw error
+    }
+    removed++
   }
+  return removed
 }
 
 /**

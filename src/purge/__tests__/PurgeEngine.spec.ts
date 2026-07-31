@@ -309,6 +309,27 @@ describe('purgeTenant — DidCommMessageRecord cascade', () => {
     expect(result.parentsDeleted).toBe(1)
   })
 
+  test('an already-gone child does not abort the cascade or block the parent', async () => {
+    // Regression: RecordNotFoundError from a CHILD used to escape the cascade and be handled as
+    // "parent already absent" — so the parent survived while being reported as successfully
+    // deleted. On a wallet with a partially-completed previous run that made every run stall at
+    // partial progress while the summary looked clean.
+    const { agent, deletedIds } = makeAgent({
+      recordsByState: { done: [{ id: 'cred-1', updatedAt: daysAgo(60) }] },
+      children: { 'cred-1': [{ id: 'msg-gone' }, { id: 'msg-live' }] },
+      deleteErrors: { 'msg-gone': new RecordNotFoundError('gone', { recordType: 'DidCommMessageRecord' }) },
+    })
+
+    const result = await purgeTenant(agent as never, 'tenant-abc', makeConfig(), 'run-1')
+
+    // The surviving child and the parent are both removed; absence of the first is not an error.
+    expect(deletedIds).toEqual(['msg-live', 'cred-1'])
+    expect(result.parentsDeleted).toBe(1)
+    expect(result.childrenDeleted).toBe(2) // one deleted here, one already gone
+    expect(result.categories[0].alreadyAbsent).toBe(0)
+    expect(result.failed).toBe(0)
+  })
+
   test('leaves the parent in place when a child delete fails, so no orphan is created', async () => {
     const { agent, deletedIds } = makeAgent({
       recordsByState: {

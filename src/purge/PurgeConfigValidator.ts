@@ -1,6 +1,7 @@
 import type { NatsConfig, PurgeConfig } from './PurgeTypes'
 
 import { connect } from 'nats'
+import cron from 'node-cron'
 
 import { buildNatsAuthenticator } from '../utils/NatsAuthenticator'
 
@@ -13,6 +14,16 @@ export async function validatePurgeConfig(config: PurgeConfig): Promise<void> {
     throw new Error(
       '[Purge] PURGE_ENABLED=true but neither PURGE_NATS_ENABLED nor PURGE_CRON_ENABLED is set to true. ' +
         'Enable at least one mode.',
+    )
+  }
+
+  if (cronConfig.enabled && !cron.validate(cronConfig.cronSchedule)) {
+    // node-cron does validate, but only when the task is created, and it fails with a bare
+    // "Cannot read properties of undefined (reading 'replace')" that names neither the purge nor the
+    // schedule — leaving an operator with a crashed agent and no clue why. Fail here instead.
+    throw new Error(
+      `[Purge] PURGE_CRON_SCHEDULE is not a valid cron expression: "${cronConfig.cronSchedule}". ` +
+        'Expected 5 or 6 fields, e.g. "0 3 * * *" for 03:00 daily.',
     )
   }
 

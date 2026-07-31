@@ -449,8 +449,7 @@ async function processRecord(
     // the whole record is retried on the next run — the alternative is an orphaned message that
     // only a full-wallet sweep could ever find again.
     if (childIds.length > 0) {
-      await deleteDidCommMessageChildren(ctx.agent, childIds)
-      result.childrenDeleted += childIds.length
+      result.childrenDeleted += await deleteDidCommMessageChildren(ctx.agent, childIds)
     }
 
     await deletePurgeRecord(ctx.agent, recordType, record.id)

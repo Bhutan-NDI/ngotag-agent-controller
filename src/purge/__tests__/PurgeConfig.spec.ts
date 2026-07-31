@@ -147,6 +147,17 @@ describe('validatePurgeConfig — startup guards', () => {
     await expect(validatePurgeConfig(config)).resolves.toBeUndefined()
   })
 
+  test('rejects an invalid cron expression with a message that names the setting', async () => {
+    // node-cron only validates when the task is created, and fails with a bare
+    // "Cannot read properties of undefined (reading 'replace')" — a crashed agent and no clue why.
+    const config = withEnv({ ...CRON_ENABLED, PURGE_CRON_SCHEDULE: 'every day at 3' }, buildPurgeConfig)!
+
+    await expect(validatePurgeConfig(config)).rejects.toThrow(/PURGE_CRON_SCHEDULE is not a valid cron expression/)
+
+    const valid = withEnv({ ...CRON_ENABLED, PURGE_CRON_SCHEDULE: '0 3 * * *' }, buildPurgeConfig)!
+    await expect(validatePurgeConfig(valid)).resolves.toBeUndefined()
+  })
+
   test('rejects an abandoned TTL below the safety floor unless explicitly overridden', async () => {
     const tooShort = { ...CRON_ENABLED, PURGE_CRON_ABANDONED_TTL_SECONDS: '60' }
 
