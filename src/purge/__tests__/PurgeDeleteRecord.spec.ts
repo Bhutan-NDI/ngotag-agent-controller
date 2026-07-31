@@ -13,7 +13,7 @@
  */
 import { jest } from '@jest/globals'
 
-const { InjectionSymbols, RecordNotFoundError } = await import('@credo-ts/core')
+const { InjectionSymbols, RecordNotFoundError, W3cCredentialRepository } = await import('@credo-ts/core')
 const { DidCommCredentialExchangeRecord, DidCommMessageRecord, DidCommOutOfBandRecord, DidCommProofExchangeRecord } =
   await import('@credo-ts/didcomm')
 const { OpenId4VcIssuanceSessionRepository, OpenId4VcVerificationSessionRepository } =
@@ -54,7 +54,12 @@ interface Harness {
     issuanceDeleteById: jest.Mock<any>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     verificationDeleteById: jest.Mock<any>
+    /** The holder's stored JSON-LD credential. Must never be reached. */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    w3cDelete: jest.Mock<any>
   }
+  /** Tokens the code under test asked the container for. */
+  resolved: unknown[]
 }
 
 function makeHarness(messages: Array<{ id: string }> = []): Harness {
@@ -70,16 +75,20 @@ function makeHarness(messages: Array<{ id: string }> = []): Harness {
   const repositories = {
     issuanceDeleteById: jest.fn(async () => {}),
     verificationDeleteById: jest.fn(async () => {}),
+    w3cDelete: jest.fn(async () => {}),
   }
+  const resolved: unknown[] = []
 
   const agent = {
     context: AGENT_CONTEXT,
     dependencyManager: {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       resolve: (token: any) => {
+        resolved.push(token)
         if (token === InjectionSymbols.StorageService) return storageService
         if (token === OpenId4VcIssuanceSessionRepository) return { deleteById: repositories.issuanceDeleteById }
         if (token === OpenId4VcVerificationSessionRepository) return { deleteById: repositories.verificationDeleteById }
+        if (token === W3cCredentialRepository) return { delete: repositories.w3cDelete, findById: jest.fn() }
         throw new Error(`unexpected token: ${String(token)}`)
       },
     },
@@ -92,7 +101,7 @@ function makeHarness(messages: Array<{ id: string }> = []): Harness {
     },
   }
 
-  return { agent, storageService, protocolApis, repositories }
+  return { agent, storageService, protocolApis, repositories, resolved }
 }
 
 function expectNoProtocolDeletes(harness: Harness) {
@@ -138,6 +147,39 @@ describe('deletePurgeRecord — storage-level deletes only (§4.1)', () => {
       expect((recordClass as any).type).toBe('CredentialRecord')
     }
     expectNoProtocolDeletes(harness)
+  })
+
+  test('JSON-LD over DIDComm: the holder\u2019s stored W3cCredentialRecord is never reached', async () => {
+    // This is the exact production stack (JSON-LD credentials over DIDComm, holder cloud wallet) and
+    // the exact chain the old protocol delete followed:
+    //
+    //   credentials.deleteById(id)
+    //     -> DidCommCredentialV2Protocol.delete()            deleteAssociatedCredentials ?? true
+    //     -> getFormatServiceForRecordType('w3c')            FIRST format service claiming 'w3c',
+    //                                                        which in cliAgent.ts is legacyIndy,
+    //                                                        NOT the JSON-LD service
+    //     -> AnonCredsRsHolderService.deleteCredential(id)
+    //     -> W3cCredentialRepository.findById(id) hits       the binding IS a W3cCredentialRecord id
+    //     -> W3cCredentialRepository.delete(...)             holder's credential destroyed
+    //
+    // Note the JSON-LD format service's own deleteCredentialById() throws 'Not implemented', so it
+    // would have been harmless — but it never runs, because legacyIndy is registered first and also
+    // declares credentialRecordType 'w3c'. There was no accidental protection.
+    const harness = makeHarness()
+    // The binding the exchange record would carry for an issued JSON-LD credential.
+    const exchangeRecordId = 'cred-exchange-1'
+
+    await deletePurgeRecord(harness.agent, PurgeRecordType.DIDCOMM_CREDENTIAL, exchangeRecordId)
+
+    // The stored credential's repository is never even asked for, let alone called.
+    expect(harness.resolved).not.toContain(W3cCredentialRepository)
+    expect(harness.repositories.w3cDelete).not.toHaveBeenCalled()
+    // And the protocol entry point that starts the chain is never invoked.
+    expectNoProtocolDeletes(harness)
+    // Exactly one delete, naming the exchange record class.
+    expect(harness.storageService.deleteById.mock.calls).toEqual([
+      [AGENT_CONTEXT, DidCommCredentialExchangeRecord, exchangeRecordId],
+    ])
   })
 
   test('proof exchange: deletes via StorageService with the proof record class', async () => {
