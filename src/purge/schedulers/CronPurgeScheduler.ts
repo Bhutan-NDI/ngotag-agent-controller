@@ -67,8 +67,8 @@ export class CronPurgeScheduler {
       batchSize: cronConfig.batchSize,
       throttleMs: cronConfig.throttleMs,
       timeBudgetMs: cronConfig.timeBudgetMs,
+      abandonedTtlSeconds: cronConfig.abandonedTtlSeconds,
       staleProofEnabled: cronConfig.staleProofEnabled,
-      staleProofTtlSeconds: cronConfig.staleProofEnabled ? cronConfig.staleProofTtlSeconds : undefined,
     })
   }
 

@@ -3,10 +3,10 @@
  *
  * The defaults are the last line of defence for a subsystem that permanently deletes data, so each
  * one is asserted explicitly:
- *   - deletion is opt-in (dry-run unless `PURGE_CRON_DRY_RUN=false`)
+ *   - an enabled purge actually deletes; dry-run is an opt-in census, and malformed values fail fast
  *   - the deprecated per-record webhook is off unless explicitly enabled
  *   - the deprecated state-blind NATS flow refuses to start without an explicit acknowledgement
- *   - a stale-proof TTL shorter than the terminal TTL is rejected rather than applied
+ *   - an abandoned TTL below the safety floor is rejected rather than applied
  *
  * Runs under Jest ESM mode (see jest.config.base.ts).
  */
@@ -93,8 +93,9 @@ describe('buildPurgeConfig — fail-safe defaults', () => {
     expect(cronConfig.batchSize).toBe(100)
     expect(cronConfig.throttleMs).toBe(250)
     expect(cronConfig.timeBudgetMs).toBe(0) // unbudgeted unless an operator opts in
-    expect(cronConfig.staleProofEnabled).toBe(false)
-    expect(cronConfig.staleProofTtlSeconds).toBe(7_776_000) // 90 days
+    expect(cronConfig.staleProofEnabled).toBe(true) // request-sent was 68% of prod proof volume
+    expect(cronConfig.abandonedTtlSeconds).toBe(604_800) // 7 days — shorter than the 30-day terminal TTL
+    expect(cronConfig.abandonedTtlSeconds).toBeLessThan(cronConfig.ttlSeconds)
   })
 
   test('all five record types are purged by default, and flags narrow the set', () => {
@@ -135,19 +136,25 @@ describe('validatePurgeConfig — startup guards', () => {
     expect(connect).not.toHaveBeenCalled()
   })
 
-  test('rejects a stale-proof TTL shorter than the terminal TTL', async () => {
+  test('accepts an abandoned TTL shorter than the terminal TTL — that is the intended shape', async () => {
     const config = withEnv(
-      {
-        ...CRON_ENABLED,
-        PURGE_CRON_STALE_PROOF_ENABLED: 'true',
-        PURGE_CRON_TTL_SECONDS: '2592000',
-        PURGE_CRON_STALE_PROOF_TTL_SECONDS: '86400',
-      },
+      { ...CRON_ENABLED, PURGE_CRON_TTL_SECONDS: '2592000', PURGE_CRON_ABANDONED_TTL_SECONDS: '604800' },
       buildPurgeConfig,
     )!
 
-    // Purging in-flight verifications sooner than completed ones is always a misconfiguration.
-    await expect(validatePurgeConfig(config)).rejects.toThrow(/must be >=/)
+    // Dead requests are purged sooner than completed exchanges by design. An earlier revision
+    // rejected this configuration outright, which made the production-derived policy unreachable.
+    await expect(validatePurgeConfig(config)).resolves.toBeUndefined()
+  })
+
+  test('rejects an abandoned TTL below the safety floor unless explicitly overridden', async () => {
+    const tooShort = { ...CRON_ENABLED, PURGE_CRON_ABANDONED_TTL_SECONDS: '60' }
+
+    // The floor guards the only real hazard: deleting a flow a holder is mid-response to.
+    await expect(validatePurgeConfig(withEnv(tooShort, buildPurgeConfig)!)).rejects.toThrow(/below the 3600s floor/)
+
+    const overridden = withEnv({ ...tooShort, PURGE_CRON_ALLOW_SHORT_ABANDONED_TTL: 'true' }, buildPurgeConfig)!
+    await expect(validatePurgeConfig(overridden)).resolves.toBeUndefined()
   })
 
   test('refuses the deprecated NATS flow unless the state-blind behaviour is acknowledged', async () => {

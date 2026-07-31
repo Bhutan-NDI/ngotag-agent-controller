@@ -55,6 +55,21 @@ export interface PurgeableRecord {
   updatedAt?: Date | string
   /** Present on `DidCommOutOfBandRecord`; drives the reusable-invitation retention rule. */
   reusable?: boolean
+  /** Present on `OpenId4VcIssuanceSessionRecord`; drives the revocation-handle retention rule. */
+  issuanceMetadata?: { StatusListInfo?: unknown } | null
+}
+
+/**
+ * True when an OID4VC issuance session carries the status-list entry needed to revoke the credential
+ * it issued. Written defensively — `issuanceMetadata` is free-form JSON on the record, so a
+ * malformed or unexpected shape must read as "might be revocable" and keep the record rather than
+ * fall through to deletion.
+ */
+function hasStatusListInfo(record: PurgeableRecord): boolean {
+  const info = record.issuanceMetadata?.StatusListInfo
+  if (info === undefined || info === null) return false
+  if (Array.isArray(info)) return info.length > 0
+  return true
 }
 
 export interface PurgeCategoryResult {
@@ -214,7 +229,10 @@ export async function purgeTenant(
  * engine query a non-terminal credential state. See `PurgeStates.ts` for why that matters.
  */
 export function buildScanPlans(recordType: PurgeRecordTypeValue, config: PurgeCronConfig): ScanPlan[] {
+  /** Completed flows — an audit record of something that happened. */
   const cutoff = cutoffFor(config.ttlSeconds)
+  /** Dead flows — nobody responded and nobody will. Shorter by design. */
+  const abandonedCutoff = cutoffFor(config.abandonedTtlSeconds)
 
   switch (recordType) {
     case PurgeRecordType.DIDCOMM_CREDENTIAL:
@@ -236,9 +254,8 @@ export function buildScanPlans(recordType: PurgeRecordTypeValue, config: PurgeCr
       // re-requests — no credential data is at risk. The equivalent for credentials is unsafe and
       // is not offered at all.
       if (config.staleProofEnabled) {
-        const staleCutoff = cutoffFor(config.staleProofTtlSeconds)
         for (const state of DIDCOMM_PROOF_NON_TERMINAL_STATES) {
-          plans.push({ label: `stale state=${state}`, query: { state }, cutoff: staleCutoff })
+          plans.push({ label: `abandoned state=${state}`, query: { state }, cutoff: abandonedCutoff })
         }
       }
 
@@ -253,9 +270,14 @@ export function buildScanPlans(recordType: PurgeRecordTypeValue, config: PurgeCr
           cutoff,
         },
         {
-          label: `state=${DIDCOMM_OOB_PURGEABLE_STATES.stuck} (non-reusable only)`,
+          label: `abandoned state=${DIDCOMM_OOB_PURGEABLE_STATES.stuck} (non-reusable only)`,
           query: { state: DIDCOMM_OOB_PURGEABLE_STATES.stuck },
-          cutoff,
+          // An unscanned invitation is dead in exactly the way an unanswered proof request is, so it
+          // gets the abandoned TTL rather than the terminal one. This matters more than the naming
+          // suggests: OOB was the largest purgeable category in the July 2026 production drain
+          // (~91% of it eligible), and `create-request-oob` mints one of these
+          // per connectionless proof request — so they are the other half of the `request-sent` pile.
+          cutoff: abandonedCutoff,
           // A reusable await-response record backs a published invitation URL / QR code. Deleting it
           // breaks every future scan, so it is retained regardless of age.
           retain: (record) => record.reusable === true,
@@ -267,6 +289,12 @@ export function buildScanPlans(recordType: PurgeRecordTypeValue, config: PurgeCr
         label: `state=${state}`,
         query: { state },
         cutoff,
+        // The issuance session IS the revocation handle: `revokeBySessionId` reads
+        // `issuanceMetadata.StatusListInfo` off this record to get {listId, index, issuerDid}, and
+        // there is no other copy. Purging a revocable session would silently make that credential
+        // permanently unrevocable, so any session carrying status-list info is kept indefinitely.
+        // Sessions without it (nothing to revoke) and `Error` sessions still age out normally.
+        retain: (record) => hasStatusListInfo(record),
       }))
 
     case PurgeRecordType.OID4VC_VERIFICATION:

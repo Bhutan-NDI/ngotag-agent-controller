@@ -1,9 +1,16 @@
 // Cron defaults live here rather than in PurgeConstants.ts because PurgeConstants imports
 // PurgeRecordType from this module, and `import/no-cycle` is an error in this repo.
-const DEFAULT_TTL_SECONDS = 2_592_000 // 30 days
-const DEFAULT_STALE_PROOF_TTL_SECONDS = 7_776_000 // 90 days — deliberately far more conservative
+const DEFAULT_TTL_SECONDS = 2_592_000 // 30 days — completed flows (audit value)
+const DEFAULT_ABANDONED_TTL_SECONDS = 604_800 // 7 days — dead flows (no value)
 const DEFAULT_BATCH_SIZE = 100 // matches credo-data-purge BATCH_SIZE
 const DEFAULT_THROTTLE_MS = 250 // matches credo-data-purge THROTTLE_MS
+
+/**
+ * Floor on the abandoned TTL. The real hazard is deleting a flow a holder is still responding to,
+ * and that window is minutes, not months — so an hour has ample margin. Overridable for testing via
+ * `PURGE_CRON_ALLOW_SHORT_ABANDONED_TTL`, mirroring credo-data-purge's `STALE_ALLOW_ZERO_TTL`.
+ */
+export const MIN_ABANDONED_TTL_SECONDS = 3_600
 
 export interface NatsConfig {
   servers: string[]
@@ -71,10 +78,25 @@ export interface PurgeCronConfig {
   throttleMs: number
   /** Per-tenant wall-clock budget; 0 disables. A truncated tenant resumes on the next run. */
   timeBudgetMs: number
-  /** Opt-in purge of non-terminal PROOF exchanges. Never applies to credentials. */
+  /**
+   * Purge non-terminal PROOF exchanges against `abandonedTtlSeconds`. On by default: the July 2026
+   * production drain measured `request-sent` at ~68% of all proof exchanges and ~10% of the entire
+   * wallet — making it the single largest contributor to both storage and the
+   * proof-response latency it caused. Never applies to credentials.
+   */
   staleProofEnabled: boolean
-  /** Separate, more conservative TTL for the stale-proof policy. */
-  staleProofTtlSeconds: number
+  /**
+   * TTL for records that represent a *dead* flow rather than a completed one: non-terminal proof
+   * exchanges (when `staleProofEnabled`) and non-reusable `await-response` OOB invitations.
+   *
+   * Deliberately SHORTER than `ttlSeconds`, which is the opposite of what an earlier revision of
+   * this file assumed. A completed exchange is an audit record of a verification that happened and
+   * has retention value; an unanswered proof request or unscanned invitation has none and is of no
+   * use to anyone once it is a few hours old.
+   */
+  abandonedTtlSeconds: number
+  /** Escape hatch allowing `abandonedTtlSeconds` below `MIN_ABANDONED_TTL_SECONDS`. Testing only. */
+  allowShortAbandonedTtl: boolean
 }
 
 export interface PurgeConfig {
@@ -127,12 +149,17 @@ export function buildPurgeConfig(): PurgeConfig | undefined {
         DEFAULT_THROTTLE_MS,
       ),
       timeBudgetMs: parseNonNegativeInt(process.env.PURGE_CRON_TIME_BUDGET_MS, 'PURGE_CRON_TIME_BUDGET_MS', 0),
-      staleProofEnabled: process.env.PURGE_CRON_STALE_PROOF_ENABLED === 'true',
-      staleProofTtlSeconds: parsePositiveInt(
-        process.env.PURGE_CRON_STALE_PROOF_TTL_SECONDS,
-        'PURGE_CRON_STALE_PROOF_TTL_SECONDS',
-        DEFAULT_STALE_PROOF_TTL_SECONDS,
+      staleProofEnabled: parseStrictBoolean(
+        process.env.PURGE_CRON_STALE_PROOF_ENABLED,
+        'PURGE_CRON_STALE_PROOF_ENABLED',
+        true,
       ),
+      abandonedTtlSeconds: parsePositiveInt(
+        process.env.PURGE_CRON_ABANDONED_TTL_SECONDS,
+        'PURGE_CRON_ABANDONED_TTL_SECONDS',
+        DEFAULT_ABANDONED_TTL_SECONDS,
+      ),
+      allowShortAbandonedTtl: process.env.PURGE_CRON_ALLOW_SHORT_ABANDONED_TTL === 'true',
     },
     webhookEnabled: process.env.PURGE_WEBHOOK_ENABLED === 'true',
   }

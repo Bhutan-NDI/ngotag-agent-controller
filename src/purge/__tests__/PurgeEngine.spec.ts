@@ -44,8 +44,9 @@ function makeConfig(overrides: Partial<PurgeCronConfig> = {}): PurgeCronConfig {
     // 0 keeps the tests fast; the throttle path itself is asserted separately via batchSize.
     throttleMs: 0,
     timeBudgetMs: 0,
-    staleProofEnabled: false,
-    staleProofTtlSeconds: 90 * 24 * 60 * 60,
+    staleProofEnabled: true,
+    abandonedTtlSeconds: 7 * 24 * 60 * 60,
+    allowShortAbandonedTtl: false,
     ...overrides,
   }
 }
@@ -134,7 +135,7 @@ describe('buildScanPlans — retention policy', () => {
     ])
   })
 
-  test('no credential plan exists for any non-terminal state, even with stale-proof purging enabled', () => {
+  test('no credential plan exists for any non-terminal state, even with abandoned purging enabled', () => {
     // The stale policy is proof-only by construction. A holder can still accept a pending offer
     // (`offer-received`) after any TTL, so deleting the issuer-side record is unrecoverable.
     const plans = buildScanPlans(PurgeRecordType.DIDCOMM_CREDENTIAL, makeConfig({ staleProofEnabled: true }))
@@ -146,29 +147,56 @@ describe('buildScanPlans — retention policy', () => {
     }
   })
 
-  test('proof plans cover terminal states only until stale purging is opted into', () => {
-    const off = buildScanPlans(PurgeRecordType.DIDCOMM_PROOF, makeConfig()).map((plan) => plan.query.state)
-    expect(off).toEqual([DidCommProofState.Done, DidCommProofState.Abandoned, DidCommProofState.Declined])
-
-    const on = buildScanPlans(PurgeRecordType.DIDCOMM_PROOF, makeConfig({ staleProofEnabled: true }))
+  test('non-terminal proof states are swept by default and can be turned off', () => {
+    // request-sent was ~68% of all proof exchanges in the July 2026 production drain, so sweeping
+    // it is the default, not an opt-in.
+    const on = buildScanPlans(PurgeRecordType.DIDCOMM_PROOF, makeConfig()).map((plan) => plan.query.state)
     for (const nonTerminal of DIDCOMM_PROOF_NON_TERMINAL_STATES) {
-      expect(on.map((plan) => plan.query.state)).toContain(nonTerminal)
+      expect(on).toContain(nonTerminal)
     }
+
+    const off = buildScanPlans(PurgeRecordType.DIDCOMM_PROOF, makeConfig({ staleProofEnabled: false }))
+    expect(off.map((plan) => plan.query.state)).toEqual([
+      DidCommProofState.Done,
+      DidCommProofState.Abandoned,
+      DidCommProofState.Declined,
+    ])
   })
 
-  test('stale proof plans use the separate, longer TTL', () => {
-    const config = makeConfig({
-      staleProofEnabled: true,
-      ttlSeconds: 30 * 24 * 60 * 60,
-      staleProofTtlSeconds: 90 * 24 * 60 * 60,
-    })
+  test('abandoned records use a SHORTER cutoff than completed ones', () => {
+    const config = makeConfig({ ttlSeconds: 30 * 24 * 60 * 60, abandonedTtlSeconds: 7 * 24 * 60 * 60 })
     const plans = buildScanPlans(PurgeRecordType.DIDCOMM_PROOF, config)
 
-    const terminalPlan = plans.find((plan) => plan.query.state === DidCommProofState.Done)
-    const stalePlan = plans.find((plan) => plan.query.state === DidCommProofState.RequestSent)
+    const completed = plans.find((plan) => plan.query.state === DidCommProofState.Done)
+    const abandoned = plans.find((plan) => plan.query.state === DidCommProofState.RequestSent)
 
-    // The stale cutoff must be further in the past — i.e. a stricter age requirement.
-    expect(stalePlan!.cutoff.getTime()).toBeLessThan(terminalPlan!.cutoff.getTime())
+    // A dead request has no value; a completed exchange is an audit record. So the abandoned cutoff
+    // is NEARER to now — records qualify sooner — which is the opposite of the original assumption.
+    expect(abandoned!.cutoff.getTime()).toBeGreaterThan(completed!.cutoff.getTime())
+  })
+
+  test('the non-reusable await-response OOB track uses the abandoned TTL, the done track does not', () => {
+    // OOB was the largest purgeable category in production (7.78M, 91% eligible), and
+    // create-request-oob mints one per connectionless proof request — the other half of request-sent.
+    const config = makeConfig({ ttlSeconds: 30 * 24 * 60 * 60, abandonedTtlSeconds: 7 * 24 * 60 * 60 })
+    const [done, awaitResponse] = buildScanPlans(PurgeRecordType.DIDCOMM_OOB, config)
+
+    expect(awaitResponse.cutoff.getTime()).toBeGreaterThan(done.cutoff.getTime())
+  })
+
+  test('OID4VC issuance sessions carrying revocation info are retained indefinitely', () => {
+    // revokeBySessionId reads issuanceMetadata.StatusListInfo off this record to get
+    // {listId, index, issuerDid}. There is no other copy, so purging it would make the credential
+    // permanently unrevocable.
+    const [plan] = buildScanPlans(PurgeRecordType.OID4VC_ISSUANCE, makeConfig())
+
+    expect(plan.retain!({ id: 'a', issuanceMetadata: { StatusListInfo: [{ listId: 'l', index: 1 }] } })).toBe(true)
+    // Defensive: an unexpected non-array shape still reads as "might be revocable".
+    expect(plan.retain!({ id: 'b', issuanceMetadata: { StatusListInfo: { listId: 'l' } } })).toBe(true)
+    // Nothing to revoke — these still age out.
+    expect(plan.retain!({ id: 'c', issuanceMetadata: { StatusListInfo: [] } })).toBe(false)
+    expect(plan.retain!({ id: 'd', issuanceMetadata: {} })).toBe(false)
+    expect(plan.retain!({ id: 'e' })).toBe(false)
   })
 
   test('OOB has a done track and a non-reusable-only await-response track', () => {

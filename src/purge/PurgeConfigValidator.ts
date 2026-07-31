@@ -4,6 +4,8 @@ import { connect } from 'nats'
 
 import { buildNatsAuthenticator } from '../utils/NatsAuthenticator'
 
+import { MIN_ABANDONED_TTL_SECONDS } from './PurgeTypes'
+
 export async function validatePurgeConfig(config: PurgeConfig): Promise<void> {
   const { natsConfig, cronConfig } = config
 
@@ -14,14 +16,19 @@ export async function validatePurgeConfig(config: PurgeConfig): Promise<void> {
     )
   }
 
-  if (cronConfig.enabled && cronConfig.staleProofEnabled && cronConfig.staleProofTtlSeconds < cronConfig.ttlSeconds) {
-    // The stale-proof policy targets records that are still open, so a TTL shorter than the terminal
-    // one would delete in-flight verifications sooner than completed ones — always a
-    // misconfiguration, and one that silently destroys live flows if allowed through.
+  if (
+    cronConfig.enabled &&
+    cronConfig.abandonedTtlSeconds < MIN_ABANDONED_TTL_SECONDS &&
+    !cronConfig.allowShortAbandonedTtl
+  ) {
+    // An absolute floor, NOT a "must be >= the terminal TTL" rule. Abandoned records are expected to
+    // be purged far sooner than completed ones — dead requests have no value where completed
+    // exchanges are audit records. The only real hazard is deleting a flow a holder is still
+    // responding to, which is a minutes-scale window, so the floor guards that and nothing else.
     throw new Error(
-      `[Purge] PURGE_CRON_STALE_PROOF_TTL_SECONDS (${cronConfig.staleProofTtlSeconds}) must be >= ` +
-        `PURGE_CRON_TTL_SECONDS (${cronConfig.ttlSeconds}). Incomplete proof exchanges must never be ` +
-        'purged more aggressively than completed ones.',
+      `[Purge] PURGE_CRON_ABANDONED_TTL_SECONDS (${cronConfig.abandonedTtlSeconds}) is below the ` +
+        `${MIN_ABANDONED_TTL_SECONDS}s floor, which risks deleting flows a holder is still responding to. ` +
+        'Set PURGE_CRON_ALLOW_SHORT_ABANDONED_TTL=true to override (testing only).',
     )
   }
 
