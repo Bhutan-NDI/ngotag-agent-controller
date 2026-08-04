@@ -26,6 +26,22 @@ import { PurgeWorker } from '../PurgeWorker'
 
 const sc = StringCodec()
 
+/**
+ * @deprecated Schedule-at-create purge flow. Dormant by default and refused at startup unless
+ * `PURGE_NATS_ACK_STATE_BLIND=true` is also set (see `PurgeConfigValidator`). Retained only so the
+ * decision to standardise on cron stays reversible; slated for removal once cron parity is proven in
+ * production. See INTEGRATION-PLAN-develop.md §4.4.
+ *
+ * Why it is not the recommended flow:
+ *   - The deletion time is fixed when the record is *created*, so the job fires **state-blind** at
+ *     TTL and can delete an exchange that is still in flight. The cron flow re-checks state at
+ *     delete time, which is what makes the retention policy in `PurgeStates.ts` enforceable.
+ *   - It depends on the JetStream `allow_msg_schedules` feature.
+ *   - Its `purge.deletion.complete` webhook targets a platform endpoint that does not exist.
+ *
+ * It does share the storage-level delete fix, so if it is ever enabled it will no longer destroy
+ * stored holder credentials — but it remains state-blind.
+ */
 export class NatsPurgeScheduler {
   private nc: NatsConnection | null = null
   private js: JetStreamClient | null = null
@@ -68,6 +84,11 @@ export class NatsPurgeScheduler {
     agentMode: AgentMode,
   ): Promise<void> {
     if (!this.js) throw new Error('[Purge] NatsPurgeScheduler not started')
+
+    // Consumers are only provisioned for the configured record types, so publishing for an excluded
+    // type produces execution messages nothing will ever consume. They sit in the stream until
+    // max_age and would all be replayed at once if that type were later enabled.
+    if (!this.recordTypes.includes(recordType)) return
 
     const fireAt = new Date(Date.now() + this.ttlSeconds * 1000).toISOString()
     const job: PurgeJob = { recordId, recordType, tenantId, agentMode, scheduledAt: fireAt }

@@ -2,10 +2,17 @@ import { PurgeRecordType } from './PurgeTypes'
 
 export const PURGE_STREAM = 'PURGE'
 
+/**
+ * NATS subject / consumer maps for the deprecated schedule-at-create flow
+ * (INTEGRATION-PLAN-develop.md §4.4). `DIDCOMM_OOB` has no schedule-at-create call site — there is
+ * no `@SchedulePurge` on invitation creation — but the maps are `Record<PurgeRecordType, …>`, so
+ * every type needs an entry. Entries exist only to keep the maps exhaustive.
+ */
 // Schedule and execution subjects must be in the same stream for Nats-Schedule-Target to work
 export const PURGE_SCHEDULER_SUBJECTS: Record<PurgeRecordType, string> = {
   [PurgeRecordType.DIDCOMM_CREDENTIAL]: 'purge.schedule.didcomm.credential',
   [PurgeRecordType.DIDCOMM_PROOF]: 'purge.schedule.didcomm.proof',
+  [PurgeRecordType.DIDCOMM_OOB]: 'purge.schedule.didcomm.oob',
   [PurgeRecordType.OID4VC_ISSUANCE]: 'purge.schedule.oid4vc.issuance',
   [PurgeRecordType.OID4VC_VERIFICATION]: 'purge.schedule.oid4vc.verification',
 }
@@ -13,6 +20,7 @@ export const PURGE_SCHEDULER_SUBJECTS: Record<PurgeRecordType, string> = {
 export const PURGE_EXECUTION_SUBJECTS: Record<PurgeRecordType, string> = {
   [PurgeRecordType.DIDCOMM_CREDENTIAL]: 'purge.execute.didcomm.credential',
   [PurgeRecordType.DIDCOMM_PROOF]: 'purge.execute.didcomm.proof',
+  [PurgeRecordType.DIDCOMM_OOB]: 'purge.execute.didcomm.oob',
   [PurgeRecordType.OID4VC_ISSUANCE]: 'purge.execute.oid4vc.issuance',
   [PurgeRecordType.OID4VC_VERIFICATION]: 'purge.execute.oid4vc.verification',
 }
@@ -20,6 +28,7 @@ export const PURGE_EXECUTION_SUBJECTS: Record<PurgeRecordType, string> = {
 export const PURGE_CONSUMER_NAMES: Record<PurgeRecordType, string> = {
   [PurgeRecordType.DIDCOMM_CREDENTIAL]: 'purge-worker-didcomm-credential',
   [PurgeRecordType.DIDCOMM_PROOF]: 'purge-worker-didcomm-proof',
+  [PurgeRecordType.DIDCOMM_OOB]: 'purge-worker-didcomm-oob',
   [PurgeRecordType.OID4VC_ISSUANCE]: 'purge-worker-oid4vc-issuance',
   [PurgeRecordType.OID4VC_VERIFICATION]: 'purge-worker-oid4vc-verification',
 }
@@ -39,6 +48,7 @@ export const PURGE_CONSUMER_BACKOFF_NS = [
 export const PURGE_WEBHOOK_PATHS: Record<PurgeRecordType, string> = {
   [PurgeRecordType.DIDCOMM_CREDENTIAL]: '/purge/didcomm-credential',
   [PurgeRecordType.DIDCOMM_PROOF]: '/purge/didcomm-proof',
+  [PurgeRecordType.DIDCOMM_OOB]: '/purge/didcomm-oob',
   [PurgeRecordType.OID4VC_ISSUANCE]: '/purge/oid4vc-issuance',
   [PurgeRecordType.OID4VC_VERIFICATION]: '/purge/oid4vc-verification',
 }
