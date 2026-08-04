@@ -627,10 +627,10 @@ export class DidController extends Controller {
     const { endpoint, network, privatekey } = createDidOptions
     const networkName = network?.split(':')[1]
     if (networkName !== 'mainnet' && networkName !== 'sepolia') {
-      throw Error('Invalid network type')
+      throw new BadRequestError('Invalid network type')
     }
-    if (!privatekey || typeof privatekey !== 'string' || !privatekey.trim()) {
-      throw Error('Invalid private key or not supported')
+    if (!privatekey || typeof privatekey !== 'string' || !privatekey.trim() || privatekey.length !== 64) {
+      throw new BadRequestError('Invalid private key or key not supported')
     }
 
     const createDidResponse = await agent.dids.create<EthereumDidCreateOptions>({
@@ -643,9 +643,18 @@ export class DidController extends Controller {
         privateKey: TypedArrayEncoder.fromHex(`${privatekey}`),
       },
     })
+
+    // The Ethereum registrar never throws on failure; it returns didState.state === 'failed' with a
+    // reason. Surface that reason instead of silently returning an undefined did, so partial-state
+    // failures (e.g. RPC/ledger write failed) are reported and the caller can safely retry.
+    if (createDidResponse?.didState?.state !== 'finished') {
+      const reason = (createDidResponse?.didState as { reason?: string })?.reason ?? 'Unknown error'
+      throw new InternalServerError(`Failed to create did:ethr: ${reason}`)
+    }
+
     const didResponse = {
       did: createDidResponse?.didState?.did,
-      didDoc: createDidResponse?.didState?.didDocument,
+      didDocument: createDidResponse?.didState?.didDocument,
     }
     return didResponse
   }
