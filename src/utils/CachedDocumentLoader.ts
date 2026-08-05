@@ -32,12 +32,20 @@ const STATIC_CONTEXTS: Record<string, unknown> = {
 }
 
 const withTimeout = <T>(promise: Promise<T>, ms: number, message: string): Promise<T> =>
-  Promise.race([
-    promise,
-    new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error(message)), ms)
-    }),
-  ])
+  new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms)
+    timer.unref()
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
 
 /**
  * Cache TTL for JSON-LD documents, in seconds. Configurable via
