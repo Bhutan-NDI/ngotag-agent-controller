@@ -143,39 +143,6 @@ export class Ethereum extends Controller {
   }
 
   /**
-   * Estimate transaction
-   *
-   * @returns Transaction Object
-   */
-  // @Post('estimate-transaction')
-  // public async estimateTransaction(
-  //   @Body()
-  //   estimateTransactionRequest: {
-  //     operation: any
-  //     transaction: any
-  //   },
-  //   @Res() internalServerError: TsoaResponse<500, { message: string }>,
-  //   @Res() badRequestError: TsoaResponse<400, { reason: string }>
-  // ): Promise<unknown> {
-  //   try {
-  //     const { operation } = estimateTransactionRequest
-
-  //     if (!(operation in DidOperation)) {
-  //       return badRequestError(400, {
-  //         reason: `Invalid method parameter!`,
-  //       })
-  //     }
-  //     if (operation === DidOperation.Create) {
-  //       return this.agent.modules.ethereum.estimateFeeForDidOperation({ operation })
-  //     } else if (operation === DidOperation.Update) {
-  //       return this.agent.modules.ethereum.estimateFeeForDidOperation({ operation })
-  //     }
-  //   } catch (error) {
-  //     return internalServerError(500, { message: `something went wrong: ${error}` })
-  //   }
-  // }
-
-  /**
    * Fetch schema details
    *
    * @returns Schema Object
