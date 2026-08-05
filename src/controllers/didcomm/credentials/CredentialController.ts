@@ -222,6 +222,17 @@ export class CredentialController extends Controller {
 
       const credentialMessage = offerOob.message
 
+      // RFC 0434 requires a message inside `requests~attach` to carry either no parent
+      // thread id or one equal to the invitation's `@id` — the holder sets it to the
+      // invitation id itself. The patch above put `parentThreadId` on `~thread.pthid`,
+      // which every conformant holder rejects on receipt ("...contains parent thread id X
+      // that does not match the invitation id Y"), silently discarding the offer while the
+      // connection still completes. Correlation stays on the exchange record (also set by
+      // the patch), so re-thread the attached message with the thread id only.
+      if (outOfBandOption.parentThreadId) {
+        credentialMessage.setThread({ threadId: offerOob.credentialExchangeRecord.threadId })
+      }
+
       const outOfBandRecord = await request.agent.modules.didcomm.oob.createInvitation({
         label: outOfBandOption.label,
         messages: [credentialMessage],
@@ -241,6 +252,7 @@ export class CredentialController extends Controller {
         outOfBandRecordId: outOfBandRecord.id,
         credentialExchangeRecordId: offerOob.credentialExchangeRecord.id,
         credentialRequestThId: offerOob.credentialExchangeRecord.threadId,
+        credentialRequestParentThId: offerOob.credentialExchangeRecord.parentThreadId,
         invitationDid,
       }
     } catch (error) {
