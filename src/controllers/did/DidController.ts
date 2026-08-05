@@ -1,5 +1,6 @@
 import type { DidResolutionResultProps } from '../types'
 import type { PolygonDidCreateOptions } from '@ayanworks/credo-polygon-w3c-module/build/dids/PolygonDidRegistrar.mjs'
+import type { EthereumDidCreateOptions } from '@bhutan-ndi/ethr-credo-module/build/dids'
 import type { DidDocument, KeyDidCreateOptions, PeerDidNumAlgo2CreateOptions } from '@credo-ts/core'
 
 import { transformPrivateKeyToPrivateJwk, transformSeedToPrivateJwk } from '@credo-ts/askar'
@@ -23,7 +24,7 @@ import { injectable } from 'tsyringe'
 import { container } from 'tsyringe'
 
 import { RestMultiTenantAgentModules } from '../../cliAgent'
-import { DidMethod, KeyAlgorithmCurve, Network, Role, SCOPES } from '../../enums'
+import { DidMethod, KeyAlgorithmCurve, Network, NetworkTypes, Role, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { BadRequestError, InternalServerError } from '../../errors'
 import { AgentType } from '../../types'
@@ -100,6 +101,10 @@ export class DidController extends Controller {
 
         case DidMethod.Peer:
           result = await this.handleDidPeer(request.agent, createDidOptions)
+          break
+
+        case DidMethod.Ethereum:
+          result = await this.handleEthereum(request.agent, createDidOptions)
           break
 
         default:
@@ -609,6 +614,42 @@ export class DidController extends Controller {
     if (createDidResponse?.didState?.state !== 'finished') {
       const reason = (createDidResponse?.didState as { reason?: string })?.reason ?? 'Unknown error'
       throw new InternalServerError(`Failed to create did:polygon: ${reason}`)
+    }
+
+    const didResponse = {
+      did: createDidResponse?.didState?.did,
+      didDocument: createDidResponse?.didState?.didDocument,
+    }
+    return didResponse
+  }
+
+  public async handleEthereum(agent: AgentType, createDidOptions: DidCreate) {
+    const { endpoint, network, privatekey } = createDidOptions
+    const networkName = network?.split(':')[1]
+    if (networkName !== 'mainnet' && networkName !== 'sepolia') {
+      throw new BadRequestError('Invalid network type')
+    }
+    if (!privatekey || typeof privatekey !== 'string' || !privatekey.trim() || privatekey.length !== 64) {
+      throw new BadRequestError('Invalid private key or key not supported')
+    }
+
+    const createDidResponse = await agent.dids.create<EthereumDidCreateOptions>({
+      method: DidMethod.Ethereum,
+      options: {
+        network: networkName === NetworkTypes.Mainnet ? '' : networkName,
+        endpoint,
+      },
+      secret: {
+        privateKey: TypedArrayEncoder.fromHex(`${privatekey}`),
+      },
+    })
+
+    // The Ethereum registrar never throws on failure; it returns didState.state === 'failed' with a
+    // reason. Surface that reason instead of silently returning an undefined did, so partial-state
+    // failures (e.g. RPC/ledger write failed) are reported and the caller can safely retry.
+    if (createDidResponse?.didState?.state !== 'finished') {
+      const reason = (createDidResponse?.didState as { reason?: string })?.reason ?? 'Unknown error'
+      throw new InternalServerError(`Failed to create did:ethr: ${reason}`)
     }
 
     const didResponse = {

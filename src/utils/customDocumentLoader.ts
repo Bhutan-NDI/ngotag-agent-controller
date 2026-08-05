@@ -28,7 +28,7 @@ function replaceUrl(url: string, agent: AgentContext): string {
 export const CustomDocumentLoader = (agentContext: AgentContext): DocumentLoader => {
   const defaultLoader = defaultDocumentLoader(agentContext)
 
-  return async function (url: string): Promise<DocumentLoaderResult> {
+  const wrappedLoader = async function (url: string): Promise<DocumentLoaderResult> {
     try {
       // Intercept credebl schemas
       if (isW3CDeprecatedUrl(url, agentContext)) {
@@ -44,4 +44,6 @@ export const CustomDocumentLoader = (agentContext: AgentContext): DocumentLoader
       throw new CredoError(`Failed to load document for ${url}`, { cause: error as Error })
     }
   }
+
+  return wrappedLoader
 }
