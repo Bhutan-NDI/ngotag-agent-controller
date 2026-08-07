@@ -7,8 +7,9 @@ import * as fs from 'fs'
 import { Route, Tags, Security, Controller, Post, TsoaResponse, Res, Body, Get, Path } from 'tsoa'
 import { injectable } from 'tsyringe'
 
+import { SCOPES } from '../../enums'
+
 @Tags('Ethereum')
-@Security('apiKey')
 @Route('/ethereum')
 @injectable()
 export class Ethereum extends Controller {
@@ -24,6 +25,7 @@ export class Ethereum extends Controller {
    *
    * @returns Secp256k1KeyPair
    */
+  @Security('jwt', [SCOPES.TENANT_AGENT, SCOPES.DEDICATED_AGENT, SCOPES.MULTITENANT_BASE_AGENT])
   @Post('create-keys')
   public async createKeyPair(@Res() internalServerError: TsoaResponse<500, { message: string }>): Promise<{
     privateKey: string
@@ -43,6 +45,7 @@ export class Ethereum extends Controller {
    *
    * @returns Schema JSON
    */
+  @Security('jwt', [SCOPES.TENANT_AGENT, SCOPES.DEDICATED_AGENT])
   @Post('create-schema')
   public async createSchema(
     @Body()
@@ -93,6 +96,7 @@ export class Ethereum extends Controller {
    *
    * @returns Schema JSON
    */
+  @Security('jwt', [SCOPES.TENANT_AGENT, SCOPES.DEDICATED_AGENT])
   @Post('migrate-schema')
   public async migrateSchema(
     @Body()
@@ -147,6 +151,7 @@ export class Ethereum extends Controller {
    *
    * @returns Schema Object
    */
+  @Security('jwt', [SCOPES.TENANT_AGENT, SCOPES.DEDICATED_AGENT])
   @Get(':did/:schemaId')
   public async getSchemaById(
     @Path('did') did: string,

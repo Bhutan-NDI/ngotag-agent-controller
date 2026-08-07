@@ -5718,7 +5718,7 @@ export function RegisterRoutes(app: Router) {
                 internalServerError: {"in":"res","name":"500","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"message":{"dataType":"string","required":true}}},
         };
         app.post('/ethereum/create-keys',
-            authenticateMiddleware([{"apiKey":[]}]),
+            authenticateMiddleware([{"jwt":["tenant","dedicated","Basewallet"]}]),
             ...(fetchMiddlewares<RequestHandler>(Ethereum)),
             ...(fetchMiddlewares<RequestHandler>(Ethereum.prototype.createKeyPair)),
 
@@ -5756,7 +5756,7 @@ export function RegisterRoutes(app: Router) {
                 badRequestError: {"in":"res","name":"400","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true}}},
         };
         app.post('/ethereum/create-schema',
-            authenticateMiddleware([{"apiKey":[]}]),
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
             ...(fetchMiddlewares<RequestHandler>(Ethereum)),
             ...(fetchMiddlewares<RequestHandler>(Ethereum.prototype.createSchema)),
 
@@ -5794,7 +5794,7 @@ export function RegisterRoutes(app: Router) {
                 badRequestError: {"in":"res","name":"400","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true}}},
         };
         app.post('/ethereum/migrate-schema',
-            authenticateMiddleware([{"apiKey":[]}]),
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
             ...(fetchMiddlewares<RequestHandler>(Ethereum)),
             ...(fetchMiddlewares<RequestHandler>(Ethereum.prototype.migrateSchema)),
 
@@ -5833,7 +5833,7 @@ export function RegisterRoutes(app: Router) {
                 forbiddenError: {"in":"res","name":"401","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true}}},
         };
         app.get('/ethereum/:did/:schemaId',
-            authenticateMiddleware([{"apiKey":[]}]),
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
             ...(fetchMiddlewares<RequestHandler>(Ethereum)),
             ...(fetchMiddlewares<RequestHandler>(Ethereum.prototype.getSchemaById)),
 
