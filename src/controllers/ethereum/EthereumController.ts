@@ -156,7 +156,7 @@ export class Ethereum extends Controller {
     @Res() forbiddenError: TsoaResponse<401, { reason: string }>,
   ): Promise<unknown> {
     try {
-      return request.agent.modules.ethereum.getSchemaById(did, schemaId)
+      return await request.agent.modules.ethereum.getSchemaById(did, schemaId)
     } catch (error) {
       if (error instanceof CredoError) {
         if (error.message.includes('UnauthorizedClientRequest')) {
