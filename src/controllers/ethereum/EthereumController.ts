@@ -1,10 +1,10 @@
-import type { RestAgentModules } from '../../cliAgent'
 import type { SchemaMetadata } from '../types'
 
 import { generateSecp256k1KeyPair } from '@ayanworks/credo-polygon-w3c-module'
-import { Agent, CredoError } from '@credo-ts/core'
+import { CredoError } from '@credo-ts/core'
+import { Request as Req } from 'express'
 import * as fs from 'fs'
-import { Route, Tags, Security, Controller, Post, TsoaResponse, Res, Body, Get, Path } from 'tsoa'
+import { Route, Tags, Security, Controller, Post, TsoaResponse, Res, Body, Get, Path, Request } from 'tsoa'
 import { injectable } from 'tsyringe'
 
 import { SCOPES } from '../../enums'
@@ -13,13 +13,6 @@ import { SCOPES } from '../../enums'
 @Route('/ethereum')
 @injectable()
 export class Ethereum extends Controller {
-  private agent: Agent<RestAgentModules>
-
-  public constructor(agent: Agent<RestAgentModules>) {
-    super()
-    this.agent = agent
-  }
-
   /**
    * Create Ethereum key pair for ethereum DID
    *
@@ -48,6 +41,7 @@ export class Ethereum extends Controller {
   @Security('jwt', [SCOPES.TENANT_AGENT, SCOPES.DEDICATED_AGENT])
   @Post('create-schema')
   public async createSchema(
+    @Request() request: Req,
     @Body()
     createSchemaRequest: {
       did: string
@@ -65,7 +59,7 @@ export class Ethereum extends Controller {
         })
       }
 
-      const schemaResponse = await this.agent.modules.ethereum.createSchema({
+      const schemaResponse = await request.agent.modules.ethereum.createSchema({
         did,
         schemaName,
         schema,
@@ -99,6 +93,7 @@ export class Ethereum extends Controller {
   @Security('jwt', [SCOPES.TENANT_AGENT, SCOPES.DEDICATED_AGENT])
   @Post('migrate-schema')
   public async migrateSchema(
+    @Request() request: Req,
     @Body()
     migrateSchemaRequest: {
       did: string
@@ -121,7 +116,7 @@ export class Ethereum extends Controller {
         })
       }
 
-      const schemaResponse = await this.agent.modules.ethereum.createExistingSchema({
+      const schemaResponse = await request.agent.modules.ethereum.createExistingSchema({
         did,
         schemaId,
       })
@@ -154,13 +149,14 @@ export class Ethereum extends Controller {
   @Security('jwt', [SCOPES.TENANT_AGENT, SCOPES.DEDICATED_AGENT])
   @Get(':did/:schemaId')
   public async getSchemaById(
+    @Request() request: Req,
     @Path('did') did: string,
     @Path('schemaId') schemaId: string,
     @Res() internalServerError: TsoaResponse<500, { message: string }>,
     @Res() forbiddenError: TsoaResponse<401, { reason: string }>,
   ): Promise<unknown> {
     try {
-      return this.agent.modules.ethereum.getSchemaById(did, schemaId)
+      return request.agent.modules.ethereum.getSchemaById(did, schemaId)
     } catch (error) {
       if (error instanceof CredoError) {
         if (error.message.includes('UnauthorizedClientRequest')) {
