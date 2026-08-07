@@ -9918,6 +9918,9 @@
 										"invitationDid": {
 											"type": "string"
 										},
+										"credentialRequestParentThId": {
+											"type": "string"
+										},
 										"credentialRequestThId": {
 											"type": "string"
 										},
@@ -9939,6 +9942,7 @@
 									},
 									"required": [
 										"invitationDid",
+										"credentialRequestParentThId",
 										"credentialRequestThId",
 										"credentialExchangeRecordId",
 										"outOfBandRecordId",
@@ -10783,7 +10787,11 @@
 				],
 				"security": [
 					{
-						"apiKey": []
+						"jwt": [
+							"tenant",
+							"dedicated",
+							"Basewallet"
+						]
 					}
 				],
 				"parameters": []
@@ -10844,7 +10852,10 @@
 				],
 				"security": [
 					{
-						"apiKey": []
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
 					}
 				],
 				"parameters": [],
@@ -10933,7 +10944,10 @@
 				],
 				"security": [
 					{
-						"apiKey": []
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
 					}
 				],
 				"parameters": [],
@@ -11016,7 +11030,10 @@
 				],
 				"security": [
 					{
-						"apiKey": []
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
 					}
 				],
 				"parameters": [
