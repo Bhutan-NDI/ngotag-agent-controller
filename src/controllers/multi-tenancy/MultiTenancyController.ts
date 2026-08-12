@@ -121,6 +121,26 @@ export class MultiTenancyController extends Controller {
     }
   }
 
+  /**
+   * Check whether a tenant exists — ported from pipeline-implementation, adapted to use
+   * request.agent (the current develop convention) instead of the legacy this.agent field,
+   * which no longer exists on this controller.
+   */
+  @Get('/checkCloudWalletExists/:tenantId')
+  public async getCloudWallet(@Request() request: Req, @Path('tenantId') tenantId: string) {
+    try {
+      const agent = request.agent as Agent<RestMultiTenantAgentModules>
+      const tenant = await agent.modules.tenants.getTenantById(tenantId)
+      if (tenant) {
+        return 'Tenant exists'
+      }
+      this.setStatus(404)
+      return 'Tenant does not exist'
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
   private async createToken(agent: Agent<RestMultiTenantAgentModules>, tenantId: string, secretKey?: string) {
     let key: string
     if (!secretKey) {

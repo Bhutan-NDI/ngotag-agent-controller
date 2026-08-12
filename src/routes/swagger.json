@@ -7456,6 +7456,48 @@
 				]
 			}
 		},
+		"/multi-tenancy/checkCloudWalletExists/{tenantId}": {
+			"get": {
+				"operationId": "GetCloudWallet",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "string",
+									"enum": [
+										"Tenant exists",
+										"Tenant does not exist"
+									]
+								}
+							}
+						}
+					}
+				},
+				"description": "Check whether a tenant exists — ported from pipeline-implementation, adapted to use\nrequest.agent (the current develop convention) instead of the legacy this.agent field,\nwhich no longer exists on this controller.",
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
 		"/didcomm/question-answer": {
 			"get": {
 				"operationId": "GetQuestionAnswerRecords",
