@@ -7608,6 +7608,184 @@
 				]
 			}
 		},
+		"/multi-tenancy/import/{tenantId}": {
+			"post": {
+				"operationId": "ImportTenantWallet",
+				"responses": {
+					"200": {
+						"description": ", status } — status is always 'pending' on this response",
+						"content": {
+							"application/json": {
+								"schema": {}
+							}
+						}
+					},
+					"400": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Import a tenant's (cloud) wallet from a prior export. Async job: returns a job id\nimmediately — poll via the status endpoint below.\n\nThe tenant's current profile is never deleted outright: it's renamed aside (see\n`backupProfile` on the completed job) before the imported profile takes its place, so a bad\nimport always leaves a recovery path. checksum is verified before anything live is touched.",
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"checksum": {
+										"type": "string"
+									},
+									"passKey": {
+										"type": "string"
+									},
+									"exportUrl": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"checksum",
+									"passKey",
+									"exportUrl"
+								],
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/multi-tenancy/import/{tenantId}/status/{jobId}": {
+			"get": {
+				"operationId": "GetImportWalletStatus",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {}
+							}
+						}
+					},
+					"404": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Poll the status of an import job started via POST /import/:tenantId. On completion, the\nresponse carries the name the tenant's pre-import profile was renamed to (backupProfile) —\nit is never deleted automatically.",
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "jobId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
 		"/didcomm/question-answer": {
 			"get": {
 				"operationId": "GetQuestionAnswerRecords",

@@ -200,6 +200,67 @@ export class MultiTenancyController extends Controller {
     }
   }
 
+  /**
+   * Import a tenant's (cloud) wallet from a prior export. Async job: returns a job id
+   * immediately — poll via the status endpoint below.
+   *
+   * The tenant's current profile is never deleted outright: it's renamed aside (see
+   * `backupProfile` on the completed job) before the imported profile takes its place, so a bad
+   * import always leaves a recovery path. checksum is verified before anything live is touched.
+   *
+   * @returns { jobId, status } — status is always 'pending' on this response
+   */
+  @Post('/import/:tenantId')
+  public async importTenantWallet(
+    @Request() request: Req,
+    @Path('tenantId') tenantId: string,
+    @Body() importWalletRequest: { exportUrl: string; passKey: string; checksum: string },
+    @Res() badRequestError: TsoaResponse<400, { reason: string }>,
+    @Res() internalServerError: TsoaResponse<500, { message: string }>,
+  ) {
+    try {
+      const { exportUrl, passKey, checksum } = importWalletRequest
+      if (!exportUrl || !passKey || !checksum) {
+        return badRequestError(400, { reason: 'exportUrl, passKey and checksum are all required.' })
+      }
+      const agent = request.agent as Agent<RestMultiTenantAgentModules>
+      return await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).importWallet(
+        agent,
+        tenantId,
+        exportUrl,
+        passKey,
+        checksum,
+      )
+    } catch (error) {
+      return internalServerError(500, { message: `something went wrong: ${error}` })
+    }
+  }
+
+  /**
+   * Poll the status of an import job started via POST /import/:tenantId. On completion, the
+   * response carries the name the tenant's pre-import profile was renamed to (backupProfile) —
+   * it is never deleted automatically.
+   */
+  @Get('/import/:tenantId/status/:jobId')
+  public async getImportWalletStatus(
+    @Path('tenantId') tenantId: string,
+    @Path('jobId') jobId: string,
+    @Res() notFoundError: TsoaResponse<404, { reason: string }>,
+    @Res() internalServerError: TsoaResponse<500, { message: string }>,
+  ) {
+    try {
+      const job = await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).getJobStatus(
+        jobId,
+      )
+      if (!job || job.tenantId !== tenantId) {
+        return notFoundError(404, { reason: `Import job '${jobId}' not found for tenant '${tenantId}'.` })
+      }
+      return job
+    } catch (error) {
+      return internalServerError(500, { message: `something went wrong: ${error}` })
+    }
+  }
+
   private async createToken(agent: Agent<RestMultiTenantAgentModules>, tenantId: string, secretKey?: string) {
     let key: string
     if (!secretKey) {

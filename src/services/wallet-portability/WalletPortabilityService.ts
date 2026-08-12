@@ -1,4 +1,4 @@
-import type { ExportWalletResult, WalletPortabilityJobRecord } from './WalletPortabilityTypes'
+import type { ExportWalletResult, ImportWalletResult, WalletPortabilityJobRecord } from './WalletPortabilityTypes'
 import type { RestMultiTenantAgentModules } from '../../cliAgent'
 import type { TsLogger } from '../../utils/logger'
 import type { Agent } from '@credo-ts/core'
@@ -9,11 +9,12 @@ import { KdfMethod, Store, StoreKeyMethod } from '@openwallet-foundation/askar-s
 import * as AWS from 'aws-sdk'
 import { createHash } from 'crypto'
 import { createReadStream, createWriteStream, promises as fs } from 'fs'
+import fetch from 'node-fetch'
 import * as os from 'os'
 import * as path from 'path'
 import { pipeline } from 'stream/promises'
 import { v4 as uuid } from 'uuid'
-import { createGzip } from 'zlib'
+import { createGunzip, createGzip } from 'zlib'
 
 import { WalletPortabilityJobStore } from './WalletPortabilityJobStore'
 import { WalletPortabilityJobStatus, WalletPortabilityJobType } from './WalletPortabilityTypes'
@@ -113,13 +114,17 @@ export class WalletPortabilityService {
     // logged, never recorded a terminal status).
     this.runExport(agent, tenantId, jobId, passKey).catch((error) => {
       this.logger.error(`[WalletPortabilityService] export job ${jobId} failed to start: ${error}`)
-      this.setJobStatus(jobId, tenantId, WalletPortabilityJobStatus.Failed, EXPORT_FAILED_ERROR_CODE).catch(
-        (statusError) => {
-          this.logger.error(
-            `[WalletPortabilityService] export job ${jobId} also failed to record its Failed status: ${statusError}`,
-          )
-        },
-      )
+      this.setJobStatus(
+        jobId,
+        tenantId,
+        WalletPortabilityJobType.Export,
+        WalletPortabilityJobStatus.Failed,
+        EXPORT_FAILED_ERROR_CODE,
+      ).catch((statusError) => {
+        this.logger.error(
+          `[WalletPortabilityService] export job ${jobId} also failed to record its Failed status: ${statusError}`,
+        )
+      })
     })
 
     return { jobId, status: WalletPortabilityJobStatus.Pending }
@@ -146,7 +151,7 @@ export class WalletPortabilityService {
       // Inside the try now (was previously outside it): if this itself throws — e.g. Redis is
       // flapping — the job must land in the catch below and be marked Failed, not silently
       // stay at Pending forever.
-      await this.setJobStatus(jobId, tenantId, WalletPortabilityJobStatus.InProgress)
+      await this.setJobStatus(jobId, tenantId, WalletPortabilityJobType.Export, WalletPortabilityJobStatus.InProgress)
 
       workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-export-'))
       tempDbPath = path.join(workDir, `${jobId}.db`)
@@ -203,7 +208,13 @@ export class WalletPortabilityService {
       })
     } catch (error) {
       this.logger.error(`[WalletPortabilityService] export job ${jobId} failed: ${error}`)
-      await this.setJobStatus(jobId, tenantId, WalletPortabilityJobStatus.Failed, EXPORT_FAILED_ERROR_CODE)
+      await this.setJobStatus(
+        jobId,
+        tenantId,
+        WalletPortabilityJobType.Export,
+        WalletPortabilityJobStatus.Failed,
+        EXPORT_FAILED_ERROR_CODE,
+      )
     } finally {
       // Guaranteed cleanup regardless of success/failure — the export key and the plaintext
       // wallet artifact must never linger on local disk. Removing the whole workDir (rather
@@ -277,6 +288,7 @@ export class WalletPortabilityService {
   private async setJobStatus(
     jobId: string,
     tenantId: string,
+    type: WalletPortabilityJobType,
     status: WalletPortabilityJobStatus,
     error?: string,
   ): Promise<void> {
@@ -284,7 +296,7 @@ export class WalletPortabilityService {
     await this.jobStore.save({
       jobId,
       tenantId,
-      type: WalletPortabilityJobType.Export,
+      type,
       status,
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -299,6 +311,179 @@ export class WalletPortabilityService {
       s3Key: existing?.s3Key,
       checksum: existing?.checksum,
     })
+  }
+
+  // ---------------------------------------------------------------------------
+  // Import
+  // ---------------------------------------------------------------------------
+
+  /**
+   * @param exportUrl The pre-signed S3 URL returned by a prior exportWallet() job.
+   * @param passKey The same passKey the artifact was exported with.
+   * @param checksum The SHA-256 checksum returned alongside exportUrl — verified before anything
+   *   live is touched.
+   *
+   * Import never deletes the tenant's current wallet data outright: their existing profile is
+   * renamed aside (not removed) before the imported profile takes its place, so a bad import
+   * always leaves a recovery path. See project_phase_c_cloud_wallet memory for the rationale.
+   */
+  public async importWallet(
+    agent: Agent<RestMultiTenantAgentModules>,
+    tenantId: string,
+    exportUrl: string,
+    passKey: string,
+    checksum: string,
+  ): Promise<ImportWalletResult> {
+    const jobId = uuid()
+    const now = new Date().toISOString()
+    await this.jobStore.save({
+      jobId,
+      tenantId,
+      type: WalletPortabilityJobType.Import,
+      status: WalletPortabilityJobStatus.Pending,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    // Fire-and-forget: matches the plan's "async job with status, not a blocking call" requirement.
+    this.runImport(agent, tenantId, jobId, exportUrl, passKey, checksum).catch((error) => {
+      this.logger.error(`[WalletPortabilityService] import job ${jobId} failed to start: ${error}`)
+    })
+
+    return { jobId, status: WalletPortabilityJobStatus.Pending }
+  }
+
+  private async runImport(
+    agent: Agent<RestMultiTenantAgentModules>,
+    tenantId: string,
+    jobId: string,
+    exportUrl: string,
+    passKey: string,
+    checksum: string,
+  ): Promise<void> {
+    await this.setJobStatus(jobId, tenantId, WalletPortabilityJobType.Import, WalletPortabilityJobStatus.InProgress)
+
+    let importedStore: Store | undefined
+    let gzipPath: string | undefined
+    let importedDbPath: string | undefined
+    let backupProfile: string | undefined
+    let renamedAway = false
+
+    try {
+      const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-import-'))
+      gzipPath = path.join(workDir, `${jobId}.db.gz`)
+      importedDbPath = path.join(workDir, `${jobId}.db`)
+
+      // Verify the checksum BEFORE touching anything live — a corrupt/tampered artifact must
+      // never reach the point of renaming the tenant's real profile aside.
+      const actualChecksum = await this.downloadAndChecksum(exportUrl, gzipPath)
+      if (actualChecksum !== checksum) {
+        throw new Error(`Checksum mismatch: expected ${checksum}, got ${actualChecksum}`)
+      }
+
+      await this.gunzip(gzipPath, importedDbPath)
+
+      importedStore = await Store.open({
+        uri: `sqlite://${importedDbPath}`,
+        keyMethod: new StoreKeyMethod(KdfMethod.Raw),
+        passKey,
+      })
+
+      await agent.modules.tenants.withTenantAgent({ tenantId }, async (tenantAgent) => {
+        const { store: baseStore, profile } = await tenantAgent.context.dependencyManager
+          .resolve(AskarStoreManager)
+          .getInitializedStoreWithProfile(tenantAgent.context)
+
+        if (!profile) {
+          throw new Error(`No Askar profile resolved for tenant '${tenantId}'`)
+        }
+
+        // Defensive: fail clearly if the artifact doesn't contain the profile we expect, rather
+        // than silently copying nothing / the wrong data. Also guards against a format mismatch
+        // with the legacy Python-exported artifacts (see the format-interoperability risk note
+        // in project_phase_c_cloud_wallet memory).
+        const profilesInArtifact = await importedStore?.listProfiles()
+        if (!profilesInArtifact?.includes(profile)) {
+          throw new Error(
+            `Imported artifact does not contain expected profile '${profile}' (found: ${profilesInArtifact?.join(', ')})`,
+          )
+        }
+
+        backupProfile = `${profile}-pre-import-${jobId}`
+        await baseStore.renameProfile({ fromProfile: profile, toProfile: backupProfile })
+        renamedAway = true
+
+        await importedStore?.copyProfile({ toStore: baseStore, fromProfile: profile, toProfile: profile })
+      })
+
+      const existing = await this.jobStore.get(jobId)
+      await this.jobStore.save({
+        jobId,
+        tenantId,
+        type: WalletPortabilityJobType.Import,
+        status: WalletPortabilityJobStatus.Completed,
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        backupProfile,
+      })
+    } catch (error) {
+      this.logger.error(`[WalletPortabilityService] import job ${jobId} failed: ${error}`)
+
+      // Best-effort rollback: if we got as far as renaming the tenant's real profile aside but
+      // never completed, put it back rather than leaving the tenant with no working wallet.
+      if (renamedAway && backupProfile) {
+        try {
+          await agent.modules.tenants.withTenantAgent({ tenantId }, async (tenantAgent) => {
+            const { store: baseStore, profile } = await tenantAgent.context.dependencyManager
+              .resolve(AskarStoreManager)
+              .getInitializedStoreWithProfile(tenantAgent.context)
+            if (profile) {
+              await baseStore.renameProfile({ fromProfile: backupProfile as string, toProfile: profile })
+            }
+          })
+        } catch (rollbackError) {
+          this.logger.error(
+            `[WalletPortabilityService] import job ${jobId} rollback FAILED — tenant '${tenantId}' may be left without a working profile, manual intervention required: ${rollbackError}`,
+          )
+        }
+      }
+
+      await this.setJobStatus(
+        jobId,
+        tenantId,
+        WalletPortabilityJobType.Import,
+        WalletPortabilityJobStatus.Failed,
+        `${error}`,
+      )
+    } finally {
+      if (importedStore) {
+        await importedStore.close().catch(() => undefined)
+      }
+      if (gzipPath) {
+        await fs.rm(gzipPath, { force: true }).catch(() => undefined)
+      }
+      if (importedDbPath) {
+        await fs.rm(importedDbPath, { force: true }).catch(() => undefined)
+      }
+    }
+  }
+
+  private async downloadAndChecksum(url: string, destPath: string): Promise<string> {
+    const response = await fetch(url)
+    if (!response.ok || !response.body) {
+      throw new Error(`Failed to download export artifact: HTTP ${response.status}`)
+    }
+    const hash = createHash('sha256')
+    const dest = createWriteStream(destPath)
+    response.body.on('data', (chunk) => hash.update(chunk))
+    await pipeline(response.body, dest)
+    return hash.digest('hex')
+  }
+
+  private async gunzip(sourcePath: string, destPath: string): Promise<void> {
+    const source = createReadStream(sourcePath)
+    const dest = createWriteStream(destPath)
+    await pipeline(source, createGunzip(), dest)
   }
 
   /** Graceful shutdown — closes the job store's Redis connection, if any. See shutdownWalletPortabilityService. */
