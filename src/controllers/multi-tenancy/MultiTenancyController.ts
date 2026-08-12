@@ -1,14 +1,20 @@
 import type { RestMultiTenantAgentModules } from '../../cliAgent'
 import type { TenantRecord } from '@credo-ts/tenants'
 
-import { Agent, CacheModuleConfig, JsonTransformer, injectable, RecordNotFoundError } from '@credo-ts/core'
+import { Agent, CacheModuleConfig, JsonTransformer, injectable, LogLevel, RecordNotFoundError } from '@credo-ts/core'
 import { Request as Req } from 'express'
 import jwt from 'jsonwebtoken'
 import { Body, Controller, Delete, Post, Route, Tags, Path, Security, Request, Res, TsoaResponse, Get } from 'tsoa'
 
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
+import { WalletPortabilityService } from '../../services/wallet-portability/WalletPortabilityService'
+import { TsLogger } from '../../utils/logger'
 import { CreateTenantOptions } from '../types'
+
+// Constructed once, not per-request — owns a Redis connection for job status (see
+// WalletPortabilityJobStore) that must not be re-opened on every call.
+const walletPortabilityService = new WalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability'))
 
 @Tags('MultiTenancy')
 @Security('jwt', [SCOPES.MULTITENANT_BASE_AGENT])
@@ -118,6 +124,49 @@ export class MultiTenancyController extends Controller {
         })
       }
       return internalServerError(500, { message: `Something went wrong: ${error}` })
+    }
+  }
+
+  /**
+   * Export a tenant's (cloud) wallet — native replacement for the legacy per-request raw-NATS
+   * call to the separate askar-wallet-tools Python service. Async job: returns a job id
+   * immediately, the actual export runs in the background — poll via the status endpoint below.
+   *
+   * @returns { jobId, status } — status is always 'pending' on this response
+   */
+  @Post('/export/:tenantId')
+  public async exportTenantWallet(
+    @Request() request: Req,
+    @Path('tenantId') tenantId: string,
+    @Res() internalServerError: TsoaResponse<500, { message: string }>,
+  ) {
+    try {
+      const agent = request.agent as Agent<RestMultiTenantAgentModules>
+      return await walletPortabilityService.exportWallet(agent, tenantId)
+    } catch (error) {
+      return internalServerError(500, { message: `something went wrong: ${error}` })
+    }
+  }
+
+  /**
+   * Poll the status of an export job started via POST /export/:tenantId. On completion, the
+   * response carries a short-lived pre-signed S3 URL and the artifact's SHA-256 checksum.
+   */
+  @Get('/export/:tenantId/status/:jobId')
+  public async getExportWalletStatus(
+    @Path('tenantId') tenantId: string,
+    @Path('jobId') jobId: string,
+    @Res() notFoundError: TsoaResponse<404, { reason: string }>,
+    @Res() internalServerError: TsoaResponse<500, { message: string }>,
+  ) {
+    try {
+      const job = await walletPortabilityService.getJobStatus(jobId)
+      if (!job || job.tenantId !== tenantId) {
+        return notFoundError(404, { reason: `Export job '${jobId}' not found for tenant '${tenantId}'.` })
+      }
+      return job
+    } catch (error) {
+      return internalServerError(500, { message: `something went wrong: ${error}` })
     }
   }
 
