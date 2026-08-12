@@ -3819,6 +3819,8 @@ export function RegisterRoutes(app: Router) {
         const argsMultiTenancyController_exportTenantWallet: Record<string, TsoaRoute.ParameterSchema> = {
                 request: {"in":"request","name":"request","required":true,"dataType":"object"},
                 tenantId: {"in":"path","name":"tenantId","required":true,"dataType":"string"},
+                exportWalletRequest: {"in":"body","name":"exportWalletRequest","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"passKey":{"dataType":"string","required":true}}},
+                badRequestError: {"in":"res","name":"400","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true}}},
                 internalServerError: {"in":"res","name":"500","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"message":{"dataType":"string","required":true}}},
         };
         app.post('/multi-tenancy/export/:tenantId',

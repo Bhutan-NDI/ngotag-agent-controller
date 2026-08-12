@@ -132,17 +132,27 @@ export class MultiTenancyController extends Controller {
    * call to the separate askar-wallet-tools Python service. Async job: returns a job id
    * immediately, the actual export runs in the background — poll via the status endpoint below.
    *
+   * `passKey` is caller-supplied (matches the legacy contract) and protects the exported
+   * artifact — the caller must retain it to import the artifact later; it is never generated
+   * or persisted server-side.
+   *
    * @returns { jobId, status } — status is always 'pending' on this response
    */
   @Post('/export/:tenantId')
   public async exportTenantWallet(
     @Request() request: Req,
     @Path('tenantId') tenantId: string,
+    @Body() exportWalletRequest: { passKey: string },
+    @Res() badRequestError: TsoaResponse<400, { reason: string }>,
     @Res() internalServerError: TsoaResponse<500, { message: string }>,
   ) {
     try {
+      const { passKey } = exportWalletRequest
+      if (!passKey) {
+        return badRequestError(400, { reason: 'passKey is required.' })
+      }
       const agent = request.agent as Agent<RestMultiTenantAgentModules>
-      return await walletPortabilityService.exportWallet(agent, tenantId)
+      return await walletPortabilityService.exportWallet(agent, tenantId, passKey)
     } catch (error) {
       return internalServerError(500, { message: `something went wrong: ${error}` })
     }

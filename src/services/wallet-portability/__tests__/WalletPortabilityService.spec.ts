@@ -9,6 +9,10 @@
  *      export file + temp store are cleaned up (never left on disk).
  *   4. On failure (copyProfile throws): job status becomes Failed with the error message, and
  *      cleanup still runs (the finally block, not just the happy path).
+ *   5. The temp store is provisioned with the *caller-supplied* passKey, not a generated one —
+ *      an earlier version of this service generated a throwaway key and never exposed it, which
+ *      would have made every exported artifact permanently undecryptable. See the export
+ *      endpoint's docblock for the legacy-contract rationale.
  *
  * Everything Askar-native is mocked — running the real native binding under Jest's experimental
  * VM-modules mode is unsafe (observed as an unrelated OOM crash, not this service's logic) and a
@@ -49,7 +53,7 @@ const storeProvision = jest.fn(async (options: { uri: string }) => {
 }) as jest.Mock
 
 jest.unstable_mockModule('@openwallet-foundation/askar-shared', () => ({
-  Store: { provision: storeProvision, generateRawKey: jest.fn(() => 'fake-raw-key') },
+  Store: { provision: storeProvision },
   StoreKeyMethod: jest.fn(),
   KdfMethod: { Raw: 'raw' },
 }))
@@ -63,6 +67,7 @@ const { WalletPortabilityJobStatus } = await import('../WalletPortabilityTypes')
 
 const TENANT_ID = 'tenant-under-test'
 const PROFILE = `tenant-${TENANT_ID}`
+const PASS_KEY = 'caller-supplied-pass-key'
 
 const makeLogger = () => ({
   info: jest.fn(),
@@ -127,7 +132,7 @@ describe('WalletPortabilityService — exportWallet', () => {
     const agent = makeAgent(copyProfile)
     const service = new WalletPortabilityService(makeLogger() as never)
 
-    const result = await service.exportWallet(agent as never, TENANT_ID)
+    const result = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY)
 
     expect(result.status).toBe(WalletPortabilityJobStatus.Pending)
     expect(typeof result.jobId).toBe('string')
@@ -142,10 +147,13 @@ describe('WalletPortabilityService — exportWallet', () => {
     const agent = makeAgent(copyProfile)
     const service = new WalletPortabilityService(makeLogger() as never)
 
-    const { jobId } = await service.exportWallet(agent as never, TENANT_ID)
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY)
     const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
 
     expect(copyProfile).toHaveBeenCalledWith(expect.objectContaining({ fromProfile: PROFILE, toProfile: PROFILE }))
+    // Locks in the passKey fix: the temp store must be provisioned with the caller's passKey,
+    // not an internally generated one that would never be exposed back to the caller.
+    expect(storeProvision).toHaveBeenCalledWith(expect.objectContaining({ passKey: PASS_KEY }))
     expect(job.downloadUrl).toBe('https://example-bucket.s3.amazonaws.com/signed-url')
     expect(job.checksum).toMatch(/^[0-9a-f]{64}$/) // sha256 hex digest
     expect(putObject).toHaveBeenCalledTimes(1)
@@ -165,7 +173,7 @@ describe('WalletPortabilityService — exportWallet', () => {
     const agent = makeAgent(copyProfile)
     const service = new WalletPortabilityService(makeLogger() as never)
 
-    const { jobId } = await service.exportWallet(agent as never, TENANT_ID)
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY)
     const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
 
     expect(job.error).toContain('simulated Askar failure')
@@ -191,7 +199,7 @@ describe('WalletPortabilityService — exportWallet', () => {
     }) as never
 
     const service = new WalletPortabilityService(makeLogger() as never)
-    const { jobId } = await service.exportWallet(agent as never, TENANT_ID)
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY)
     await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
 
     expect(callOrder).toEqual(['withTenantAgent:start', 'copyProfile', 'withTenantAgent:end'])

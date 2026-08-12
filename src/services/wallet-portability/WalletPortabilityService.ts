@@ -59,7 +59,17 @@ export class WalletPortabilityService {
     return this.jobStore.get(jobId)
   }
 
-  public async exportWallet(agent: Agent<RestMultiTenantAgentModules>, tenantId: string): Promise<ExportWalletResult> {
+  /**
+   * @param passKey Caller-supplied passphrase for the exported artifact — matches the legacy
+   *   `POST /export/:tenantId { passKey, walletID }` contract. The caller must retain this to
+   *   import the artifact later; it is never generated or persisted server-side, and never
+   *   logged (see runExport below).
+   */
+  public async exportWallet(
+    agent: Agent<RestMultiTenantAgentModules>,
+    tenantId: string,
+    passKey: string,
+  ): Promise<ExportWalletResult> {
     const jobId = uuid()
     const now = new Date().toISOString()
     await this.jobStore.save({
@@ -72,14 +82,19 @@ export class WalletPortabilityService {
     })
 
     // Fire-and-forget: matches the plan's "async job with status, not a blocking call" requirement.
-    this.runExport(agent, tenantId, jobId).catch((error) => {
+    this.runExport(agent, tenantId, jobId, passKey).catch((error) => {
       this.logger.error(`[WalletPortabilityService] export job ${jobId} failed to start: ${error}`)
     })
 
     return { jobId, status: WalletPortabilityJobStatus.Pending }
   }
 
-  private async runExport(agent: Agent<RestMultiTenantAgentModules>, tenantId: string, jobId: string): Promise<void> {
+  private async runExport(
+    agent: Agent<RestMultiTenantAgentModules>,
+    tenantId: string,
+    jobId: string,
+    passKey: string,
+  ): Promise<void> {
     await this.setJobStatus(jobId, tenantId, WalletPortabilityJobStatus.InProgress)
 
     let tempStore: Store | undefined
@@ -89,10 +104,6 @@ export class WalletPortabilityService {
     try {
       const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-export-'))
       tempDbPath = path.join(workDir, `${jobId}.db`)
-
-      // Never touches the real wallet passphrase — this key only protects a brand-new,
-      // throwaway temp file that's deleted (see finally block) as soon as it's zipped+uploaded.
-      const exportKey = Store.generateRawKey()
 
       // Do the actual copy fully inside withTenantAgent — the tenant session is released on
       // exit (the same discipline as the #65/tenant-session-release fix elsewhere in this repo);
@@ -109,7 +120,7 @@ export class WalletPortabilityService {
         tempStore = await Store.provision({
           uri: `sqlite://${tempDbPath}`,
           keyMethod: new StoreKeyMethod(KdfMethod.Raw),
-          passKey: exportKey,
+          passKey,
           recreate: true,
           profile,
         })
