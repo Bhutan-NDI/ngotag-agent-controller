@@ -17,17 +17,31 @@ import { v4 as uuid } from 'uuid'
 import { createGunzip, createGzip } from 'zlib'
 
 import { WalletPortabilityJobStore } from './WalletPortabilityJobStore'
-import { WalletPortabilityJobStatus, WalletPortabilityJobType } from './WalletPortabilityTypes'
+import {
+  WalletPortabilityJobConflictError,
+  WalletPortabilityJobStatus,
+  WalletPortabilityJobType,
+} from './WalletPortabilityTypes'
 
 // Short-lived per the plan's requirement — an exported wallet is sensitive, the URL should not
 // stay valid longer than a normal download takes.
 const PRE_SIGNED_URL_EXPIRY_SECONDS = 15 * 60
 
-// Sanitized code stored on a Failed job record and returned to callers — the real error (Askar,
+// Sanitized codes stored on a Failed job record and returned to callers — the real error (Askar,
 // filesystem, or AWS SDK internals) can carry operational details a caller has no business seeing
 // (paths, bucket names, stack traces). The full error is still logged server-side with the job id
-// at every call site below; this is only what getJobStatus ever hands back. See the #72 review.
+// at every call site below; these are the only values getJobStatus ever hands back. See the #72
+// review.
 const EXPORT_FAILED_ERROR_CODE = 'EXPORT_FAILED'
+const IMPORT_FAILED_ERROR_CODE = 'IMPORT_FAILED'
+
+// downloadAndChecksum only ever fetches a pre-signed URL this service itself minted — refusing
+// anything else closes off an SSRF primitive (an arbitrary caller-supplied fetch target) and a
+// content-confirmation oracle (the checksum-mismatch error echoes sha256(response body)).
+const TRUSTED_S3_HOSTNAME_PATTERN = /^([a-z0-9.-]+\.)?s3([.-][a-z0-9-]+)?\.amazonaws\.com$/i
+// Generous ceiling for a real wallet export. Enforced against actual bytes read, not a trusted
+// Content-Length header, so a response that lies about its size still gets capped.
+const MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024 // 2 GiB
 
 // Deliberately NOT typed as the real `AWS.S3` class (only the 2 methods actually used here) —
 // referencing that type pulls the entirety of aws-sdk's (famously enormous) type declarations
@@ -96,6 +110,17 @@ export class WalletPortabilityService {
     passKey: string,
   ): Promise<ExportWalletResult> {
     const jobId = uuid()
+
+    // Export and import both rename the tenant's Askar profile away for the duration of their
+    // copy — two portability jobs racing on the same tenant (either kind) can wedge it with no
+    // working profile, or silently drop one job's result. Reserve the slot before anything else
+    // is written, so a conflicting caller gets a clean 409 rather than a job id that's doomed to
+    // race. See project_phase_c_cloud_wallet memory / the #73 review for the concurrency finding.
+    const conflictingJobId = await this.jobStore.tryReserveActiveJob(tenantId, jobId)
+    if (conflictingJobId) {
+      throw new WalletPortabilityJobConflictError(tenantId, conflictingJobId)
+    }
+
     const now = new Date().toISOString()
     await this.jobStore.save({
       jobId,
@@ -226,6 +251,9 @@ export class WalletPortabilityService {
       if (workDir) {
         await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined)
       }
+      // Release the tenant's active-job slot regardless of outcome — this always runs exactly
+      // once per job, whether it completed or failed. See exportWallet's reservation above.
+      await this.jobStore.releaseActiveJob(tenantId, jobId).catch(() => undefined)
     }
   }
 
@@ -291,6 +319,7 @@ export class WalletPortabilityService {
     type: WalletPortabilityJobType,
     status: WalletPortabilityJobStatus,
     error?: string,
+    backupProfile?: string,
   ): Promise<void> {
     const existing = await this.jobStore.get(jobId)
     await this.jobStore.save({
@@ -310,6 +339,9 @@ export class WalletPortabilityService {
       // through the API. See the #72 review.
       s3Key: existing?.s3Key,
       checksum: existing?.checksum,
+      // Preserves a backupProfile written on an earlier InProgress/Completed save for this job
+      // if this particular call doesn't pass one explicitly (export callers never do).
+      backupProfile: backupProfile ?? existing?.backupProfile,
     })
   }
 
@@ -335,6 +367,15 @@ export class WalletPortabilityService {
     checksum: string,
   ): Promise<ImportWalletResult> {
     const jobId = uuid()
+
+    // See exportWallet's identical reservation for the rationale — export and import share the
+    // same tenant profile namespace, so this guards against both a concurrent import *and* a
+    // concurrent export for the same tenant, not just a second import.
+    const conflictingJobId = await this.jobStore.tryReserveActiveJob(tenantId, jobId)
+    if (conflictingJobId) {
+      throw new WalletPortabilityJobConflictError(tenantId, conflictingJobId)
+    }
+
     const now = new Date().toISOString()
     await this.jobStore.save({
       jobId,
@@ -346,8 +387,24 @@ export class WalletPortabilityService {
     })
 
     // Fire-and-forget: matches the plan's "async job with status, not a blocking call" requirement.
+    // Best-effort mark Failed + release the reservation here too — same reasoning as
+    // exportWallet's identical handler: if setJobStatus(InProgress) itself is what threw, the job
+    // would otherwise be stranded at Pending *and* the tenant's active-job slot would never be
+    // released, wedging every future export/import for this tenant until the 24h TTL self-clears.
     this.runImport(agent, tenantId, jobId, exportUrl, passKey, checksum).catch((error) => {
       this.logger.error(`[WalletPortabilityService] import job ${jobId} failed to start: ${error}`)
+      this.setJobStatus(
+        jobId,
+        tenantId,
+        WalletPortabilityJobType.Import,
+        WalletPortabilityJobStatus.Failed,
+        IMPORT_FAILED_ERROR_CODE,
+      ).catch((statusError) => {
+        this.logger.error(
+          `[WalletPortabilityService] import job ${jobId} also failed to record its Failed status: ${statusError}`,
+        )
+      })
+      this.jobStore.releaseActiveJob(tenantId, jobId).catch(() => undefined)
     })
 
     return { jobId, status: WalletPortabilityJobStatus.Pending }
@@ -361,8 +418,6 @@ export class WalletPortabilityService {
     passKey: string,
     checksum: string,
   ): Promise<void> {
-    await this.setJobStatus(jobId, tenantId, WalletPortabilityJobType.Import, WalletPortabilityJobStatus.InProgress)
-
     let importedStore: Store | undefined
     let gzipPath: string | undefined
     let importedDbPath: string | undefined
@@ -370,6 +425,11 @@ export class WalletPortabilityService {
     let renamedAway = false
 
     try {
+      // Inside the try now (was previously outside it) — same reasoning as runExport: if this
+      // itself throws, the job must land in the catch below and be marked Failed, not silently
+      // stay at Pending forever.
+      await this.setJobStatus(jobId, tenantId, WalletPortabilityJobType.Import, WalletPortabilityJobStatus.InProgress)
+
       const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-import-'))
       gzipPath = path.join(workDir, `${jobId}.db.gz`)
       importedDbPath = path.join(workDir, `${jobId}.db`)
@@ -385,7 +445,12 @@ export class WalletPortabilityService {
 
       importedStore = await Store.open({
         uri: `sqlite://${importedDbPath}`,
-        keyMethod: new StoreKeyMethod(KdfMethod.Raw),
+        // Must match the KdfMethod the artifact was provisioned with, or Store.open rejects it
+        // outright ("Store key method mismatch", verified against the real binding) before ever
+        // reaching a wrong-passphrase error. Export provisions with Argon2IMod (see runExport) —
+        // this was still Raw here, left over from before that fix; every real import would have
+        // failed on this line for any artifact produced by the fixed export path.
+        keyMethod: new StoreKeyMethod(KdfMethod.Argon2IMod),
         passKey,
       })
 
@@ -398,22 +463,34 @@ export class WalletPortabilityService {
           throw new Error(`No Askar profile resolved for tenant '${tenantId}'`)
         }
 
-        // Defensive: fail clearly if the artifact doesn't contain the profile we expect, rather
-        // than silently copying nothing / the wrong data. Also guards against a format mismatch
-        // with the legacy Python-exported artifacts (see the format-interoperability risk note
-        // in project_phase_c_cloud_wallet memory).
+        // Take the source profile FROM the artifact rather than requiring it to already equal
+        // the target tenant's profile name. The old "must match" guard hard-coupled an artifact
+        // to the exact tenant id it was exported from — it would reject the main restore
+        // scenario (importing onto a rebuilt agent / a freshly created tenant with a new uuid)
+        // and every legacy Python-exported artifact (askar-wallet-tools names the profile after
+        // the wallet/store, never tenant-<uuid>). An export artifact always contains exactly one
+        // profile (see runExport), so asserting that and using it as fromProfile works for both.
         const profilesInArtifact = await importedStore?.listProfiles()
-        if (!profilesInArtifact?.includes(profile)) {
+        if (!profilesInArtifact || profilesInArtifact.length !== 1) {
           throw new Error(
-            `Imported artifact does not contain expected profile '${profile}' (found: ${profilesInArtifact?.join(', ')})`,
+            `Imported artifact must contain exactly one profile (found: ${profilesInArtifact?.join(', ') ?? 'none'})`,
           )
         }
+        const sourceProfile = profilesInArtifact[0]
 
         backupProfile = `${profile}-pre-import-${jobId}`
         await baseStore.renameProfile({ fromProfile: profile, toProfile: backupProfile })
         renamedAway = true
 
-        await importedStore?.copyProfile({ toStore: baseStore, fromProfile: profile, toProfile: profile })
+        await importedStore?.copyProfile({ toStore: baseStore, fromProfile: sourceProfile, toProfile: profile })
+
+        // Past this point the imported profile is in place under the tenant's real name — a
+        // later failure (e.g. the job-store write below) must NOT trigger the rollback, which
+        // would otherwise try to rename the backup on top of the now-successfully-imported
+        // profile. Verified against the real binding: that rename fails outright (UNIQUE
+        // constraint), so the practical effect was a false "manual intervention required" alert
+        // for an import that had, in fact, already succeeded.
+        renamedAway = false
       })
 
       const existing = await this.jobStore.get(jobId)
@@ -426,6 +503,13 @@ export class WalletPortabilityService {
         updatedAt: new Date().toISOString(),
         backupProfile,
       })
+      // The pre-import profile is intentionally never auto-deleted (see the docblock above) —
+      // but it needs to be discoverable somewhere other than a 24h-TTL'd job record. Logging it
+      // at info gives an operator a durable trail to reap it later. There is no cleanup
+      // endpoint yet; that's a known follow-up, not something silently dropped.
+      this.logger.info(
+        `[WalletPortabilityService] import job ${jobId} completed for tenant '${tenantId}' — pre-import backup left at profile '${backupProfile}' (not auto-deleted)`,
+      )
     } catch (error) {
       this.logger.error(`[WalletPortabilityService] import job ${jobId} failed: ${error}`)
 
@@ -438,12 +522,25 @@ export class WalletPortabilityService {
               .resolve(AskarStoreManager)
               .getInitializedStoreWithProfile(tenantAgent.context)
             if (profile) {
+              // copyProfile creates the target profile before it starts copying entries, so a
+              // failure partway through a copy can leave `profile` present-but-partial in the
+              // base store — the rename back below would then hit a Duplicate/UNIQUE error
+              // against that half-copied profile. Clear it first so the rollback can actually
+              // succeed instead of landing in the "manual intervention required" branch below
+              // for a failure it could have recovered from on its own.
+              const currentProfiles = await baseStore.listProfiles()
+              if (currentProfiles.includes(profile)) {
+                await baseStore.removeProfile(profile)
+              }
               await baseStore.renameProfile({ fromProfile: backupProfile as string, toProfile: profile })
             }
           })
         } catch (rollbackError) {
+          // backupProfile is included here so an operator doesn't have to reverse-engineer the
+          // `${profile}-pre-import-${jobId}` naming convention from source to find the tenant's
+          // stranded data — and it's threaded into the job record below for the same reason.
           this.logger.error(
-            `[WalletPortabilityService] import job ${jobId} rollback FAILED — tenant '${tenantId}' may be left without a working profile, manual intervention required: ${rollbackError}`,
+            `[WalletPortabilityService] import job ${jobId} rollback FAILED — tenant '${tenantId}' may be left without a working profile, manual intervention required. Tenant's real data may still be at profile '${backupProfile}': ${rollbackError}`,
           )
         }
       }
@@ -453,7 +550,8 @@ export class WalletPortabilityService {
         tenantId,
         WalletPortabilityJobType.Import,
         WalletPortabilityJobStatus.Failed,
-        `${error}`,
+        IMPORT_FAILED_ERROR_CODE,
+        backupProfile,
       )
     } finally {
       if (importedStore) {
@@ -465,18 +563,47 @@ export class WalletPortabilityService {
       if (importedDbPath) {
         await fs.rm(importedDbPath, { force: true }).catch(() => undefined)
       }
+      // Release the tenant's active-job slot regardless of outcome. See importWallet's
+      // reservation above and runExport's identical release for the export side.
+      await this.jobStore.releaseActiveJob(tenantId, jobId).catch(() => undefined)
     }
   }
 
   private async downloadAndChecksum(url: string, destPath: string): Promise<string> {
-    const response = await fetch(url)
+    // exportUrl is caller-supplied and goes straight into a server-side fetch — without these
+    // checks this endpoint is an SSRF primitive (any base-wallet token holder can make the agent
+    // GET an arbitrary internal URL, e.g. the cloud metadata endpoint) plus a content-confirmation
+    // oracle (the checksum-mismatch error echoes sha256(response body) back to the caller). The
+    // only legitimate input is a pre-signed URL for the bucket this service itself wrote to, so
+    // restrict to that: https + an S3 hostname, no redirects followed, and a hard byte cap so a
+    // large/endless response can't fill the host's disk.
+    const parsedUrl = new URL(url)
+    if (parsedUrl.protocol !== 'https:' || !TRUSTED_S3_HOSTNAME_PATTERN.test(parsedUrl.hostname)) {
+      throw new Error(`Refusing to download export artifact from untrusted host '${parsedUrl.hostname}'`)
+    }
+
+    const response = await fetch(url, { redirect: 'error' })
     if (!response.ok || !response.body) {
       throw new Error(`Failed to download export artifact: HTTP ${response.status}`)
     }
+    // node-fetch v2's Response.body is a real Node Readable at runtime (hence the existing
+    // `.on('data', ...)` below) — @types/node-fetch just types it as the DOM ReadableStream
+    // interface, which doesn't declare `.destroy()`. Cast to the real runtime type.
+    const body = response.body as unknown as Readable
     const hash = createHash('sha256')
     const dest = createWriteStream(destPath)
-    response.body.on('data', (chunk) => hash.update(chunk))
-    await pipeline(response.body, dest)
+    let bytesRead = 0
+    body.on('data', (chunk: Buffer) => {
+      bytesRead += chunk.length
+      if (bytesRead > MAX_DOWNLOAD_BYTES) {
+        // Aborts the stream; pipeline() below rejects with this same error, which propagates up
+        // to runImport's catch — no partial artifact is treated as valid.
+        body.destroy(new Error(`Export artifact exceeds the ${MAX_DOWNLOAD_BYTES}-byte download cap`))
+        return
+      }
+      hash.update(chunk)
+    })
+    await pipeline(body, dest)
     return hash.digest('hex')
   }
 

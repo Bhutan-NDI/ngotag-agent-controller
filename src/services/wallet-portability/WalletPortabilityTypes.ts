@@ -46,3 +46,22 @@ export interface ImportWalletResult {
   jobId: string
   status: WalletPortabilityJobStatus
 }
+
+/**
+ * Thrown when a caller tries to start an export or import for a tenant that already has one
+ * in flight (status Pending/InProgress). Export and import both rename the tenant's Askar
+ * profile away for the duration of the copy, so two portability jobs racing on the same tenant
+ * — either the same kind or a mix — can wedge the tenant with no working profile, or silently
+ * drop one job's result. The controller layer maps this to HTTP 409.
+ */
+export class WalletPortabilityJobConflictError extends Error {
+  public readonly tenantId: string
+  public readonly activeJobId: string
+
+  public constructor(tenantId: string, activeJobId: string) {
+    super(`A wallet portability job (${activeJobId}) is already in progress for tenant '${tenantId}'`)
+    this.name = 'WalletPortabilityJobConflictError'
+    this.tenantId = tenantId
+    this.activeJobId = activeJobId
+  }
+}

@@ -8,6 +8,12 @@ import { Redis } from 'ioredis'
 // for a client to poll status without leaking memory/Redis keys indefinitely.
 const JOB_TTL_SECONDS = 24 * 60 * 60
 const JOB_KEY_PREFIX = 'walletPortabilityJob:'
+// Per-tenant "is a portability job already running" pointer — export and import both rename the
+// tenant's profile away during their work, so they can never safely run concurrently with each
+// other or with a second instance of themselves for the same tenant. Same TTL as job records:
+// if a crash ever leaves this stuck, it self-clears within 24h rather than wedging the tenant
+// forever (see the reservation logic in tryReserveActiveJob/releaseActiveJob below).
+const ACTIVE_JOB_KEY_PREFIX = 'walletPortabilityActiveJob:'
 
 const CONNECT_TIMEOUT_MS = 5000
 const COMMAND_TIMEOUT_MS = 3000
@@ -45,6 +51,7 @@ export class WalletPortabilityJobStore {
   private readonly logger: TsLogger
   private readonly redisClient?: Redis
   private readonly memoryStore = new Map<string, MemoryStoreEntry>()
+  private readonly activeJobMemoryStore = new Map<string, string>()
   private connectionState: ConnectionState = ConnectionState.Connecting
 
   public constructor(logger: TsLogger, redisUrl?: string) {
@@ -178,6 +185,52 @@ export class WalletPortabilityJobStore {
       if (entry.expiresAt <= now) {
         this.memoryStore.delete(jobId)
       }
+    }
+  }
+
+  /**
+   * Atomically claim the "active portability job" slot for a tenant. Returns undefined if the
+   * claim succeeded (the caller's jobId is now the active one) or the existing active jobId if
+   * another job already holds the slot. Uses Redis's `SET ... NX` (set-if-absent) so two
+   * concurrent requests for the same tenant can't both believe they won the race — whichever
+   * `NX` call actually lands first wins, the other observes the key already set.
+   */
+  public async tryReserveActiveJob(tenantId: string, jobId: string): Promise<string | undefined> {
+    const key = `${ACTIVE_JOB_KEY_PREFIX}${tenantId}`
+    if (this.redisClient && this.isRedisReady()) {
+      try {
+        const result = await this.redisClient.set(key, jobId, 'EX', JOB_TTL_SECONDS, 'NX')
+        if (result === 'OK') return undefined
+        const existing = await this.redisClient.get(key)
+        return existing ?? undefined
+      } catch (error) {
+        this.logger.error(
+          `[WalletPortabilityJobStore] Redis active-job reservation failed, falling back to in-memory: ${error}`,
+        )
+      }
+    }
+    const existing = this.activeJobMemoryStore.get(tenantId)
+    if (existing) return existing
+    this.activeJobMemoryStore.set(tenantId, jobId)
+    return undefined
+  }
+
+  /** Release the active-job slot, but only if it still points at this exact jobId — never clobber a newer job's reservation. */
+  public async releaseActiveJob(tenantId: string, jobId: string): Promise<void> {
+    const key = `${ACTIVE_JOB_KEY_PREFIX}${tenantId}`
+    if (this.redisClient && this.isRedisReady()) {
+      try {
+        const current = await this.redisClient.get(key)
+        if (current === jobId) {
+          await this.redisClient.del(key)
+        }
+        return
+      } catch (error) {
+        this.logger.error(`[WalletPortabilityJobStore] Redis active-job release failed: ${error}`)
+      }
+    }
+    if (this.activeJobMemoryStore.get(tenantId) === jobId) {
+      this.activeJobMemoryStore.delete(tenantId)
     }
   }
 

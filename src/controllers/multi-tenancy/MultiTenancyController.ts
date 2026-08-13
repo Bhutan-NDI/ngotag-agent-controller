@@ -8,7 +8,9 @@ import { Body, Controller, Delete, Post, Route, Tags, Path, Security, Request, R
 
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
+import { ConflictError } from '../../errors/errors'
 import { getWalletPortabilityService } from '../../services/wallet-portability/WalletPortabilityService'
+import { WalletPortabilityJobConflictError } from '../../services/wallet-portability/WalletPortabilityTypes'
 import { TsLogger } from '../../utils/logger'
 import { CreateTenantOptions } from '../types'
 
@@ -172,6 +174,11 @@ export class MultiTenancyController extends Controller {
         passKey,
       )
     } catch (error) {
+      // Export and import share the tenant's profile namespace and can't safely run
+      // concurrently — see WalletPortabilityJobConflictError's docblock.
+      if (error instanceof WalletPortabilityJobConflictError) {
+        throw new ConflictError(error.message)
+      }
       throw ErrorHandlingService.handle(error)
     }
   }
@@ -232,6 +239,11 @@ export class MultiTenancyController extends Controller {
         checksum,
       )
     } catch (error) {
+      // Export and import share the tenant's profile namespace and can't safely run
+      // concurrently — see WalletPortabilityJobConflictError's docblock.
+      if (error instanceof WalletPortabilityJobConflictError) {
+        throw new ConflictError(error.message)
+      }
       return internalServerError(500, { message: `something went wrong: ${error}` })
     }
   }

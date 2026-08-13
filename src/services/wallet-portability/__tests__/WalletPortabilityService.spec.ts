@@ -18,10 +18,17 @@
  *   6. Checksum is verified BEFORE anything live is touched — a mismatch never reaches
  *      renameProfile/copyProfile.
  *   7. The tenant's current profile is renamed aside (never removed) before the imported profile
- *      takes its place, and the backup name is reported on the completed job.
+ *      takes its place, and the backup name is reported on the completed job — and survives onto
+ *      a Failed record too, not just Completed.
  *   8. If copyProfile fails after the rename, the rollback renames the backup profile back to the
- *      real name — the tenant is never left without a working profile.
- *   9. A downloaded artifact missing the expected profile fails clearly, before any rename.
+ *      real name — the tenant is never left without a working profile — even if copyProfile had
+ *      already partially created the target profile before failing (the rollback clears it first).
+ *   9. A downloaded artifact with zero or more than one profile fails clearly, before any rename.
+ *      An artifact with exactly one profile imports even when that profile's name differs from
+ *      the target tenant's own — restoring onto a rebuilt agent / a freshly created tenant, or a
+ *      legacy Python-exported artifact, are not required to match by name.
+ *   10. A second export/import for a tenant that already has one in flight is rejected with a
+ *       conflict rather than racing it — released once the first job reaches a terminal state.
  *
  * Everything Askar-native is mocked here — that lets these tests focus on this service's own
  * control flow (job lifecycle, cleanup, session scoping) without depending on real file/native
@@ -123,10 +130,18 @@ const makeLogger = () => ({
 })
 
 // copyProfileImpl lets each test control success/failure without re-declaring the whole agent mock.
-function makeAgent(copyProfileImpl: jest.Mock, renameProfileImpl?: jest.Mock) {
+// listProfilesImpl/removeProfileImpl default to "nothing there yet" — override to simulate
+// copy_profile having already created the target profile before failing (see the rollback tests).
+function makeAgent(
+  copyProfileImpl: jest.Mock,
+  renameProfileImpl?: jest.Mock,
+  storeOverrides: { listProfilesImpl?: jest.Mock; removeProfileImpl?: jest.Mock } = {},
+) {
   const baseStore = {
     copyProfile: copyProfileImpl,
     renameProfile: renameProfileImpl ?? (jest.fn(async () => undefined) as jest.Mock),
+    listProfiles: storeOverrides.listProfilesImpl ?? (jest.fn(async () => [] as string[]) as jest.Mock),
+    removeProfile: storeOverrides.removeProfileImpl ?? (jest.fn(async () => undefined) as jest.Mock),
   }
   const askarStoreManager = {
     getInitializedStoreWithProfile: jest.fn(async () => ({ store: baseStore, profile: PROFILE })),
@@ -321,6 +336,10 @@ describe('WalletPortabilityService — importWallet', () => {
   beforeEach(() => {
     importedStoreListProfilesHolder.impl = jest.fn(async () => [PROFILE]) as jest.Mock
     fetchMock.mockImplementation(async () => makeFetchResponse(gzippedArtifact))
+    // jest.clearAllMocks() (global beforeEach) clears call history but not a mockImplementation
+    // set with .mockImplementation() — reset this back to its default success behaviour so a
+    // failure-simulating test earlier in file order can't leak into a later, unrelated one.
+    importedStoreCopyProfile.mockImplementation(async () => undefined)
   })
 
   it('returns a Pending job id immediately, without waiting for the import to finish', async () => {
@@ -344,7 +363,7 @@ describe('WalletPortabilityService — importWallet', () => {
     const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
     const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
 
-    expect(fetchMock).toHaveBeenCalledWith(EXPORT_URL)
+    expect(fetchMock).toHaveBeenCalledWith(EXPORT_URL, { redirect: 'error' })
     expect(storeOpen).toHaveBeenCalledWith(expect.objectContaining({ passKey: PASS_KEY }))
     expect(renameProfile).toHaveBeenCalledWith({ fromProfile: PROFILE, toProfile: job.backupProfile })
     expect(importedStoreCopyProfile).toHaveBeenCalledWith(
@@ -376,8 +395,8 @@ describe('WalletPortabilityService — importWallet', () => {
     expect(storeOpen).not.toHaveBeenCalled()
   })
 
-  it('artifact missing the expected profile: fails clearly, before any rename', async () => {
-    importedStoreListProfilesHolder.impl = jest.fn(async () => ['some-other-profile']) as jest.Mock
+  it('artifact with zero or multiple profiles: fails clearly, before any rename', async () => {
+    importedStoreListProfilesHolder.impl = jest.fn(async () => []) as jest.Mock
     const copyProfile = jest.fn(async () => undefined)
     const renameProfile = jest.fn(async () => undefined)
     const { agent } = makeAgent(copyProfile, renameProfile)
@@ -386,9 +405,28 @@ describe('WalletPortabilityService — importWallet', () => {
     const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
     const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
 
-    expect(job.error).toContain('does not contain expected profile')
+    expect(job.error).toContain('must contain exactly one profile')
     expect(renameProfile).not.toHaveBeenCalled()
     expect(importedStoreCopyProfile).not.toHaveBeenCalled()
+  })
+
+  it("restore scenario: an artifact exported from a different tenant (or a freshly recreated one) still imports — the artifact's own profile is used as fromProfile, not required to equal the target", async () => {
+    // The old guard required the artifact's profile to already equal the *target* tenant's
+    // profile — which would reject exactly this scenario (restoring onto a rebuilt agent or a
+    // freshly created tenant with a new uuid) and every legacy Python-exported artifact.
+    importedStoreListProfilesHolder.impl = jest.fn(async () => ['tenant-some-other-original-tenant']) as jest.Mock
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(job.status).toBe(WalletPortabilityJobStatus.Completed)
+    expect(importedStoreCopyProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ fromProfile: 'tenant-some-other-original-tenant', toProfile: PROFILE }),
+    )
   })
 
   it('copyProfile failure after the rename: rolls back — renames the backup profile back to the real name', async () => {
@@ -416,5 +454,97 @@ describe('WalletPortabilityService — importWallet', () => {
     // The rollback call reverses the first: the backup name becomes fromProfile, the real
     // profile name becomes toProfile again.
     expect(secondCall[0]).toEqual({ fromProfile: firstCall[0].toProfile, toProfile: PROFILE })
+    // backupProfile must survive onto the Failed record too, not just the Completed one — it's
+    // the only API-visible pointer to where the tenant's real data ended up.
+    expect(job.backupProfile).toEqual(firstCall[0].toProfile)
+  })
+
+  it('rollback recovers even when copyProfile left the target profile partially created before failing', async () => {
+    // Askar's real copy_profile creates the destination profile before it starts copying
+    // entries, so a mid-copy failure can leave `profile` present-but-partial in the base store.
+    // Simulate that here: listProfiles reports it's already there.
+    importedStoreCopyProfile.mockImplementation(async () => {
+      throw new Error('simulated partial copy failure')
+    })
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => undefined)
+    const removeProfile = jest.fn(async () => undefined)
+    const listProfiles = jest.fn(async () => [PROFILE])
+    const { agent } = makeAgent(copyProfile, renameProfile, {
+      listProfilesImpl: listProfiles,
+      removeProfileImpl: removeProfile,
+    })
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(job.error).toContain('simulated partial copy failure')
+    // The partial profile is removed before the rename-back is attempted — without this, the
+    // rename would hit a Duplicate/UNIQUE error and the rollback would itself fail.
+    expect(removeProfile).toHaveBeenCalledWith(PROFILE)
+    expect(renameProfile).toHaveBeenCalledTimes(2)
+  })
+
+  it('a concurrent export/import for the same tenant is rejected with a conflict, not a second job', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const first = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    await expect(service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)).rejects.toThrow(
+      /already in progress/,
+    )
+    await expect(service.exportWallet(agent as never, TENANT_ID, PASS_KEY)).rejects.toThrow(/already in progress/)
+
+    // The original job is unaffected and still runs to completion.
+    await waitForJobStatus(service, first.jobId, WalletPortabilityJobStatus.Completed)
+
+    // Once the tenant's job has finished, the slot is released and a new one can start.
+    const after = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    expect(after.jobId).not.toBe(first.jobId)
+    await waitForJobStatus(service, after.jobId, WalletPortabilityJobStatus.Completed)
+  })
+})
+
+describe('WalletPortabilityService — export → import round trip', () => {
+  // The bug this closes: export's gzipAndChecksum and import's downloadAndChecksum each hashed
+  // different bytes (plaintext vs. gzip) before the #72/#73 review fixes, so any real export's
+  // checksum could never match what a real import verified — 100% failure, undetected by either
+  // side's own unit tests because each minted its *own* expected checksum locally instead of
+  // consuming the other's actual output. This test never computes an expected checksum itself:
+  // it takes whatever exportWallet() actually returns and feeds it straight into importWallet(),
+  // through the real (unmocked) gzip/hash code in both gzipAndChecksum and downloadAndChecksum —
+  // only Askar, S3, and node-fetch are mocked, exactly as in the suites above.
+  beforeEach(() => {
+    importedStoreListProfilesHolder.impl = jest.fn(async () => [PROFILE]) as jest.Mock
+    importedStoreCopyProfile.mockImplementation(async () => undefined)
+  })
+
+  it('the checksum a real export produces is exactly what a real import verifies against the same downloaded bytes', async () => {
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const exportCopyProfile = jest.fn(async () => undefined)
+    const { agent: exportAgent } = makeAgent(exportCopyProfile)
+    const { jobId: exportJobId } = await service.exportWallet(exportAgent as never, TENANT_ID, PASS_KEY)
+    const exportJob = await waitForJobStatus(service, exportJobId, WalletPortabilityJobStatus.Completed)
+
+    // The exact bytes S3 received for this export — i.e. exactly what a real download would return.
+    const uploadedBytes = (putObject.mock.calls[putObject.mock.calls.length - 1][0] as { Body: Buffer }).Body
+    fetchMock.mockImplementation(async () => makeFetchResponse(uploadedBytes))
+
+    const importCopyProfile = jest.fn(async () => undefined)
+    const { agent: importAgent } = makeAgent(importCopyProfile)
+    const { jobId: importJobId } = await service.importWallet(
+      importAgent as never,
+      TENANT_ID,
+      exportJob.downloadUrl as string,
+      PASS_KEY,
+      exportJob.checksum as string,
+    )
+    const importJob = await waitForJobStatus(service, importJobId, WalletPortabilityJobStatus.Completed)
+
+    expect(importJob.status).toBe(WalletPortabilityJobStatus.Completed)
+    expect(importJob.error).toBeUndefined()
   })
 })
