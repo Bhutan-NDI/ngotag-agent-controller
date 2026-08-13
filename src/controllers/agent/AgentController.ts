@@ -1,6 +1,26 @@
-import type { AgentInfo, AgentToken, SafeW3cJsonLdVerifyCredentialOptions, VerifyDataOptions } from '../types'
+import type {
+  AgentInfo,
+  AgentToken,
+  jsonLdCredentialOptions,
+  SafeW3cJsonLdVerifyCredentialOptions,
+  VerifyDataOptions,
+} from '../types'
+import type {
+  JsonObject,
+  SingleOrArray,
+  W3cCredentialOptions,
+  W3cCredentialSubjectOptions,
+  W3cJsonLdSignCredentialOptions,
+} from '@credo-ts/core'
 
-import { JsonTransformer, W3cJsonLdVerifiableCredential } from '@credo-ts/core'
+import {
+  ClaimFormat,
+  DidRepository,
+  JsonTransformer,
+  W3cCredential,
+  W3cCredentialRecord,
+  W3cJsonLdVerifiableCredential,
+} from '@credo-ts/core'
 import { Request as Req } from 'express'
 import jwt from 'jsonwebtoken'
 import { Controller, Get, Route, Tags, Security, Request, Post, Body } from 'tsoa'
@@ -8,6 +28,7 @@ import { injectable } from 'tsyringe'
 
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
+import { NotFoundError } from '../../errors'
 import { verifyDidBoundSignature } from '../../utils/didSignatureVerification'
 
 @Tags('Agent')
@@ -199,6 +220,95 @@ export class AgentController extends Controller {
         ...credentialOptions,
       })
       return signedCred
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  /**
+   * Create and store a self-attested W3C JSON-LD credential — the agent issues a credential to
+   * itself using its own default DID, rather than an external issuer signing over a subject DID.
+   *
+   * Lives on request.agent, not /multi-tenancy/:tenantId + withTenantAgent() — matching
+   * verifyCredential/verify above rather than the legacy pipeline-implementation placement. The
+   * auth layer already resolves the tenant agent per request for a tenant token (see
+   * authentication.ts), which is why no live controller on develop calls withTenantAgent(); the
+   * /multi-tenancy/:tenantId placement is base-wallet-token only (MULTITENANT_BASE_AGENT), so a
+   * dedicated agent or a tenant's own token could never have reached it there.
+   *
+   * Ported from pipeline-implementation, adapted for the current Credo version:
+   * - request.agent instead of the legacy this.agent field (no longer exists on this controller).
+   * - credentialSubject's claims are nested under a `claims` key when building the subject —
+   *   W3cCredentialSubject's constructor only reads options.id/options.claims, so spreading the
+   *   request's claims at the top level (as the legacy code effectively did, via a plain object
+   *   that bypassed the class transform) would silently drop every claim from the issued
+   *   credential. Handles a single object or an array of subjects.
+   * - w3cCredentials.store({ record }) instead of the removed storeCredential({ credential });
+   *   W3cCredentialRecord.fromCredential(signedCred) builds the record directly from the signed
+   *   credential — signCredential() already returns a typed W3cVerifiableCredential instance, so
+   *   the legacy JsonTransformer.fromJSON re-parse step is no longer needed either.
+   * - the response restores a top-level `credential` field for back-compat: 0.6.2's
+   *   W3cCredentialRecord replaces 0.5.x's top-level `credential` with a `credentialInstances`
+   *   array (credential survives only as a private write-only setter), which would otherwise
+   *   silently change the response shape for downstream consumers (platform's apps/cloud-wallet
+   *   -> agent-service -> mobile wallet) that read response.credential directly.
+   */
+  @Security('jwt', [SCOPES.TENANT_AGENT, SCOPES.DEDICATED_AGENT])
+  @Post('/credential/self-attested')
+  public async createW3cSelfAttestedCredential(
+    @Request() request: Req,
+    @Body() selfAttestedCredentialOptions: jsonLdCredentialOptions,
+  ) {
+    try {
+      const didRepository = request.agent.dependencyManager.resolve(DidRepository)
+      const defaultDidRecord = await didRepository.findSingleByQuery(request.agent.context, {
+        isDefault: true,
+      })
+      const selfDid = defaultDidRecord?.did
+      const selfDidVerificationMethod = defaultDidRecord?.didDocument?.verificationMethod?.[0]?.id
+
+      if (!selfDid) {
+        throw new NotFoundError('Default DID not found')
+      }
+      if (!selfDidVerificationMethod) {
+        throw new Error('Default DID Verification method is missing or undefined')
+      }
+
+      const {
+        '@context': selfAttestedContext,
+        type: selfAttestedType,
+        credentialSubject: selfAttestedSubjectOptions,
+        proofType: selfAttestedProofType,
+      } = selfAttestedCredentialOptions
+
+      const toSubject = (subject: JsonObject): W3cCredentialSubjectOptions => ({
+        id: selfDid,
+        claims: subject,
+      })
+      const selfAttestedSubject: SingleOrArray<W3cCredentialSubjectOptions> = Array.isArray(selfAttestedSubjectOptions)
+        ? selfAttestedSubjectOptions.map(toSubject)
+        : toSubject(selfAttestedSubjectOptions)
+      const selfAttestedW3cCredential: W3cCredentialOptions = {
+        context: selfAttestedContext,
+        type: selfAttestedType,
+        issuer: selfDid,
+        issuanceDate: new Date().toISOString(),
+        credentialSubject: selfAttestedSubject,
+      }
+      const selfAttestedJsonLdCredential: W3cJsonLdSignCredentialOptions = {
+        format: ClaimFormat.LdpVc,
+        credential: new W3cCredential(selfAttestedW3cCredential),
+        proofType: selfAttestedProofType,
+        verificationMethod: selfDidVerificationMethod,
+      }
+      const signedCred = await request.agent.w3cCredentials.signCredential(selfAttestedJsonLdCredential)
+      const selfAttestedStoredCredential = await request.agent.w3cCredentials.store({
+        record: W3cCredentialRecord.fromCredential(signedCred),
+      })
+      return {
+        ...JsonTransformer.toJSON(selfAttestedStoredCredential),
+        credential: JsonTransformer.toJSON(selfAttestedStoredCredential.firstCredential),
+      }
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }
