@@ -8,13 +8,9 @@ import { Body, Controller, Delete, Post, Route, Tags, Path, Security, Request, R
 
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
-import { WalletPortabilityService } from '../../services/wallet-portability/WalletPortabilityService'
+import { getWalletPortabilityService } from '../../services/wallet-portability/WalletPortabilityService'
 import { TsLogger } from '../../utils/logger'
 import { CreateTenantOptions } from '../types'
-
-// Constructed once, not per-request — owns a Redis connection for job status (see
-// WalletPortabilityJobStore) that must not be re-opened on every call.
-const walletPortabilityService = new WalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability'))
 
 @Tags('MultiTenancy')
 @Security('jwt', [SCOPES.MULTITENANT_BASE_AGENT])
@@ -144,17 +140,30 @@ export class MultiTenancyController extends Controller {
     @Path('tenantId') tenantId: string,
     @Body() exportWalletRequest: { passKey: string },
     @Res() badRequestError: TsoaResponse<400, { reason: string }>,
-    @Res() internalServerError: TsoaResponse<500, { message: string }>,
   ) {
+    const { passKey } = exportWalletRequest
+    if (!passKey) {
+      return badRequestError(400, { reason: 'passKey is required.' })
+    }
+    const agent = request.agent as Agent<RestMultiTenantAgentModules>
     try {
-      const { passKey } = exportWalletRequest
-      if (!passKey) {
-        return badRequestError(400, { reason: 'passKey is required.' })
-      }
-      const agent = request.agent as Agent<RestMultiTenantAgentModules>
-      return await walletPortabilityService.exportWallet(agent, tenantId, passKey)
+      // Fail fast with a 404 for a bad/deleted tenantId instead of enqueueing a job that can
+      // only ever fail later — without this, POST returns 200 {jobId, pending} regardless, and
+      // the caller has to poll and then string-match job.error to tell "bad request" apart from
+      // "the export machinery broke". Every sibling endpoint on this controller (getTenantById,
+      // deleteTenantById) checks this upfront the same way.
+      await agent.modules.tenants.getTenantById(tenantId)
     } catch (error) {
-      return internalServerError(500, { message: `something went wrong: ${error}` })
+      throw ErrorHandlingService.handle(error)
+    }
+    try {
+      return await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).exportWallet(
+        agent,
+        tenantId,
+        passKey,
+      )
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
     }
   }
 
@@ -170,7 +179,9 @@ export class MultiTenancyController extends Controller {
     @Res() internalServerError: TsoaResponse<500, { message: string }>,
   ) {
     try {
-      const job = await walletPortabilityService.getJobStatus(jobId)
+      const job = await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).getJobStatus(
+        jobId,
+      )
       if (!job || job.tenantId !== tenantId) {
         return notFoundError(404, { reason: `Export job '${jobId}' not found for tenant '${tenantId}'.` })
       }

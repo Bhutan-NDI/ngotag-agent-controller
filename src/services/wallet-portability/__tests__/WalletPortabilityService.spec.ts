@@ -14,13 +14,19 @@
  *      would have made every exported artifact permanently undecryptable. See the export
  *      endpoint's docblock for the legacy-contract rationale.
  *
- * Everything Askar-native is mocked — running the real native binding under Jest's experimental
- * VM-modules mode is unsafe (observed as an unrelated OOM crash, not this service's logic) and a
- * unit test shouldn't depend on real file/native I/O anyway. The S3 client is mocked too.
+ * Everything Askar-native is mocked here — that lets these tests focus on this service's own
+ * control flow (job lifecycle, cleanup, session scoping) without depending on real file/native
+ * I/O. The S3 client is mocked too. Because it's mocked, though, these tests can only assert
+ * that a value was *forwarded* to Askar (e.g. `passKey`, `keyMethod`) — not that Askar actually
+ * accepts it. See WalletPortabilityAskarRoundTrip.spec.ts (same directory) for the un-mocked
+ * counterpart that exercises the real native binding directly (bypassing @credo-ts/askar, which
+ * is what provokes the OOM under Jest's experimental VM-modules mode — the lower-level
+ * askar-nodejs/askar-shared packages don't).
  *
  * Runs under Jest ESM mode (see jest.config.base.ts).
  */
 import { jest } from '@jest/globals'
+import { createHash } from 'crypto'
 import { writeFileSync } from 'fs'
 import 'reflect-metadata'
 
@@ -55,7 +61,7 @@ const storeProvision = jest.fn(async (options: { uri: string }) => {
 jest.unstable_mockModule('@openwallet-foundation/askar-shared', () => ({
   Store: { provision: storeProvision },
   StoreKeyMethod: jest.fn(),
-  KdfMethod: { Raw: 'raw' },
+  KdfMethod: { Raw: 'raw', Argon2IMod: 'argon2i-mod' },
 }))
 
 const { WalletPortabilityService } = await import('../WalletPortabilityService')
@@ -164,6 +170,11 @@ describe('WalletPortabilityService — exportWallet', () => {
     const uploadedKey = (putObject.mock.calls[0][0] as { Key: string }).Key
     expect(uploadedKey).toContain(TENANT_ID)
     expect(uploadedKey).toContain(jobId)
+
+    // The checksum must match the *uploaded* bytes (the gzip artifact), not the plaintext
+    // source — otherwise a downstream verify-on-download (e.g. the import flow) never matches.
+    const uploadedBody = (putObject.mock.calls[0][0] as { Body: Buffer }).Body
+    expect(job.checksum).toBe(createHash('sha256').update(uploadedBody).digest('hex'))
   })
 
   it('on failure: reaches Failed with the error message, and never uploads a partial artifact', async () => {

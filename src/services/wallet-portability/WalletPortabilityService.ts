@@ -56,14 +56,27 @@ export class WalletPortabilityService {
   }
 
   public async getJobStatus(jobId: string): Promise<WalletPortabilityJobRecord | undefined> {
-    return this.jobStore.get(jobId)
+    const job = await this.jobStore.get(jobId)
+    if (!job) return undefined
+
+    // Mint the pre-signed URL fresh on every read instead of returning one frozen at completion
+    // time: PRE_SIGNED_URL_EXPIRY_SECONDS (15m) is far shorter than the job's own TTL (24h), so a
+    // URL generated once at completion would already be dead for any client that polls slowly or
+    // returns later. downloadUrl is never persisted (see WalletPortabilityJobRecord) — only
+    // s3Key is.
+    if (job.status === WalletPortabilityJobStatus.Completed && job.s3Key) {
+      return { ...job, downloadUrl: this.getPresignedUrl(job.s3Key) }
+    }
+    return job
   }
 
   /**
    * @param passKey Caller-supplied passphrase for the exported artifact — matches the legacy
-   *   `POST /export/:tenantId { passKey, walletID }` contract. The caller must retain this to
-   *   import the artifact later; it is never generated or persisted server-side, and never
-   *   logged (see runExport below).
+   *   `POST /export/:tenantId { passKey, walletID }` contract. Any string is accepted: it is
+   *   run through Argon2i key derivation (KdfMethod.Argon2IMod) rather than passed to Askar's
+   *   raw KDF, which only accepts a base58-encoded 32-byte key and would reject a normal
+   *   passphrase outright (see runExport below). The caller must retain this to import the
+   *   artifact later; it is never generated or persisted server-side, and never logged.
    */
   public async exportWallet(
     agent: Agent<RestMultiTenantAgentModules>,
@@ -82,8 +95,18 @@ export class WalletPortabilityService {
     })
 
     // Fire-and-forget: matches the plan's "async job with status, not a blocking call" requirement.
+    // Best-effort mark the job Failed here too — runExport already marks Failed on any error
+    // inside its own try, but if setJobStatus(InProgress) itself is what threw (e.g. Redis was
+    // mid-outage), that rejection propagates out to this .catch() instead, and without this the
+    // job would otherwise be stranded at Pending forever (the original bug: this handler only
+    // logged, never recorded a terminal status).
     this.runExport(agent, tenantId, jobId, passKey).catch((error) => {
       this.logger.error(`[WalletPortabilityService] export job ${jobId} failed to start: ${error}`)
+      this.setJobStatus(jobId, tenantId, WalletPortabilityJobStatus.Failed, `${error}`).catch((statusError) => {
+        this.logger.error(
+          `[WalletPortabilityService] export job ${jobId} also failed to record its Failed status: ${statusError}`,
+        )
+      })
     })
 
     return { jobId, status: WalletPortabilityJobStatus.Pending }
@@ -95,14 +118,24 @@ export class WalletPortabilityService {
     jobId: string,
     passKey: string,
   ): Promise<void> {
-    await this.setJobStatus(jobId, tenantId, WalletPortabilityJobStatus.InProgress)
-
     let tempStore: Store | undefined
     let tempDbPath: string | undefined
     let gzipPath: string | undefined
+    // Hoisted out of the try/finally split so cleanup can remove the *whole* temp directory —
+    // Askar's sqlite backend leaves `-shm`/`-wal` sidecar files alongside the `.db` file while
+    // it's open, and those can survive if tempStore.close() itself is what's failing (exactly
+    // the case this finally block exists for). Removing only the two explicit paths this
+    // service creates (`${jobId}.db`, `${jobId}.db.gz`) left those sidecars — and the mkdtemp
+    // directory itself — behind indefinitely.
+    let workDir: string | undefined
 
     try {
-      const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-export-'))
+      // Inside the try now (was previously outside it): if this itself throws — e.g. Redis is
+      // flapping — the job must land in the catch below and be marked Failed, not silently
+      // stay at Pending forever.
+      await this.setJobStatus(jobId, tenantId, WalletPortabilityJobStatus.InProgress)
+
+      workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-export-'))
       tempDbPath = path.join(workDir, `${jobId}.db`)
 
       // Do the actual copy fully inside withTenantAgent — the tenant session is released on
@@ -119,7 +152,11 @@ export class WalletPortabilityService {
 
         tempStore = await Store.provision({
           uri: `sqlite://${tempDbPath}`,
-          keyMethod: new StoreKeyMethod(KdfMethod.Raw),
+          // Argon2IMod, not Raw: Askar's raw KDF only accepts a base58-encoded 32-byte key
+          // (i.e. Store.generateRawKey() output) and rejects any normal passphrase before
+          // copyProfile ever runs. Argon2i derives a real key from whatever passKey the caller
+          // supplied, which is what the `passKey`-as-passphrase contract above requires.
+          keyMethod: new StoreKeyMethod(KdfMethod.Argon2IMod),
           passKey,
           recreate: true,
           profile,
@@ -136,8 +173,10 @@ export class WalletPortabilityService {
 
       const s3Key = `wallet-exports/${tenantId}/${jobId}.db.gz`
       await this.uploadToS3(gzipPath, s3Key)
-      const downloadUrl = this.getPresignedUrl(s3Key)
 
+      // Note: s3Key is persisted, not a minted downloadUrl — getJobStatus mints a fresh
+      // short-lived pre-signed URL on every read instead, so a job read long after completion
+      // (up to the 24h job TTL) still returns a live link. See WalletPortabilityJobRecord.
       const existing = await this.jobStore.get(jobId)
       await this.jobStore.save({
         jobId,
@@ -146,7 +185,7 @@ export class WalletPortabilityService {
         status: WalletPortabilityJobStatus.Completed,
         createdAt: existing?.createdAt ?? new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        downloadUrl,
+        s3Key,
         checksum,
       })
     } catch (error) {
@@ -154,25 +193,28 @@ export class WalletPortabilityService {
       await this.setJobStatus(jobId, tenantId, WalletPortabilityJobStatus.Failed, `${error}`)
     } finally {
       // Guaranteed cleanup regardless of success/failure — the export key and the plaintext
-      // wallet artifact must never linger on local disk.
+      // wallet artifact must never linger on local disk. Removing the whole workDir (rather
+      // than the individual .db/.db.gz paths) also catches Askar's -shm/-wal sidecars and the
+      // mkdtemp directory itself.
       if (tempStore) {
         await tempStore.close().catch(() => undefined)
       }
-      if (tempDbPath) {
-        await fs.rm(tempDbPath, { force: true }).catch(() => undefined)
-      }
-      if (gzipPath) {
-        await fs.rm(gzipPath, { force: true }).catch(() => undefined)
+      if (workDir) {
+        await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined)
       }
     }
   }
 
+  // Hashes the *uploaded* artifact (the gzip output), not the plaintext source — the checksum
+  // returned to callers must match what they'll actually download and verify (e.g.
+  // cloud-wallet-service's backup-wallet import flow), which is the .gz, never the plaintext .db.
   private async gzipAndChecksum(sourcePath: string, destPath: string): Promise<string> {
     const hash = createHash('sha256')
     const source = createReadStream(sourcePath)
+    const gzip = createGzip()
     const dest = createWriteStream(destPath)
-    source.on('data', (chunk) => hash.update(chunk))
-    await pipeline(source, createGzip(), dest)
+    gzip.on('data', (chunk) => hash.update(chunk))
+    await pipeline(source, gzip, dest)
     return hash.digest('hex')
   }
 
@@ -220,5 +262,42 @@ export class WalletPortabilityService {
       updatedAt: new Date().toISOString(),
       error,
     })
+  }
+
+  /** Graceful shutdown — closes the job store's Redis connection, if any. See shutdownWalletPortabilityService. */
+  public async disconnect(): Promise<void> {
+    await this.jobStore.disconnect()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Lazy process-wide singleton
+// ---------------------------------------------------------------------------
+//
+// Previously constructed eagerly at module scope in MultiTenancyController.ts, which meant every
+// agent process opened a Redis connection at import time — including dedicated (non-tenant)
+// agents, where /multi-tenancy/* is rejected outright by authentication.ts — and that connection
+// was never closed on shutdown (cliAgent.ts's shutdown() only knows about CacheModuleConfig's
+// cache, not this). Constructing lazily on first actual use fixes the former; wiring
+// shutdownWalletPortabilityService() into cliAgent.ts's shutdown() fixes the latter. This doesn't
+// route construction through tsyringe (there's no existing precedent in this repo for a plain
+// service — as opposed to a tsoa @injectable() controller — being registered in the container),
+// but a module-level function is still substitutable via jest.mock() in a way an eagerly-created
+// const bound in a different file is not.
+let singleton: WalletPortabilityService | undefined
+
+/** logger is only used to construct the singleton on first call; ignored on subsequent calls. */
+export function getWalletPortabilityService(logger: TsLogger): WalletPortabilityService {
+  if (!singleton) {
+    singleton = new WalletPortabilityService(logger)
+  }
+  return singleton
+}
+
+/** No-ops if the singleton was never constructed (e.g. multi-tenancy/export was never called). */
+export async function shutdownWalletPortabilityService(): Promise<void> {
+  if (singleton) {
+    await singleton.disconnect()
+    singleton = undefined
   }
 }

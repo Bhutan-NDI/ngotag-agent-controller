@@ -7485,24 +7485,6 @@
 								}
 							}
 						}
-					},
-					"500": {
-						"description": "",
-						"content": {
-							"application/json": {
-								"schema": {
-									"properties": {
-										"message": {
-											"type": "string"
-										}
-									},
-									"required": [
-										"message"
-									],
-									"type": "object"
-								}
-							}
-						}
 					}
 				},
 				"description": "Export a tenant's (cloud) wallet — native replacement for the legacy per-request raw-NATS\ncall to the separate askar-wallet-tools Python service. Async job: returns a job id\nimmediately, the actual export runs in the background — poll via the status endpoint below.\n\n`passKey` is caller-supplied (matches the legacy contract) and protects the exported\nartifact — the caller must retain it to import the artifact later; it is never generated\nor persisted server-side.",
