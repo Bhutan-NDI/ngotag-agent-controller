@@ -27,7 +27,7 @@
  */
 import { jest } from '@jest/globals'
 import { createHash } from 'crypto'
-import { writeFileSync } from 'fs'
+import { readFileSync, writeFileSync } from 'fs'
 import 'reflect-metadata'
 
 // AskarStoreManager is only ever used as a DI *token* (dependencyManager.resolve(AskarStoreManager))
@@ -40,7 +40,14 @@ jest.unstable_mockModule('@credo-ts/askar', () => ({
 
 const putObjectPromise = jest.fn(async () => ({})) as jest.Mock
 const getSignedUrl = jest.fn(() => 'https://example-bucket.s3.amazonaws.com/signed-url') as jest.Mock
-const putObject = jest.fn(() => ({ promise: putObjectPromise })) as jest.Mock
+// Body is a real fs.ReadStream (uploadToS3 streams the artifact rather than buffering it into
+// memory — see the review that caught the OOM risk). Capture its bytes synchronously via its own
+// .path at call time, since the underlying temp file is deleted by the time assertions run.
+let uploadedBytes: Buffer | undefined
+const putObject = jest.fn((params: { Body: { path: string } }) => {
+  uploadedBytes = readFileSync(params.Body.path)
+  return { promise: putObjectPromise }
+}) as jest.Mock
 
 jest.unstable_mockModule('aws-sdk', () => ({
   S3: jest.fn(() => ({
@@ -114,7 +121,7 @@ async function waitForJobStatus(
   timeoutMs = 5000,
 ) {
   const start = Date.now()
-  // eslint-disable-next-line no-constant-condition
+
   while (true) {
     const job = await service.getJobStatus(jobId)
     if (job?.status === status) return job
@@ -130,6 +137,7 @@ async function waitForJobStatus(
 beforeEach(() => {
   jest.clearAllMocks()
   process.env.AWS_WALLET_EXPORT_BUCKET = 'test-wallet-export-bucket'
+  uploadedBytes = undefined
 })
 
 describe('WalletPortabilityService — exportWallet', () => {
@@ -173,8 +181,12 @@ describe('WalletPortabilityService — exportWallet', () => {
 
     // The checksum must match the *uploaded* bytes (the gzip artifact), not the plaintext
     // source — otherwise a downstream verify-on-download (e.g. the import flow) never matches.
-    const uploadedBody = (putObject.mock.calls[0][0] as { Body: Buffer }).Body
-    expect(job.checksum).toBe(createHash('sha256').update(uploadedBody).digest('hex'))
+    expect(uploadedBytes).toBeDefined()
+    expect(job.checksum).toBe(
+      createHash('sha256')
+        .update(uploadedBytes as Buffer)
+        .digest('hex'),
+    )
   })
 
   it('on failure: reaches Failed with the error message, and never uploads a partial artifact', async () => {

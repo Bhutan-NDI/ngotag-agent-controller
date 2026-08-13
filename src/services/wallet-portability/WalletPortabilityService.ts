@@ -2,6 +2,7 @@ import type { ExportWalletResult, WalletPortabilityJobRecord } from './WalletPor
 import type { RestMultiTenantAgentModules } from '../../cliAgent'
 import type { TsLogger } from '../../utils/logger'
 import type { Agent } from '@credo-ts/core'
+import type { Readable } from 'stream'
 
 import { AskarStoreManager } from '@credo-ts/askar'
 import { KdfMethod, Store, StoreKeyMethod } from '@openwallet-foundation/askar-shared'
@@ -26,7 +27,13 @@ const PRE_SIGNED_URL_EXPIRY_SECONDS = 15 * 60
 // into the type-checker's program, which is fine for `tsc` but reliably OOMs ts-jest's type-aware
 // transform (isolatedModules: false) when it type-checks this file. See WalletPortabilityService.spec.ts.
 interface S3Client {
-  putObject(params: { Bucket: string; Key: string; Body: Buffer; ServerSideEncryption: string }): {
+  putObject(params: {
+    Bucket: string
+    Key: string
+    Body: Readable
+    ContentLength: number
+    ServerSideEncryption: string
+  }): {
     promise(): Promise<unknown>
   }
   getSignedUrl(operation: 'getObject', params: { Bucket: string; Key: string; Expires: number }): string
@@ -226,13 +233,20 @@ export class WalletPortabilityService {
     return bucket
   }
 
+  // Streams the artifact rather than fs.readFile-ing it into a single Buffer first — this process
+  // also serves DIDComm and every other tenant's API traffic, and nothing caps how many exports
+  // can run concurrently, so buffering full wallet artifacts in memory here is a real OOM risk
+  // (this repo has already fought exactly this failure mode once, see the purge scheduler's
+  // paged-scan fix). ContentLength is required by S3 when the body is a stream rather than a
+  // Buffer, since a stream can't report its own length.
   private async uploadToS3(filePath: string, key: string): Promise<void> {
-    const body = await fs.readFile(filePath)
+    const { size } = await fs.stat(filePath)
     await this.s3
       .putObject({
         Bucket: this.getExportBucket(),
         Key: key,
-        Body: body,
+        Body: createReadStream(filePath),
+        ContentLength: size,
         ServerSideEncryption: 'AES256',
       })
       .promise()
