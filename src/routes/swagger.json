@@ -7557,24 +7557,6 @@
 								}
 							}
 						}
-					},
-					"500": {
-						"description": "",
-						"content": {
-							"application/json": {
-								"schema": {
-									"properties": {
-										"message": {
-											"type": "string"
-										}
-									},
-									"required": [
-										"message"
-									],
-									"type": "object"
-								}
-							}
-						}
 					}
 				},
 				"description": "Poll the status of an export job started via POST /export/:tenantId. On completion, the\nresponse carries a short-lived pre-signed S3 URL and the artifact's SHA-256 checksum.",
@@ -7637,27 +7619,9 @@
 								}
 							}
 						}
-					},
-					"500": {
-						"description": "",
-						"content": {
-							"application/json": {
-								"schema": {
-									"properties": {
-										"message": {
-											"type": "string"
-										}
-									},
-									"required": [
-										"message"
-									],
-									"type": "object"
-								}
-							}
-						}
 					}
 				},
-				"description": "Import a tenant's (cloud) wallet from a prior export. Async job: returns a job id\nimmediately — poll via the status endpoint below.\n\nThe tenant's current profile is never deleted outright: it's renamed aside (see\n`backupProfile` on the completed job) before the imported profile takes its place, so a bad\nimport always leaves a recovery path. checksum is verified before anything live is touched.",
+				"description": "Import a tenant's (cloud) wallet from a prior export. Async job: returns a job id\nimmediately — poll via the status endpoint below.\n\nThe tenant's current profile is never deleted outright: it's renamed aside (see\n`backupProfile` on the completed job) before the imported profile takes its place, so a bad\nimport always leaves a recovery path. checksum is verified before anything live is touched.\n\nA second export/import already running for the same tenant is rejected with 409 — but that\nguards only against a second portability job, not ordinary tenant traffic: the tenant's\nprofile does not exist between the rename and the copy completing, so a normal REST/DIDComm\nrequest landing in that window fails outright rather than queuing or waiting. See\nWalletPortabilityService.runImport's docblock; not yet resolved.",
 				"tags": [
 					"MultiTenancy"
 				],
@@ -7730,24 +7694,6 @@
 									},
 									"required": [
 										"reason"
-									],
-									"type": "object"
-								}
-							}
-						}
-					},
-					"500": {
-						"description": "",
-						"content": {
-							"application/json": {
-								"schema": {
-									"properties": {
-										"message": {
-											"type": "string"
-										}
-									},
-									"required": [
-										"message"
 									],
 									"type": "object"
 								}

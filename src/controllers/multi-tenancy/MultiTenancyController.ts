@@ -192,7 +192,6 @@ export class MultiTenancyController extends Controller {
     @Path('tenantId') tenantId: string,
     @Path('jobId') jobId: string,
     @Res() notFoundError: TsoaResponse<404, { reason: string }>,
-    @Res() internalServerError: TsoaResponse<500, { message: string }>,
   ) {
     try {
       const job = await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).getJobStatus(
@@ -203,7 +202,7 @@ export class MultiTenancyController extends Controller {
       }
       return job
     } catch (error) {
-      return internalServerError(500, { message: `something went wrong: ${error}` })
+      throw ErrorHandlingService.handle(error)
     }
   }
 
@@ -215,6 +214,12 @@ export class MultiTenancyController extends Controller {
    * `backupProfile` on the completed job) before the imported profile takes its place, so a bad
    * import always leaves a recovery path. checksum is verified before anything live is touched.
    *
+   * A second export/import already running for the same tenant is rejected with 409 — but that
+   * guards only against a second portability job, not ordinary tenant traffic: the tenant's
+   * profile does not exist between the rename and the copy completing, so a normal REST/DIDComm
+   * request landing in that window fails outright rather than queuing or waiting. See
+   * WalletPortabilityService.runImport's docblock; not yet resolved.
+   *
    * @returns { jobId, status } — status is always 'pending' on this response
    */
   @Post('/import/:tenantId')
@@ -223,14 +228,22 @@ export class MultiTenancyController extends Controller {
     @Path('tenantId') tenantId: string,
     @Body() importWalletRequest: { exportUrl: string; passKey: string; checksum: string },
     @Res() badRequestError: TsoaResponse<400, { reason: string }>,
-    @Res() internalServerError: TsoaResponse<500, { message: string }>,
   ) {
+    const { exportUrl, passKey, checksum } = importWalletRequest
+    if (!exportUrl || !passKey || !checksum) {
+      return badRequestError(400, { reason: 'exportUrl, passKey and checksum are all required.' })
+    }
+    const agent = request.agent as Agent<RestMultiTenantAgentModules>
     try {
-      const { exportUrl, passKey, checksum } = importWalletRequest
-      if (!exportUrl || !passKey || !checksum) {
-        return badRequestError(400, { reason: 'exportUrl, passKey and checksum are all required.' })
-      }
-      const agent = request.agent as Agent<RestMultiTenantAgentModules>
+      // Same upfront guard as exportTenantWallet, for the same reason — and doubly so here:
+      // importWallet's very first step is tryReserveActiveJob(tenantId, jobId), so a bogus
+      // tenantId would otherwise take out the tenant's active-job reservation before anything is
+      // validated, not just enqueue a job doomed to fail later.
+      await agent.modules.tenants.getTenantById(tenantId)
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+    try {
       return await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).importWallet(
         agent,
         tenantId,
@@ -244,7 +257,7 @@ export class MultiTenancyController extends Controller {
       if (error instanceof WalletPortabilityJobConflictError) {
         throw new ConflictError(error.message)
       }
-      return internalServerError(500, { message: `something went wrong: ${error}` })
+      throw ErrorHandlingService.handle(error)
     }
   }
 
@@ -258,7 +271,6 @@ export class MultiTenancyController extends Controller {
     @Path('tenantId') tenantId: string,
     @Path('jobId') jobId: string,
     @Res() notFoundError: TsoaResponse<404, { reason: string }>,
-    @Res() internalServerError: TsoaResponse<500, { message: string }>,
   ) {
     try {
       const job = await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).getJobStatus(
@@ -269,7 +281,7 @@ export class MultiTenancyController extends Controller {
       }
       return job
     } catch (error) {
-      return internalServerError(500, { message: `something went wrong: ${error}` })
+      throw ErrorHandlingService.handle(error)
     }
   }
 

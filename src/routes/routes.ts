@@ -3859,7 +3859,6 @@ export function RegisterRoutes(app: Router) {
                 tenantId: {"in":"path","name":"tenantId","required":true,"dataType":"string"},
                 jobId: {"in":"path","name":"jobId","required":true,"dataType":"string"},
                 notFoundError: {"in":"res","name":"404","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true}}},
-                internalServerError: {"in":"res","name":"500","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"message":{"dataType":"string","required":true}}},
         };
         app.get('/multi-tenancy/export/:tenantId/status/:jobId',
             authenticateMiddleware([{"jwt":["Basewallet"]}]),
@@ -3899,7 +3898,6 @@ export function RegisterRoutes(app: Router) {
                 tenantId: {"in":"path","name":"tenantId","required":true,"dataType":"string"},
                 importWalletRequest: {"in":"body","name":"importWalletRequest","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"checksum":{"dataType":"string","required":true},"passKey":{"dataType":"string","required":true},"exportUrl":{"dataType":"string","required":true}}},
                 badRequestError: {"in":"res","name":"400","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true}}},
-                internalServerError: {"in":"res","name":"500","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"message":{"dataType":"string","required":true}}},
         };
         app.post('/multi-tenancy/import/:tenantId',
             authenticateMiddleware([{"jwt":["Basewallet"]}]),
@@ -3938,7 +3936,6 @@ export function RegisterRoutes(app: Router) {
                 tenantId: {"in":"path","name":"tenantId","required":true,"dataType":"string"},
                 jobId: {"in":"path","name":"jobId","required":true,"dataType":"string"},
                 notFoundError: {"in":"res","name":"404","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true}}},
-                internalServerError: {"in":"res","name":"500","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"message":{"dataType":"string","required":true}}},
         };
         app.get('/multi-tenancy/import/:tenantId/status/:jobId',
             authenticateMiddleware([{"jwt":["Basewallet"]}]),

@@ -53,6 +53,11 @@ export interface ImportWalletResult {
  * profile away for the duration of the copy, so two portability jobs racing on the same tenant
  * — either the same kind or a mix — can wedge the tenant with no working profile, or silently
  * drop one job's result. The controller layer maps this to HTTP 409.
+ *
+ * NOTE: this only serialises portability jobs against *each other* — it does not protect
+ * ordinary tenant REST/DIDComm traffic that happens to land during the same window (import
+ * renames the tenant's live profile away for the duration of its copy; export does not touch it
+ * at all). See WalletPortabilityService's runImport docblock for that separate, still-open gap.
  */
 export class WalletPortabilityJobConflictError extends Error {
   public readonly tenantId: string

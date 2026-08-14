@@ -160,6 +160,10 @@ export class WalletPortabilityService {
     return { jobId, status: WalletPortabilityJobStatus.Pending }
   }
 
+  // Export never touches the tenant's live profile itself — copyProfile below only reads from it
+  // into a separate temp store, so the tenant's own profile stays present and available for
+  // ordinary REST/DIDComm traffic the whole time. See runImport's docblock for the corresponding
+  // known gap on the import side, which does rename the live profile away for the copy's duration.
   private async runExport(
     agent: Agent<RestMultiTenantAgentModules>,
     tenantId: string,
@@ -415,6 +419,26 @@ export class WalletPortabilityService {
     return { jobId, status: WalletPortabilityJobStatus.Pending }
   }
 
+  /**
+   * KNOWN GAP, not yet closed (raised in the #73 review, not fully addressed by
+   * `WalletPortabilityJobConflictError` below): between `renameProfile` and `copyProfile`
+   * completing (seconds to minutes for a real wallet), the tenant's `tenant-<id>` profile does
+   * not exist in the base store at all. The agent is still live and multi-tenant for the whole
+   * window, so:
+   *
+   *   - Any concurrent REST call or inbound DIDComm message for this tenant goes through
+   *     `withTenantAgent` on a profile that isn't there, and fails with a raw Askar error — the
+   *     tenant is effectively down for the duration, with no 503/"import in progress" signal.
+   *   - A write whose session opened just before the rename but commits just after can land in
+   *     the renamed-aside backup profile and be silently lost once the imported profile takes
+   *     the live name.
+   *
+   * `tryReserveActiveJob`/`WalletPortabilityJobConflictError` (see importWallet above) only
+   * serialise portability jobs against *each other* — they say nothing about ordinary tenant
+   * traffic landing in this same window. Closing that for real (e.g. gating tenant traffic behind
+   * a 503/maintenance flag for the duration of the copy) is follow-up work, not done in this pass;
+   * this is documented here rather than left as a silent limitation.
+   */
   private async runImport(
     agent: Agent<RestMultiTenantAgentModules>,
     tenantId: string,
