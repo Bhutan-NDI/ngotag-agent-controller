@@ -573,8 +573,10 @@ describe('WalletPortabilityService — export → import round trip', () => {
     const exportJob = await waitForJobStatus(service, exportJobId, WalletPortabilityJobStatus.Completed)
 
     // The exact bytes S3 received for this export — i.e. exactly what a real download would return.
-    const uploadedBytes = (putObject.mock.calls[putObject.mock.calls.length - 1][0] as { Body: Buffer }).Body
-    fetchMock.mockImplementation(async () => makeFetchResponse(uploadedBytes))
+    // s3Upload's own mock implementation (above) already reads these bytes off disk into the
+    // module-level uploadedBytes at call time, since uploadToS3 streams via s3.upload() with a
+    // fs.ReadStream Body rather than a Buffer.
+    fetchMock.mockImplementation(async () => makeFetchResponse(uploadedBytes as Buffer))
 
     const importCopyProfile = jest.fn(async () => undefined)
     const { agent: importAgent } = makeAgent(importCopyProfile)
