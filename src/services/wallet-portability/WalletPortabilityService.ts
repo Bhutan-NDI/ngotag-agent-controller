@@ -42,6 +42,11 @@ const TRUSTED_S3_HOSTNAME_PATTERN = /^([a-z0-9.-]+\.)?s3([.-][a-z0-9-]+)?\.amazo
 // Generous ceiling for a real wallet export. Enforced against actual bytes read, not a trusted
 // Content-Length header, so a response that lies about its size still gets capped.
 const MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024 // 2 GiB
+// Same ceiling, applied independently to the *decompressed* output of gunzip. Capping only the
+// compressed download above doesn't stop a "decompression bomb" — a small, adversarially crafted
+// gzip artifact with an enormous compression ratio can still expand to fill the host's disk once
+// gunzipped, and this process also serves DIDComm/every other tenant's traffic.
+const MAX_DECOMPRESSED_BYTES = MAX_DOWNLOAD_BYTES
 
 // Deliberately NOT typed as the real `AWS.S3` class (only the 2 methods actually used here) —
 // referencing that type pulls the entirety of aws-sdk's (famously enormous) type declarations
@@ -576,16 +581,34 @@ export class WalletPortabilityService {
     }
   }
 
+  // exportUrl is caller-supplied and goes straight into a server-side fetch — without these checks
+  // this endpoint is an SSRF primitive (any base-wallet token holder can make the agent GET an
+  // arbitrary internal URL, e.g. the cloud metadata endpoint) plus a content-confirmation oracle
+  // (the checksum-mismatch error echoes sha256(response body) back to the caller). The only
+  // legitimate input is a pre-signed URL for the bucket *this deployment itself* wrote to — scoped
+  // to that specific bucket, not "any S3 bucket", since a caller-supplied exportUrl pointing at a
+  // different, attacker-controlled bucket must not be trusted just because it's *an* S3 host. Only
+  // virtual-hosted-style hostnames are accepted (`<bucket>.s3....`) since this service never sets
+  // s3ForcePathStyle, so getSignedUrl never produces the path-style form. The endpoint suffix
+  // stays permissive across the standard/dualstack/FIPS/China-partition forms, so a legitimately
+  // configured deployment (any AWS_REGION, including cn-north-1/cn-northwest-1) isn't spuriously
+  // rejected — only the bucket name itself is fixed, not the whole domain shape.
+  private isTrustedExportHost(hostname: string): boolean {
+    const bucket = this.getExportBucket()
+    const escapedBucket = bucket.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const pattern = new RegExp(
+      `^${escapedBucket}\\.s3(-fips)?(\\.dualstack)?([.-][a-z0-9-]+)?\\.amazonaws\\.com(\\.cn)?$`,
+      'i',
+    )
+    return pattern.test(hostname)
+  }
+
   private async downloadAndChecksum(url: string, destPath: string): Promise<string> {
-    // exportUrl is caller-supplied and goes straight into a server-side fetch — without these
-    // checks this endpoint is an SSRF primitive (any base-wallet token holder can make the agent
-    // GET an arbitrary internal URL, e.g. the cloud metadata endpoint) plus a content-confirmation
-    // oracle (the checksum-mismatch error echoes sha256(response body) back to the caller). The
-    // only legitimate input is a pre-signed URL for the bucket this service itself wrote to, so
-    // restrict to that: https + an S3 hostname, no redirects followed, and a hard byte cap so a
-    // large/endless response can't fill the host's disk.
+    // https-only, no redirects followed, and a hard byte cap below so a large/endless response
+    // can't fill the host's disk. Host itself is restricted to this deployment's own export
+    // bucket — see isTrustedExportHost.
     const parsedUrl = new URL(url)
-    if (parsedUrl.protocol !== 'https:' || !TRUSTED_S3_HOSTNAME_PATTERN.test(parsedUrl.hostname)) {
+    if (parsedUrl.protocol !== 'https:' || !this.isTrustedExportHost(parsedUrl.hostname)) {
       throw new Error(`Refusing to download export artifact from untrusted host '${parsedUrl.hostname}'`)
     }
 
@@ -614,10 +637,26 @@ export class WalletPortabilityService {
     return hash.digest('hex')
   }
 
-  private async gunzip(sourcePath: string, destPath: string): Promise<void> {
+  // maxBytes defaults to the real cap; runImport never overrides it — the parameter exists so
+  // this specific boundary check is unit-testable without allocating a multi-gigabyte fixture.
+  private async gunzip(sourcePath: string, destPath: string, maxBytes: number = MAX_DECOMPRESSED_BYTES): Promise<void> {
     const source = createReadStream(sourcePath)
+    const gunzip = createGunzip()
     const dest = createWriteStream(destPath)
-    await pipeline(source, createGunzip(), dest)
+    // Cap the *decompressed* output independently of the (already-capped, in downloadAndChecksum)
+    // compressed input — gzip's compression ratio can be adversarially enormous (a "decompression
+    // bomb": a small compressed artifact can still pass the checksum check and then expand to fill
+    // the host's disk), so the compressed-size cap alone doesn't protect this step.
+    let bytesDecompressed = 0
+    gunzip.on('data', (chunk: Buffer) => {
+      bytesDecompressed += chunk.length
+      if (bytesDecompressed > maxBytes) {
+        // Aborts the stream; pipeline() below rejects with this same error, which propagates up
+        // to runImport's catch — no partial artifact is treated as valid.
+        gunzip.destroy(new Error(`Decompressed export artifact exceeds the ${maxBytes}-byte cap`))
+      }
+    })
+    await pipeline(source, gunzip, dest)
   }
 
   /** Graceful shutdown — closes the job store's Redis connection, if any. See shutdownWalletPortabilityService. */

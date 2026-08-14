@@ -46,6 +46,8 @@ import { jest } from '@jest/globals'
 import { createHash } from 'crypto'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { promises as fsPromises } from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 import 'reflect-metadata'
 import { Readable } from 'stream'
 import { gzipSync } from 'zlib'
@@ -59,7 +61,7 @@ jest.unstable_mockModule('@credo-ts/askar', () => ({
 }))
 
 const s3UploadPromise = jest.fn(async () => ({})) as jest.Mock
-const getSignedUrl = jest.fn(() => 'https://example-bucket.s3.amazonaws.com/signed-url') as jest.Mock
+const getSignedUrl = jest.fn(() => 'https://test-wallet-export-bucket.s3.amazonaws.com/signed-url') as jest.Mock
 // Body is a real fs.ReadStream (uploadToS3 streams the artifact rather than buffering it into
 // memory — see the review that caught the OOM risk). Capture its bytes synchronously via its own
 // .path at call time, since the underlying temp file is deleted by the time assertions run.
@@ -236,7 +238,7 @@ describe('WalletPortabilityService — exportWallet', () => {
     // Locks in the passKey fix: the temp store must be provisioned with the caller's passKey,
     // not an internally generated one that would never be exposed back to the caller.
     expect(storeProvision).toHaveBeenCalledWith(expect.objectContaining({ passKey: PASS_KEY }))
-    expect(job.downloadUrl).toBe('https://example-bucket.s3.amazonaws.com/signed-url')
+    expect(job.downloadUrl).toBe('https://test-wallet-export-bucket.s3.amazonaws.com/signed-url')
     expect(job.checksum).toMatch(/^[0-9a-f]{64}$/) // sha256 hex digest
     expect(s3Upload).toHaveBeenCalledTimes(1)
     expect(s3UploadPromise).toHaveBeenCalledTimes(1)
@@ -332,7 +334,7 @@ describe('WalletPortabilityService — importWallet', () => {
   const artifact = Buffer.from('fake-wallet-import-content')
   const gzippedArtifact = gzipSync(artifact)
   const CHECKSUM = sha256(gzippedArtifact)
-  const EXPORT_URL = 'https://example-bucket.s3.amazonaws.com/some-export.db.gz'
+  const EXPORT_URL = 'https://test-wallet-export-bucket.s3.amazonaws.com/some-export.db.gz'
 
   beforeEach(() => {
     importedStoreListProfilesHolder.impl = jest.fn(async () => [PROFILE]) as jest.Mock
@@ -394,6 +396,69 @@ describe('WalletPortabilityService — importWallet', () => {
     expect(renameProfile).not.toHaveBeenCalled()
     expect(importedStoreCopyProfile).not.toHaveBeenCalled()
     expect(storeOpen).not.toHaveBeenCalled()
+  })
+
+  it('SSRF guard: refuses a URL on a different S3 bucket, not just a non-S3 host', async () => {
+    // The bucket in this URL is real S3, just not *this deployment's own* (AWS_WALLET_EXPORT_BUCKET
+    // is 'test-wallet-export-bucket', set in the outer beforeEach) — an attacker-controlled bucket
+    // must not be trusted just because the host is generically "an S3 host".
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.importWallet(
+      agent as never,
+      TENANT_ID,
+      'https://some-other-attacker-bucket.s3.amazonaws.com/some-export.db.gz',
+      PASS_KEY,
+      CHECKSUM,
+    )
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(job.error).toContain('untrusted host')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'https://test-wallet-export-bucket.s3.us-west-2.amazonaws.com/x.db.gz',
+    'https://test-wallet-export-bucket.s3-us-west-2.amazonaws.com/x.db.gz',
+    'https://test-wallet-export-bucket.s3-fips.us-west-2.amazonaws.com/x.db.gz',
+    'https://test-wallet-export-bucket.s3.dualstack.us-west-2.amazonaws.com/x.db.gz',
+    'https://test-wallet-export-bucket.s3.cn-north-1.amazonaws.com.cn/x.db.gz',
+  ])("SSRF guard: still accepts this deployment's own bucket on a legitimate AWS endpoint variant %s", async (url) => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, url, PASS_KEY, CHECKSUM)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(job.error).toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledWith(url, { redirect: 'error' })
+  })
+
+  it('decompression bomb: gunzip aborts once decompressed output crosses its byte cap', async () => {
+    // A real decompression bomb relies on an extreme compression ratio (tiny compressed input,
+    // huge decompressed output) — proving that ratio at unit-test speed would mean allocating a
+    // multi-gigabyte fixture to cross the real MAX_DECOMPRESSED_BYTES ceiling. Instead, call the
+    // private gunzip() directly with its (test-only) maxBytes override — same byte-counting logic
+    // runImport's real call exercises, just against a cap small enough to hit with an ordinary
+    // fixture. See gunzip's own comment for why that parameter exists.
+    const workDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'gunzip-cap-test-'))
+    const gzipPath = path.join(workDir, 'input.db.gz')
+    const outputPath = path.join(workDir, 'output.db')
+    await fsPromises.writeFile(gzipPath, gzipSync(Buffer.alloc(1000, 'a')))
+
+    const service = new WalletPortabilityService(makeLogger() as never)
+    await expect(
+      (service as unknown as { gunzip(src: string, dest: string, maxBytes: number): Promise<void> }).gunzip(
+        gzipPath,
+        outputPath,
+        100,
+      ),
+    ).rejects.toThrow('Decompressed export artifact exceeds the 100-byte cap')
+
+    await fsPromises.rm(workDir, { recursive: true, force: true })
   })
 
   it('cleans up the whole workDir on success — not just the two files it used to remove individually', async () => {
