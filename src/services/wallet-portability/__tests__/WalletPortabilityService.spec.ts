@@ -44,7 +44,8 @@
  */
 import { jest } from '@jest/globals'
 import { createHash } from 'crypto'
-import { readFileSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { promises as fsPromises } from 'fs'
 import 'reflect-metadata'
 import { Readable } from 'stream'
 import { gzipSync } from 'zlib'
@@ -393,6 +394,48 @@ describe('WalletPortabilityService — importWallet', () => {
     expect(renameProfile).not.toHaveBeenCalled()
     expect(importedStoreCopyProfile).not.toHaveBeenCalled()
     expect(storeOpen).not.toHaveBeenCalled()
+  })
+
+  it('cleans up the whole workDir on success — not just the two files it used to remove individually', async () => {
+    // workDir was previously a local const inside the try, out of scope for the finally, so only
+    // gzipPath/importedDbPath were ever removed — leaving the mkdtemp directory itself and Askar's
+    // -shm/-wal sidecars behind on every import. Spy on the real mkdtemp (not mocked in this file)
+    // to capture the actual path runImport created, then assert the whole thing is gone.
+    const mkdtempSpy = jest.spyOn(fsPromises, 'mkdtemp')
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(mkdtempSpy.mock.results).toHaveLength(1)
+    const workDir = (await mkdtempSpy.mock.results[0].value) as string
+    expect(existsSync(workDir)).toBe(false)
+    mkdtempSpy.mockRestore()
+  })
+
+  it('cleans up the whole workDir on failure too, not just on the success path', async () => {
+    const mkdtempSpy = jest.spyOn(fsPromises, 'mkdtemp')
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.importWallet(
+      agent as never,
+      TENANT_ID,
+      EXPORT_URL,
+      PASS_KEY,
+      'deliberately-wrong-checksum',
+    )
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(mkdtempSpy.mock.results).toHaveLength(1)
+    const workDir = (await mkdtempSpy.mock.results[0].value) as string
+    expect(existsSync(workDir)).toBe(false)
+    mkdtempSpy.mockRestore()
   })
 
   it('artifact with zero or multiple profiles: fails clearly, before any rename', async () => {

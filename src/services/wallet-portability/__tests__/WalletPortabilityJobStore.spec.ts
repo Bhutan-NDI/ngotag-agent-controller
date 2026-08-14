@@ -1,13 +1,23 @@
 /**
- * Regression test for WalletPortabilityJobStore's get()/save() Redis-vs-in-memory reconciliation.
+ * Regression tests for WalletPortabilityJobStore's Redis/in-memory dual-store behavior. Locks in
+ * two fixes from a second review pass on the #72/#73 hardening work:
  *
- * save() mirrors into the in-memory store whenever Redis is configured but unreachable at write
- * time, so the two stores can genuinely disagree about which is the *latest* record for a jobId —
- * not just whether one exists. get() previously preferred Redis unconditionally whenever it was
- * currently reachable, which meant a client polling a job that actually completed during a brief
- * Redis outage could see it stuck at its pre-outage status (e.g. `pending`) forever, since Redis's
- * own copy was never updated during the outage and nothing ever reconciled it against the newer
- * in-memory record.
+ *   1. get() must reconcile a Redis record against a newer in-memory one, not prefer Redis
+ *      unconditionally. save() mirrors into the in-memory store whenever Redis was unready at
+ *      write time, so the two can genuinely disagree for the same jobId — Redis holding a stale
+ *      record from before an outage while memory holds the true latest state (or the reverse, if
+ *      Redis recovered mid-job and a later write landed there instead). Without reconciliation, a
+ *      client polling a job that actually completed during a Redis blip would see it stuck at
+ *      `pending` forever (until the 24h TTL), with the completed job's s3Key/checksum never
+ *      surfaced.
+ *   2. tryReserveActiveJob/releaseActiveJob must not diverge across the two stores depending on
+ *      Redis's readiness *at each call* — a portability job runs for seconds to minutes, plenty
+ *      of time for Redis's connection state to change between reserving and releasing. A
+ *      reservation made through Redis is now also mirrored into memory, and release attempts the
+ *      Redis delete whenever a client exists (not gated on isRedisReady()) while unconditionally
+ *      also clearing the memory-side entry. Without this, a reservation can survive in whichever
+ *      store the *other* call didn't touch, wedging the tenant for up to the 24h Redis TTL — or
+ *      permanently, for the memory store, which has none.
  *
  * Also covers two follow-up fixes to the same >= tie-break:
  *   1. The tie-break itself could resurface a stale memory entry in the *mirror* direction: once
@@ -22,7 +32,7 @@
  *
  * A minimal fake ioredis client (a real EventEmitter backing an in-memory key/value store, with
  * the same connect/ready/reconnecting event names WalletPortabilityJobStore listens for) drives
- * this — real ioredis would require a real Redis server, and the whole point here is to control
+ * these — real ioredis would require a real Redis server, and the whole point here is to control
  * exactly when the client is "ready" versus not, which no real server lets a test do on demand.
  *
  * Runs under Jest ESM mode (see jest.config.base.ts).
@@ -34,7 +44,9 @@ import 'reflect-metadata'
 class FakeRedisClient extends EventEmitter {
   private readonly store = new Map<string, string>()
 
-  public async set(key: string, value: string): Promise<string | null> {
+  public async set(key: string, value: string, ...args: unknown[]): Promise<string | null> {
+    const nx = args.includes('NX')
+    if (nx && this.store.has(key)) return null
     this.store.set(key, value)
     return 'OK'
   }
@@ -72,12 +84,18 @@ const makeLogger = () => ({
   debug: jest.fn(),
 })
 
+// Constructs a store and brings its (fake) Redis connection to the 'ready' state — mirrors what
+// attachEventHandlers actually listens for, so isRedisReady() reports true afterward.
+function makeReadyStore(): { store: InstanceType<typeof WalletPortabilityJobStore>; redis: FakeRedisClient } {
+  const store = new WalletPortabilityJobStore(makeLogger() as never, 'redis://fake-host:6379')
+  const redis = lastRedisClient as FakeRedisClient
+  redis.emit('ready')
+  return { store, redis }
+}
+
 describe('WalletPortabilityJobStore — get() reconciliation', () => {
   it('returns the in-memory record when it is newer than a stale Redis one', async () => {
-    const store = new WalletPortabilityJobStore(makeLogger() as never, 'redis://fake-host:6379')
-    const redis = lastRedisClient as FakeRedisClient
-    redis.emit('ready')
-
+    const { store, redis } = makeReadyStore()
     const jobId = 'job-1'
     const staleRecord = {
       jobId,
@@ -144,15 +162,12 @@ describe('WalletPortabilityJobStore — get() reconciliation', () => {
   })
 
   it('returns the Redis record when no in-memory record exists for the jobId', async () => {
-    const store = new WalletPortabilityJobStore(makeLogger() as never, 'redis://fake-host:6379')
-    const redis = lastRedisClient as FakeRedisClient
-    redis.emit('ready')
-
+    const { store } = makeReadyStore()
     const jobId = 'job-2'
     const record = {
       jobId,
       tenantId: 'tenant-2',
-      type: WalletPortabilityJobType.Export,
+      type: WalletPortabilityJobType.Import,
       status: WalletPortabilityJobStatus.Completed,
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
@@ -220,5 +235,55 @@ describe('WalletPortabilityJobStore — get() reconciliation', () => {
     expect(await store.get(jobId)).toBeUndefined()
 
     nowSpy.mockRestore()
+  })
+})
+
+describe('WalletPortabilityJobStore — active-job reservation/release', () => {
+  it('mirrors a Redis-side reservation into memory, and releasing while Redis looks unready still clears it', async () => {
+    const { store, redis } = makeReadyStore()
+    const tenantId = 'tenant-1'
+    const jobId = 'job-1'
+
+    expect(await store.tryReserveActiveJob(tenantId, jobId)).toBeUndefined()
+
+    // Redis drops before the job finishes — release must not skip the Redis delete just because
+    // isRedisReady() is currently false; the key is still sitting in Redis from the reservation
+    // above and needs to actually be removed, not just the memory mirror.
+    redis.emit('reconnecting')
+    await store.releaseActiveJob(tenantId, jobId)
+
+    // If either store still held the reservation, this would return the stale jobId instead of
+    // undefined.
+    redis.emit('ready')
+    expect(await store.tryReserveActiveJob(tenantId, 'job-2')).toBeUndefined()
+  })
+
+  it('does not release a newer reservation for the same tenant', async () => {
+    const { store, redis } = makeReadyStore()
+    const tenantId = 'tenant-1'
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-1')).toBeUndefined()
+    // A second reservation attempt for the same tenant is rejected with the existing holder.
+    expect(await store.tryReserveActiveJob(tenantId, 'job-2')).toBe('job-1')
+
+    // Releasing the wrong (non-current) jobId must not clobber job-1's still-active reservation.
+    await store.releaseActiveJob(tenantId, 'job-2')
+    redis.emit('ready')
+    expect(await store.tryReserveActiveJob(tenantId, 'job-3')).toBe('job-1')
+  })
+
+  it('falls back to memory-only reservation when Redis is unready at reserve time, and releases it correctly', async () => {
+    const logger = makeLogger()
+    const store = new WalletPortabilityJobStore(logger as never, 'redis://fake-host:6379')
+    // Never emits 'ready' — isRedisReady() stays false throughout, exercising the pure in-memory
+    // path on both ends.
+    const tenantId = 'tenant-1'
+    const jobId = 'job-1'
+
+    expect(await store.tryReserveActiveJob(tenantId, jobId)).toBeUndefined()
+    expect(await store.tryReserveActiveJob(tenantId, 'job-2')).toBe(jobId)
+
+    await store.releaseActiveJob(tenantId, jobId)
+    expect(await store.tryReserveActiveJob(tenantId, 'job-3')).toBeUndefined()
   })
 })

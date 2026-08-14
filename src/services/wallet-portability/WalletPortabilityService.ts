@@ -423,6 +423,13 @@ export class WalletPortabilityService {
     let importedDbPath: string | undefined
     let backupProfile: string | undefined
     let renamedAway = false
+    // Hoisted out of the try (was a local const inside it, out of scope for the finally below) —
+    // same reasoning as runExport's identical field: Askar's sqlite backend leaves `-shm`/`-wal`
+    // sidecar files next to the `.db` while it's open, which survive if importedStore.close()
+    // itself is what's failing (exactly the case the finally exists for). Removing only the two
+    // explicit paths this service creates left those sidecars — which hold the imported tenant
+    // wallet's contents — and the mkdtemp directory itself behind indefinitely.
+    let workDir: string | undefined
 
     try {
       // Inside the try now (was previously outside it) — same reasoning as runExport: if this
@@ -430,7 +437,7 @@ export class WalletPortabilityService {
       // stay at Pending forever.
       await this.setJobStatus(jobId, tenantId, WalletPortabilityJobType.Import, WalletPortabilityJobStatus.InProgress)
 
-      const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-import-'))
+      workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-import-'))
       gzipPath = path.join(workDir, `${jobId}.db.gz`)
       importedDbPath = path.join(workDir, `${jobId}.db`)
 
@@ -557,11 +564,11 @@ export class WalletPortabilityService {
       if (importedStore) {
         await importedStore.close().catch(() => undefined)
       }
-      if (gzipPath) {
-        await fs.rm(gzipPath, { force: true }).catch(() => undefined)
-      }
-      if (importedDbPath) {
-        await fs.rm(importedDbPath, { force: true }).catch(() => undefined)
+      // Guaranteed cleanup regardless of success/failure — removing the whole workDir (rather
+      // than the individual gzipPath/importedDbPath paths) also catches Askar's -shm/-wal
+      // sidecars and the mkdtemp directory itself. See runExport's identical finally.
+      if (workDir) {
+        await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined)
       }
       // Release the tenant's active-job slot regardless of outcome. See importWallet's
       // reservation above and runExport's identical release for the export side.

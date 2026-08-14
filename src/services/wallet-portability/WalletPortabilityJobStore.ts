@@ -200,7 +200,14 @@ export class WalletPortabilityJobStore {
     if (this.redisClient && this.isRedisReady()) {
       try {
         const result = await this.redisClient.set(key, jobId, 'EX', JOB_TTL_SECONDS, 'NX')
-        if (result === 'OK') return undefined
+        if (result === 'OK') {
+          // Mirrored into the in-memory store too, not just Redis — a portability job runs for
+          // seconds to minutes, so Redis's readiness can flip between reservation and release.
+          // releaseActiveJob now clears both stores unconditionally (see its own comment), which
+          // only works if a Redis-side reservation is also visible in memory once Redis drops.
+          this.activeJobMemoryStore.set(tenantId, jobId)
+          return undefined
+        }
         const existing = await this.redisClient.get(key)
         return existing ?? undefined
       } catch (error) {
@@ -215,16 +222,32 @@ export class WalletPortabilityJobStore {
     return undefined
   }
 
-  /** Release the active-job slot, but only if it still points at this exact jobId — never clobber a newer job's reservation. */
+  /**
+   * Release the active-job slot, but only if it still points at this exact jobId — never clobber
+   * a newer job's reservation. Clears BOTH stores unconditionally rather than picking one based on
+   * Redis's *current* readiness: reservation and release can observe different readiness states
+   * for the same job (it runs for seconds to minutes, plenty of time for Redis to blip), so
+   * checking only the store that looks live right now can miss the store the reservation actually
+   * landed in. A reservation stuck in Redis wedges the tenant for up to the 24h TTL; one stuck in
+   * memory (no TTL) wedges it permanently until the process restarts.
+   *
+   * The Redis attempt below is gated on the client merely *existing*, not on isRedisReady() —
+   * deliberately looser than every other Redis call in this class. Gating on readiness here would
+   * reproduce the exact bug this fixes: a reservation made while Redis was ready can outlive a
+   * disconnect, so by release time isRedisReady() may already be false even though the key is
+   * still sitting in Redis waiting to be deleted. Attempting anyway costs nothing when truly
+   * disconnected (enableOfflineQueue: false means the call rejects fast instead of hanging, same
+   * as everywhere else in this class) and is the only way the Redis-side key ever gets cleared in
+   * the disagreement window this finding described.
+   */
   public async releaseActiveJob(tenantId: string, jobId: string): Promise<void> {
     const key = `${ACTIVE_JOB_KEY_PREFIX}${tenantId}`
-    if (this.redisClient && this.isRedisReady()) {
+    if (this.redisClient) {
       try {
         const current = await this.redisClient.get(key)
         if (current === jobId) {
           await this.redisClient.del(key)
         }
-        return
       } catch (error) {
         this.logger.error(`[WalletPortabilityJobStore] Redis active-job release failed: ${error}`)
       }
