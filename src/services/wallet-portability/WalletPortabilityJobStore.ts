@@ -115,15 +115,26 @@ export class WalletPortabilityJobStore {
   }
 
   public async get(jobId: string): Promise<WalletPortabilityJobRecord | undefined> {
+    let redisRecord: WalletPortabilityJobRecord | undefined
     if (this.redisClient && this.isRedisReady()) {
       try {
         const raw = await this.redisClient.get(`${JOB_KEY_PREFIX}${jobId}`)
-        if (raw) return JSON.parse(raw) as WalletPortabilityJobRecord
+        if (raw) redisRecord = JSON.parse(raw) as WalletPortabilityJobRecord
       } catch (error) {
         this.logger.error(`[WalletPortabilityJobStore] Redis get failed, falling back to in-memory store: ${error}`)
       }
     }
-    return this.memoryStore.get(jobId)
+    const memoryRecord = this.memoryStore.get(jobId)
+    // Reconcile rather than preferring Redis unconditionally — save() mirrors into memoryStore
+    // whenever Redis was unready at write time, so the two can genuinely disagree for the same
+    // jobId (Redis holds a stale record from before an outage, memory holds the true latest
+    // state, or the reverse if Redis recovered mid-job and a later write landed there instead).
+    // Taking whichever has the later updatedAt is always correct either way — an entry only ever
+    // exists in memoryStore because Redis was unavailable for that particular write.
+    if (redisRecord && memoryRecord) {
+      return new Date(memoryRecord.updatedAt) > new Date(redisRecord.updatedAt) ? memoryRecord : redisRecord
+    }
+    return redisRecord ?? memoryRecord
   }
 
   /** Graceful shutdown — call from the process shutdown handler so the connection isn't just dropped. */
