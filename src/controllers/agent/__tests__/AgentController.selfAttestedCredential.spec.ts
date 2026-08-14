@@ -20,6 +20,11 @@
  *   5. The response restores a top-level `credential` field for back-compat with consumers that
  *      read response.credential directly — 0.6.2's W3cCredentialRecord only exposes
  *      `credentialInstances` via JsonTransformer.toJSON.
+ *   6. The default DID is resolved via a GenericRecord (tags: { isDefaultDid: 'true' }), not a
+ *      DidRepository query — Credo 0.6.2's DidRecord custom tags are typed to just
+ *      recipientKeyFingerprints/alternativeDids, so a DidRecord-tag-based lookup (the legacy
+ *      approach) matches nothing on this Credo version. See DidController.writeDid, which writes
+ *      the GenericRecord this reads.
  *
  * Runs under Jest's ESM mode (see jest.config.base.ts) — tsyringe is mocked so constructing the
  * controller does not require a real DI container. @credo-ts/core itself is used for real (its
@@ -49,7 +54,7 @@ jest.unstable_mockModule('tsyringe', () => ({
 }))
 
 const { AgentController } = await import('../AgentController')
-const { DidRepository, W3cCredential, W3cJsonLdVerifiableCredential } = await import('@credo-ts/core')
+const { W3cCredential, W3cJsonLdVerifiableCredential } = await import('@credo-ts/core')
 
 const SELF_DID = 'did:key:self-attesting-tenant'
 const VERIFICATION_METHOD_ID = `${SELF_DID}#key-1`
@@ -61,16 +66,27 @@ const REQUEST_BODY = {
   proofType: 'Ed25519Signature2018',
 } as never
 
-function makeDidRepository(defaultDidRecord: unknown) {
-  return { findSingleByQuery: jest.fn(async () => defaultDidRecord) as jest.Mock }
-}
-
 // request.agent's own shape — no tenantId param, no withTenantAgent() indirection, matching how
-// verifyCredential/verify already consume it on this controller.
-function makeAgent(didRepository: ReturnType<typeof makeDidRepository>, signCredentialImpl: jest.Mock) {
+// verifyCredential/verify already consume it on this controller. Default DID resolution goes
+// through genericRecords (the GenericRecord DidController.writeDid saves) then dids.getCreatedDids
+// (to fetch the actual DidRecord's didDocument), not DidRepository.
+function makeAgent({
+  defaultDid,
+  didRecord,
+  signCredentialImpl,
+}: {
+  defaultDid: string | null
+  didRecord?: unknown
+  signCredentialImpl: jest.Mock
+}) {
   return {
     context: {},
-    dependencyManager: { resolve: jest.fn(() => didRepository) },
+    genericRecords: {
+      findAllByQuery: jest.fn(async () => (defaultDid ? [{ content: { did: defaultDid } }] : [])) as jest.Mock,
+    },
+    dids: {
+      getCreatedDids: jest.fn(async () => (didRecord ? [didRecord] : [])) as jest.Mock,
+    },
     w3cCredentials: {
       signCredential: signCredentialImpl,
       store: jest.fn(async ({ record }: { record: unknown }) => record) as jest.Mock,
@@ -82,10 +98,7 @@ const makeRequest = (agent: unknown) => ({ agent }) as never
 
 describe('AgentController.createW3cSelfAttestedCredential', () => {
   it('signs with the agent default DID, stores via store({ record }), and returns the stored record', async () => {
-    const didRepository = makeDidRepository({
-      did: SELF_DID,
-      didDocument: { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] },
-    })
+    const didRecord = { did: SELF_DID, didDocument: { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] } }
     // Real signCredential returns a signed W3cVerifiableCredential (a W3cCredential subclass with
     // a `proof`, driving the `.encoded` getter that W3cCredentialRecord.fromCredential relies on)
     // — echoing back the unsigned W3cCredential the mock was given would not have that shape.
@@ -101,7 +114,7 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
         },
       })
     }) as jest.Mock
-    const agent = makeAgent(didRepository, signCredential)
+    const agent = makeAgent({ defaultDid: SELF_DID, didRecord, signCredentialImpl: signCredential })
     const controller = new AgentController()
 
     const result = await controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)
@@ -138,14 +151,12 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
       id: SELF_DID,
       claim: 'value',
     })
-    expect(didRepository.findSingleByQuery).toHaveBeenCalledWith(agent.context, { isDefault: true })
+    expect(agent.genericRecords.findAllByQuery).toHaveBeenCalledWith({ isDefaultDid: 'true' })
+    expect(agent.dids.getCreatedDids).toHaveBeenCalledWith({ did: SELF_DID })
   })
 
   it('supports an array credentialSubject — each entry gets the agent DID as id and its own object as claims', async () => {
-    const didRepository = makeDidRepository({
-      did: SELF_DID,
-      didDocument: { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] },
-    })
+    const didRecord = { did: SELF_DID, didDocument: { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] } }
     const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
       return new W3cJsonLdVerifiableCredential({
         ...options.credential,
@@ -158,7 +169,7 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
         },
       })
     }) as jest.Mock
-    const agent = makeAgent(didRepository, signCredential)
+    const agent = makeAgent({ defaultDid: SELF_DID, didRecord, signCredentialImpl: signCredential })
     const controller = new AgentController()
 
     const requestBody = {
@@ -180,9 +191,21 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
 
   it('throws NotFoundError when the agent has no default DID', async () => {
     const { NotFoundError } = await import('../../../errors')
-    const didRepository = makeDidRepository(null)
     const signCredential = jest.fn() as jest.Mock
-    const agent = makeAgent(didRepository, signCredential)
+    const agent = makeAgent({ defaultDid: null, signCredentialImpl: signCredential })
+    const controller = new AgentController()
+
+    await expect(controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)).rejects.toThrow(
+      NotFoundError,
+    )
+    expect(signCredential).not.toHaveBeenCalled()
+    expect(agent.dids.getCreatedDids).not.toHaveBeenCalled()
+  })
+
+  it('throws NotFoundError when the default DID GenericRecord points at a DID that no longer resolves', async () => {
+    const { NotFoundError } = await import('../../../errors')
+    const signCredential = jest.fn() as jest.Mock
+    const agent = makeAgent({ defaultDid: SELF_DID, didRecord: undefined, signCredentialImpl: signCredential })
     const controller = new AgentController()
 
     await expect(controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)).rejects.toThrow(
@@ -192,18 +215,14 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
   })
 
   it('throws when the default DID has no verification method', async () => {
-    const didRepository = makeDidRepository({ did: SELF_DID, didDocument: { verificationMethod: [] } })
+    const didRecord = { did: SELF_DID, didDocument: { verificationMethod: [] } }
     const signCredential = jest.fn() as jest.Mock
-    const agent = makeAgent(didRepository, signCredential)
+    const agent = makeAgent({ defaultDid: SELF_DID, didRecord, signCredentialImpl: signCredential })
     const controller = new AgentController()
 
     await expect(controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)).rejects.toThrow(
       /[Vv]erification method/,
     )
     expect(signCredential).not.toHaveBeenCalled()
-  })
-
-  it('sanity: DidRepository is the real class (constructor-based DI token, not a string)', () => {
-    expect(typeof DidRepository).toBe('function')
   })
 })

@@ -116,6 +116,30 @@ export class DidController extends Controller {
 
       didRes = { ...result }
 
+      // Tracked via a GenericRecord, not a DidRecord tag — Credo 0.6.2's DidRecord custom tags
+      // are typed to just recipientKeyFingerprints/alternativeDids, so there's no typed path left
+      // to tag the DID record itself as default (the legacy pipeline-implementation's
+      // didRecord.setTag('isDefault', true) has no equivalent here anymore). Consumed by
+      // AgentController.createW3cSelfAttestedCredential to resolve the tenant's self-issuance DID.
+      //
+      // Cast, not a widened type: every handler branch above (handleIndy/handleKey/handleWeb/
+      // handlePolygon/handleDidPeer/handleEthereum) does normalize its return to include `did` at
+      // runtime, but `result`'s inferred type is a union across all of them and TS won't narrow it
+      // here without a per-branch type guard.
+      const createdDid = (didRes as { did?: string })?.did
+      if (createDidOptions.isDefault && createdDid) {
+        const [existingDefault] = await request.agent.genericRecords.findAllByQuery({ isDefaultDid: 'true' })
+        if (existingDefault) {
+          existingDefault.content.did = createdDid
+          await request.agent.genericRecords.update(existingDefault)
+        } else {
+          await request.agent.genericRecords.save({
+            content: { did: createdDid },
+            tags: { isDefaultDid: 'true' },
+          })
+        }
+      }
+
       return didRes
     } catch (error) {
       throw ErrorHandlingService.handle(error)

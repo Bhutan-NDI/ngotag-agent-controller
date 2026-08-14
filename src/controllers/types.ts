@@ -331,6 +331,10 @@ export interface DidCreate {
   didDocument?: DidDocument
   privatekey?: string
   endpoint?: string
+  // Tracked via a GenericRecord (tags: { isDefaultDid: 'true' }), not a DidRecord tag — Credo
+  // 0.6.2's DidRecord custom tags are typed to just recipientKeyFingerprints/alternativeDids, so
+  // there's no typed path left to tag a DID record itself as default. See DidController.writeDid.
+  isDefault?: boolean
 }
 
 export interface CreateTenantOptions {

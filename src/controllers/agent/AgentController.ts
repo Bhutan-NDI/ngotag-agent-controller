@@ -15,7 +15,6 @@ import type {
 
 import {
   ClaimFormat,
-  DidRepository,
   JsonTransformer,
   W3cCredential,
   W3cCredentialRecord,
@@ -260,14 +259,22 @@ export class AgentController extends Controller {
     @Body() selfAttestedCredentialOptions: jsonLdCredentialOptions,
   ) {
     try {
-      const didRepository = request.agent.dependencyManager.resolve(DidRepository)
-      const defaultDidRecord = await didRepository.findSingleByQuery(request.agent.context, {
-        isDefault: true,
-      })
-      const selfDid = defaultDidRecord?.did
-      const selfDidVerificationMethod = defaultDidRecord?.didDocument?.verificationMethod?.[0]?.id
+      // Default DID is tracked via a GenericRecord (see DidController.writeDid), not a DidRecord
+      // tag — Credo 0.6.2's DidRecord custom tags are typed to just recipientKeyFingerprints/
+      // alternativeDids, so a query like the legacy findSingleByQuery(..., {isDefault: true})
+      // matches nothing on this Credo version, 404ing unconditionally regardless of how the DID
+      // was created.
+      const [defaultDidGenericRecord] = await request.agent.genericRecords.findAllByQuery({ isDefaultDid: 'true' })
+      const selfDid = defaultDidGenericRecord?.content.did as string | undefined
 
       if (!selfDid) {
+        throw new NotFoundError('Default DID not found')
+      }
+
+      const [defaultDidRecord] = await request.agent.dids.getCreatedDids({ did: selfDid })
+      const selfDidVerificationMethod = defaultDidRecord?.didDocument?.verificationMethod?.[0]?.id
+
+      if (!defaultDidRecord) {
         throw new NotFoundError('Default DID not found')
       }
       if (!selfDidVerificationMethod) {
