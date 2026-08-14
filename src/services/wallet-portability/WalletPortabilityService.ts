@@ -502,10 +502,16 @@ export class WalletPortabilityService {
         // Take the source profile FROM the artifact rather than requiring it to already equal
         // the target tenant's profile name. The old "must match" guard hard-coupled an artifact
         // to the exact tenant id it was exported from — it would reject the main restore
-        // scenario (importing onto a rebuilt agent / a freshly created tenant with a new uuid)
-        // and every legacy Python-exported artifact (askar-wallet-tools names the profile after
-        // the wallet/store, never tenant-<uuid>). An export artifact always contains exactly one
-        // profile (see runExport), so asserting that and using it as fromProfile works for both.
+        // scenario (importing onto a rebuilt agent / a freshly created tenant with a new uuid).
+        // An artifact produced by this service's own export always contains exactly one profile
+        // (see runExport), so asserting that and using it as fromProfile is verified to work for
+        // that case. NOT verified: a legacy askar-wallet-tools artifact. Two things would need
+        // checking against a real one before that claim could be made — Store.open above
+        // hardcodes KdfMethod.Argon2IMod, which Askar rejects outright (before this guard is ever
+        // reached) if the legacy artifact was provisioned with a different KDF; and nothing here
+        // establishes that askar-wallet-tools' own export always yields exactly one profile
+        // (e.g. no leftover default profile alongside it) the way this service's export does. See
+        // the #73 review — trimmed the claim rather than assert compatibility that isn't tested.
         const profilesInArtifact = await importedStore?.listProfiles()
         if (!profilesInArtifact || profilesInArtifact.length !== 1) {
           throw new Error(
