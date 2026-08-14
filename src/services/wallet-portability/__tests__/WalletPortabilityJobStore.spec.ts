@@ -286,4 +286,23 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
     await store.releaseActiveJob(tenantId, jobId)
     expect(await store.tryReserveActiveJob(tenantId, 'job-3')).toBeUndefined()
   })
+
+  it('a memory-only reservation is still seen once Redis recovers — the divergence runs both directions', async () => {
+    // Mirrors makeReadyStore's constructor but deliberately does NOT emit 'ready' yet, so the
+    // first reservation is forced into the memory-only path (isRedisReady() is false at that
+    // point) exactly like a real reservation made during a Redis outage.
+    const store = new WalletPortabilityJobStore(makeLogger() as never, 'redis://fake-host:6379')
+    const redis = lastRedisClient as FakeRedisClient
+    const tenantId = 'tenant-1'
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-A')).toBeUndefined()
+
+    // Redis recovers mid-job — well within the "seconds to minutes" a real portability job runs.
+    redis.emit('ready')
+
+    // A second reservation attempt must still see job-A's memory-only reservation, not fall
+    // through to the now-ready Redis branch (which has no key for this tenant at all, since the
+    // first reservation never reached Redis) and wrongly admit a second concurrent job.
+    expect(await store.tryReserveActiveJob(tenantId, 'job-B')).toBe('job-A')
+  })
 })

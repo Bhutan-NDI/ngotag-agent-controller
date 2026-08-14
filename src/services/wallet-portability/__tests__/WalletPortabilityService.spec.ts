@@ -437,6 +437,48 @@ describe('WalletPortabilityService — importWallet', () => {
     expect(fetchMock).toHaveBeenCalledWith(url, { redirect: 'error' })
   })
 
+  it('SSRF guard: accepts a path-style URL for a dotted bucket name (aws-sdk emits this shape, not virtual-hosted, when the bucket name is not DNS-compatible over TLS)', async () => {
+    // A bucket name containing a dot (common when a bucket mirrors a domain) makes real aws-sdk's
+    // getSignedUrl mint a path-style URL — s3.<region>.amazonaws.com/<bucket>/<key>, no bucket in
+    // the hostname at all — not the virtual-hosted form every other test in this file uses.
+    process.env.AWS_WALLET_EXPORT_BUCKET = 'wallet.exports.ngotag.bt'
+    try {
+      const url = 'https://s3.ap-south-1.amazonaws.com/wallet.exports.ngotag.bt/some-export.db.gz'
+      const copyProfile = jest.fn(async () => undefined)
+      const { agent } = makeAgent(copyProfile)
+      const service = new WalletPortabilityService(makeLogger() as never)
+
+      const { jobId } = await service.importWallet(agent as never, TENANT_ID, url, PASS_KEY, CHECKSUM)
+      const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+      expect(job.error).toBeUndefined()
+      expect(fetchMock).toHaveBeenCalledWith(url, { redirect: 'error' })
+    } finally {
+      process.env.AWS_WALLET_EXPORT_BUCKET = 'test-wallet-export-bucket'
+    }
+  })
+
+  it('SSRF guard: refuses a path-style URL whose first path segment is a different bucket', async () => {
+    // Same generic S3 host as a legitimate path-style URL for this deployment's own bucket, but
+    // the bucket in the path itself belongs to someone else — must not be trusted just because
+    // the hostname alone looks like a real S3 endpoint.
+    process.env.AWS_WALLET_EXPORT_BUCKET = 'wallet.exports.ngotag.bt'
+    try {
+      const url = 'https://s3.ap-south-1.amazonaws.com/some-other-attacker-bucket/some-export.db.gz'
+      const copyProfile = jest.fn(async () => undefined)
+      const { agent } = makeAgent(copyProfile)
+      const service = new WalletPortabilityService(makeLogger() as never)
+
+      const { jobId } = await service.importWallet(agent as never, TENANT_ID, url, PASS_KEY, CHECKSUM)
+      const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+      expect(job.error).toContain('untrusted host')
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      process.env.AWS_WALLET_EXPORT_BUCKET = 'test-wallet-export-bucket'
+    }
+  })
+
   it('decompression bomb: gunzip aborts once decompressed output crosses its byte cap', async () => {
     // A real decompression bomb relies on an extreme compression ratio (tiny compressed input,
     // huge decompressed output) — proving that ratio at unit-test speed would mean allocating a

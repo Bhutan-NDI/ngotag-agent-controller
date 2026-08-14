@@ -617,28 +617,41 @@ export class WalletPortabilityService {
   // (the checksum-mismatch error echoes sha256(response body) back to the caller). The only
   // legitimate input is a pre-signed URL for the bucket *this deployment itself* wrote to — scoped
   // to that specific bucket, not "any S3 bucket", since a caller-supplied exportUrl pointing at a
-  // different, attacker-controlled bucket must not be trusted just because it's *an* S3 host. Only
-  // virtual-hosted-style hostnames are accepted (`<bucket>.s3....`) since this service never sets
-  // s3ForcePathStyle, so getSignedUrl never produces the path-style form. The endpoint suffix
-  // stays permissive across the standard/dualstack/FIPS/China-partition forms, so a legitimately
-  // configured deployment (any AWS_REGION, including cn-north-1/cn-northwest-1) isn't spuriously
-  // rejected — only the bucket name itself is fixed, not the whole domain shape.
-  private isTrustedExportHost(hostname: string): boolean {
+  // different, attacker-controlled bucket must not be trusted just because it's *an* S3 host.
+  //
+  // Both URL shapes aws-sdk v2 can emit for a real presigned URL are accepted, not just
+  // virtual-hosted-style: `getSignedUrl` switches to *path-style* (`s3.<region>.amazonaws.com/
+  // <bucket>/<key>`, no bucket in the hostname at all) whenever the bucket name isn't
+  // DNS-compatible over TLS — notably, any bucket name containing a dot, which is common when a
+  // bucket mirrors a domain (see aws-sdk's own pathStyleBucketName()). An earlier version of this
+  // check assumed virtual-hosted-style always applied and would have rejected every presigned URL
+  // this service itself minted for such a bucket, with an SSRF-flavored error that gives no hint
+  // the real cause is bucket naming. The endpoint suffix stays permissive across the standard/
+  // dualstack/FIPS/China-partition forms, so a legitimately configured deployment (any
+  // AWS_REGION, including cn-north-1/cn-northwest-1) isn't spuriously rejected either way — only
+  // the bucket name itself is fixed, not the whole domain shape.
+  private isTrustedExportHost(hostname: string, pathname: string): boolean {
     const bucket = this.getExportBucket()
     const escapedBucket = bucket.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const pattern = new RegExp(
-      `^${escapedBucket}\\.s3(-fips)?(\\.dualstack)?([.-][a-z0-9-]+)?\\.amazonaws\\.com(\\.cn)?$`,
-      'i',
-    )
-    return pattern.test(hostname)
+    const endpointSuffix = `s3(-fips)?(\\.dualstack)?([.-][a-z0-9-]+)?\\.amazonaws\\.com(\\.cn)?`
+    // Virtual-hosted style: <bucket>.s3.<region>.amazonaws.com
+    if (new RegExp(`^${escapedBucket}\\.${endpointSuffix}$`, 'i').test(hostname)) {
+      return true
+    }
+    // Path style: s3.<region>.amazonaws.com/<bucket>/... — a legitimate shape for a URL this
+    // service minted itself (see this method's own docblock), not an SSRF attempt.
+    if (new RegExp(`^${endpointSuffix}$`, 'i').test(hostname)) {
+      return pathname.startsWith(`/${bucket}/`)
+    }
+    return false
   }
 
   private async downloadAndChecksum(url: string, destPath: string): Promise<string> {
     // https-only, no redirects followed, and a hard byte cap below so a large/endless response
-    // can't fill the host's disk. Host itself is restricted to this deployment's own export
-    // bucket — see isTrustedExportHost.
+    // can't fill the host's disk. Host (+ path, for the path-style form) is restricted to this
+    // deployment's own export bucket — see isTrustedExportHost.
     const parsedUrl = new URL(url)
-    if (parsedUrl.protocol !== 'https:' || !this.isTrustedExportHost(parsedUrl.hostname)) {
+    if (parsedUrl.protocol !== 'https:' || !this.isTrustedExportHost(parsedUrl.hostname, parsedUrl.pathname)) {
       throw new Error(`Refusing to download export artifact from untrusted host '${parsedUrl.hostname}'`)
     }
 

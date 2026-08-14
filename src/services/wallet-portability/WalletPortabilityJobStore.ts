@@ -197,6 +197,15 @@ export class WalletPortabilityJobStore {
    */
   public async tryReserveActiveJob(tenantId: string, jobId: string): Promise<string | undefined> {
     const key = `${ACTIVE_JOB_KEY_PREFIX}${tenantId}`
+    // Checked first, and regardless of Redis's current readiness: a reservation made while Redis
+    // was unready lives only in memory, and Redis recovering before that job releases must not
+    // make the reservation invisible to a later reserve attempt. Without this check up front, a
+    // reserve call landing after Redis recovers falls straight into the Redis branch below, finds
+    // no key there (the earlier reservation was memory-only), and wrongly admits a second
+    // concurrent job for the same tenant — the exact race this reservation exists to prevent.
+    const existingInMemory = this.activeJobMemoryStore.get(tenantId)
+    if (existingInMemory) return existingInMemory
+
     if (this.redisClient && this.isRedisReady()) {
       try {
         const result = await this.redisClient.set(key, jobId, 'EX', JOB_TTL_SECONDS, 'NX')
@@ -216,8 +225,6 @@ export class WalletPortabilityJobStore {
         )
       }
     }
-    const existing = this.activeJobMemoryStore.get(tenantId)
-    if (existing) return existing
     this.activeJobMemoryStore.set(tenantId, jobId)
     return undefined
   }
