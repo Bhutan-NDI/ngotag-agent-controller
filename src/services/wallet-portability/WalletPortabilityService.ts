@@ -234,8 +234,7 @@ export class WalletPortabilityService {
   // also serves DIDComm and every other tenant's API traffic, and nothing caps how many exports
   // can run concurrently, so buffering full wallet artifacts in memory here is a real OOM risk
   // (this repo has already fought exactly this failure mode once, see the purge scheduler's
-  // paged-scan fix). ContentLength is required by S3 when the body is a stream rather than a
-  // Buffer, since a stream can't report its own length.
+  // paged-scan fix).
   private async uploadToS3(filePath: string, key: string): Promise<void> {
     // s3.upload(), not putObject() — putObject with a raw ReadStream body is not retry-safe in
     // aws-sdk v2. Its request layer retries transient failures (5xx, RequestTimeout, ECONNRESET,

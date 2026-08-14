@@ -132,7 +132,11 @@ export class WalletPortabilityJobStore {
     // Taking whichever has the later updatedAt is always correct either way — an entry only ever
     // exists in memoryStore because Redis was unavailable for that particular write.
     if (redisRecord && memoryRecord) {
-      return new Date(memoryRecord.updatedAt) > new Date(redisRecord.updatedAt) ? memoryRecord : redisRecord
+      // >= not >: updatedAt is millisecond-resolution and consecutive writes for one job routinely
+      // share a millisecond (Pending -> InProgress is only a couple of microtasks apart). A
+      // memoryStore entry only exists because Redis was unavailable for that particular write, so
+      // on a tie it is the later of the two, not redisRecord.
+      return new Date(memoryRecord.updatedAt) >= new Date(redisRecord.updatedAt) ? memoryRecord : redisRecord
     }
     return redisRecord ?? memoryRecord
   }

@@ -97,6 +97,41 @@ describe('WalletPortabilityJobStore — get() reconciliation', () => {
     expect(result).toEqual(newerRecord)
   })
 
+  it('prefers the in-memory record on an updatedAt tie, not the Redis one', async () => {
+    // updatedAt is millisecond-resolution, and consecutive writes for one job routinely share a
+    // millisecond (e.g. exportWallet's initial Pending save and runExport's very next
+    // setJobStatus(InProgress) call, only a couple of microtasks apart). A memoryStore entry only
+    // exists because Redis was unavailable for *that* write, so on a tie it is the later of the
+    // two, not whichever store get() would otherwise default to.
+    const store = new WalletPortabilityJobStore(makeLogger() as never, 'redis://fake-host:6379')
+    const redis = lastRedisClient as FakeRedisClient
+    redis.emit('ready')
+
+    const jobId = 'job-3'
+    const tiedUpdatedAt = '2026-01-01T00:00:00.123Z'
+    const pendingRecord = {
+      jobId,
+      tenantId: 'tenant-3',
+      type: WalletPortabilityJobType.Export,
+      status: WalletPortabilityJobStatus.Pending,
+      createdAt: tiedUpdatedAt,
+      updatedAt: tiedUpdatedAt,
+    }
+    await store.save(pendingRecord) // lands in Redis — ready at this point
+
+    // Redis blips before the very next write, which lands in the same millisecond.
+    redis.emit('reconnecting')
+    const inProgressRecord = {
+      ...pendingRecord,
+      status: WalletPortabilityJobStatus.InProgress,
+      updatedAt: tiedUpdatedAt,
+    }
+    await store.save(inProgressRecord)
+
+    redis.emit('ready')
+    expect(await store.get(jobId)).toEqual(inProgressRecord)
+  })
+
   it('returns the Redis record when no in-memory record exists for the jobId', async () => {
     const store = new WalletPortabilityJobStore(makeLogger() as never, 'redis://fake-host:6379')
     const redis = lastRedisClient as FakeRedisClient
