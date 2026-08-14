@@ -27,13 +27,10 @@ const PRE_SIGNED_URL_EXPIRY_SECONDS = 15 * 60
 // into the type-checker's program, which is fine for `tsc` but reliably OOMs ts-jest's type-aware
 // transform (isolatedModules: false) when it type-checks this file. See WalletPortabilityService.spec.ts.
 interface S3Client {
-  putObject(params: {
-    Bucket: string
-    Key: string
-    Body: Readable
-    ContentLength: number
-    ServerSideEncryption: string
-  }): {
+  // upload(), not putObject() — see uploadToS3's own comment for why a raw ReadStream body isn't
+  // retry-safe with putObject in aws-sdk v2. No ContentLength: the managed multipart uploader
+  // doesn't need it upfront the way putObject does.
+  upload(params: { Bucket: string; Key: string; Body: Readable; ServerSideEncryption: string }): {
     promise(): Promise<unknown>
   }
   getSignedUrl(operation: 'getObject', params: { Bucket: string; Key: string; Expires: number }): string
@@ -240,13 +237,22 @@ export class WalletPortabilityService {
   // paged-scan fix). ContentLength is required by S3 when the body is a stream rather than a
   // Buffer, since a stream can't report its own length.
   private async uploadToS3(filePath: string, key: string): Promise<void> {
-    const { size } = await fs.stat(filePath)
+    // s3.upload(), not putObject() — putObject with a raw ReadStream body is not retry-safe in
+    // aws-sdk v2. Its request layer retries transient failures (5xx, RequestTimeout, ECONNRESET,
+    // throttling; maxRetries defaults to 3), and on retry it re-sends httpRequest.body — but
+    // createReadStream(filePath) is a one-shot, non-rewindable stream already (partially or
+    // fully) consumed by the first attempt. The retry then sends a short/empty body while
+    // ContentLength still claims the full size, so S3 rejects with IncompleteBody (or the request
+    // stalls until the socket timeout) instead of the retry actually recovering the upload.
+    // s3.upload()'s managed multipart uploader re-reads only the failed part from its own
+    // buffered chunks, so a transient error partway through a large export doesn't force the
+    // caller to re-run the whole job — and it also removes the 5 GB single-PUT ceiling that came
+    // with putObject, since ContentLength/fs.stat are no longer needed at all.
     await this.s3
-      .putObject({
+      .upload({
         Bucket: this.getExportBucket(),
         Key: key,
         Body: createReadStream(filePath),
-        ContentLength: size,
         ServerSideEncryption: 'AES256',
       })
       .promise()

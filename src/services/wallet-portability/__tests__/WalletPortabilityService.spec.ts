@@ -38,20 +38,22 @@ jest.unstable_mockModule('@credo-ts/askar', () => ({
   AskarStoreManager: class {},
 }))
 
-const putObjectPromise = jest.fn(async () => ({})) as jest.Mock
+const s3UploadPromise = jest.fn(async () => ({})) as jest.Mock
 const getSignedUrl = jest.fn(() => 'https://example-bucket.s3.amazonaws.com/signed-url') as jest.Mock
 // Body is a real fs.ReadStream (uploadToS3 streams the artifact rather than buffering it into
 // memory — see the review that caught the OOM risk). Capture its bytes synchronously via its own
 // .path at call time, since the underlying temp file is deleted by the time assertions run.
 let uploadedBytes: Buffer | undefined
-const putObject = jest.fn((params: { Body: { path: string } }) => {
+// s3.upload(), not putObject() — see uploadToS3's own comment on why putObject + a raw ReadStream
+// isn't retry-safe in aws-sdk v2.
+const s3Upload = jest.fn((params: { Body: { path: string } }) => {
   uploadedBytes = readFileSync(params.Body.path)
-  return { promise: putObjectPromise }
+  return { promise: s3UploadPromise }
 }) as jest.Mock
 
 jest.unstable_mockModule('aws-sdk', () => ({
   S3: jest.fn(() => ({
-    putObject,
+    upload: s3Upload,
     getSignedUrl,
   })),
 }))
@@ -170,12 +172,12 @@ describe('WalletPortabilityService — exportWallet', () => {
     expect(storeProvision).toHaveBeenCalledWith(expect.objectContaining({ passKey: PASS_KEY }))
     expect(job.downloadUrl).toBe('https://example-bucket.s3.amazonaws.com/signed-url')
     expect(job.checksum).toMatch(/^[0-9a-f]{64}$/) // sha256 hex digest
-    expect(putObject).toHaveBeenCalledTimes(1)
-    expect(putObjectPromise).toHaveBeenCalledTimes(1)
+    expect(s3Upload).toHaveBeenCalledTimes(1)
+    expect(s3UploadPromise).toHaveBeenCalledTimes(1)
     expect(getSignedUrl).toHaveBeenCalledTimes(1)
     expect(storeClose).toHaveBeenCalledTimes(1) // temp store closed, never left open
 
-    const uploadedKey = (putObject.mock.calls[0][0] as { Key: string }).Key
+    const uploadedKey = (s3Upload.mock.calls[0][0] as { Key: string }).Key
     expect(uploadedKey).toContain(TENANT_ID)
     expect(uploadedKey).toContain(jobId)
 
@@ -201,7 +203,7 @@ describe('WalletPortabilityService — exportWallet', () => {
 
     expect(job.error).toContain('simulated Askar failure')
     expect(job.downloadUrl).toBeUndefined()
-    expect(putObject).not.toHaveBeenCalled()
+    expect(s3Upload).not.toHaveBeenCalled()
   })
 
   it('never holds the tenant session open outside withTenantAgent — copyProfile happens inside the callback', async () => {
