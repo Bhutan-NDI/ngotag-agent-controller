@@ -122,12 +122,17 @@ export class DidController extends Controller {
       // didRecord.setTag('isDefault', true) has no equivalent here anymore). Consumed by
       // AgentController.createW3cSelfAttestedCredential to resolve the tenant's self-issuance DID.
       //
-      // Cast, not a widened type: every handler branch above (handleIndy/handleKey/handleWeb/
-      // handlePolygon/handleDidPeer/handleEthereum) does normalize its return to include `did` at
-      // runtime, but `result`'s inferred type is a union across all of them and TS won't narrow it
-      // here without a per-branch type guard.
-      const createdDid = (didRes as { did?: string })?.did
-      if (createDidOptions.isDefault && createdDid) {
+      // Cast, not a widened type: `result`'s inferred type is a union across all handler branches
+      // and TS won't narrow it here without a per-branch type guard. Note that handleIndicio's
+      // non-endorser branch returns the raw registrar result, hence the didState fallback — every
+      // other branch (handleIndy's other paths, handleKey/handleWeb/handlePolygon/handleDidPeer/
+      // handleEthereum, and handleBcovrin's equivalent non-endorser branch) already normalizes to
+      // a top-level `did`.
+      const createdDid = (didRes as { did?: string })?.did ?? (didRes as { didState?: { did?: string } })?.didState?.did
+      if (createDidOptions.isDefault) {
+        if (!createdDid) {
+          throw new InternalServerError('isDefault was requested but the created did could not be determined')
+        }
         const [existingDefault] = await request.agent.genericRecords.findAllByQuery({ isDefaultDid: 'true' })
         if (existingDefault) {
           existingDefault.content.did = createdDid
