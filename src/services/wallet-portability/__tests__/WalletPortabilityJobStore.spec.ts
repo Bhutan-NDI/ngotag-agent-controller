@@ -238,6 +238,23 @@ describe('WalletPortabilityJobStore — get() reconciliation', () => {
   })
 })
 
+// Real callers (exportWallet/importWallet) reserve the slot *before* saving the job's own Pending
+// record, so a reservation genuinely can briefly outrun its own record — but by the time a test
+// wants to assert a reservation is still correctly exclusive, the real job would already have one.
+// Used to give a "still active" holder a backing record, so isJobStillActive() (dead-reservation
+// reclaim) doesn't mistake "no record yet" for "definitely dead" and reclaim it out from under a
+// test that's asserting the opposite.
+function makePendingRecord(jobId: string, tenantId: string) {
+  return {
+    jobId,
+    tenantId,
+    type: WalletPortabilityJobType.Import,
+    status: WalletPortabilityJobStatus.Pending,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+}
+
 describe('WalletPortabilityJobStore — active-job reservation/release', () => {
   it('mirrors a Redis-side reservation into memory, and releasing while Redis looks unready still clears it', async () => {
     const { store, redis } = makeReadyStore()
@@ -263,6 +280,7 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
     const tenantId = 'tenant-1'
 
     expect(await store.tryReserveActiveJob(tenantId, 'job-1')).toBeUndefined()
+    await store.save(makePendingRecord('job-1', tenantId))
     // A second reservation attempt for the same tenant is rejected with the existing holder.
     expect(await store.tryReserveActiveJob(tenantId, 'job-2')).toBe('job-1')
 
@@ -270,6 +288,23 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
     await store.releaseActiveJob(tenantId, 'job-2')
     redis.emit('ready')
     expect(await store.tryReserveActiveJob(tenantId, 'job-3')).toBe('job-1')
+  })
+
+  it('reclaims a Redis-side reservation whose job has already reached a terminal status — a crash-recovery path, not just the 24h TTL', async () => {
+    const { store } = makeReadyStore()
+    const tenantId = 'tenant-1'
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-1')).toBeUndefined()
+    // job-1's own record reached a terminal status (e.g. its finally ran, or a later poll found
+    // it Completed) but, for whatever reason, releaseActiveJob was never called for it — the
+    // process died between the two. Without reclaiming, this would 409 the tenant for up to the
+    // full 24h TTL even though nothing is actually running.
+    await store.save({ ...makePendingRecord('job-1', tenantId), status: WalletPortabilityJobStatus.Completed })
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-2')).toBeUndefined()
+    // job-2 is now the genuinely active holder — a third job must still be blocked by it.
+    await store.save(makePendingRecord('job-2', tenantId))
+    expect(await store.tryReserveActiveJob(tenantId, 'job-3')).toBe('job-2')
   })
 
   it('falls back to memory-only reservation when Redis is unready at reserve time, and releases it correctly', async () => {
@@ -281,10 +316,22 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
     const jobId = 'job-1'
 
     expect(await store.tryReserveActiveJob(tenantId, jobId)).toBeUndefined()
+    await store.save(makePendingRecord(jobId, tenantId))
     expect(await store.tryReserveActiveJob(tenantId, 'job-2')).toBe(jobId)
 
     await store.releaseActiveJob(tenantId, jobId)
     expect(await store.tryReserveActiveJob(tenantId, 'job-3')).toBeUndefined()
+  })
+
+  it('reclaims a memory-only reservation whose job has already reached a terminal status — memory has no TTL at all, so this is the only way it ever clears', async () => {
+    const store = new WalletPortabilityJobStore(makeLogger() as never, 'redis://fake-host:6379')
+    // Never emits 'ready' — pure in-memory path throughout.
+    const tenantId = 'tenant-1'
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-1')).toBeUndefined()
+    await store.save({ ...makePendingRecord('job-1', tenantId), status: WalletPortabilityJobStatus.Failed })
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-2')).toBeUndefined()
   })
 
   it('a memory-only reservation is still seen once Redis recovers — the divergence runs both directions', async () => {
@@ -296,6 +343,7 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
     const tenantId = 'tenant-1'
 
     expect(await store.tryReserveActiveJob(tenantId, 'job-A')).toBeUndefined()
+    await store.save(makePendingRecord('job-A', tenantId))
 
     // Redis recovers mid-job — well within the "seconds to minutes" a real portability job runs.
     redis.emit('ready')

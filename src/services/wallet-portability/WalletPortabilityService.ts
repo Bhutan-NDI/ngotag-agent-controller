@@ -452,6 +452,15 @@ export class WalletPortabilityService {
     let importedDbPath: string | undefined
     let backupProfile: string | undefined
     let renamedAway = false
+    // Distinguishes the two shapes a Failed record can have after a rollback attempt: true means
+    // the backup profile was successfully renamed back to the live name (the tenant is fully
+    // restored, and backupProfile no longer points at anything real); false (the default) covers
+    // both "no rollback was attempted" and "the rollback itself failed" -- in both of those cases
+    // backupProfile still holds the tenant's data and is worth reporting. Without this, a
+    // successful rollback and a failed one were indistinguishable over the API, and an operator
+    // following the documented meaning of backupProfile would go looking for a profile that
+    // rollback had already put back. See the #73 review.
+    let rollbackSucceeded = false
     // Hoisted out of the try (was a local const inside it, out of scope for the finally below) —
     // same reasoning as runExport's identical field: Askar's sqlite backend leaves `-shm`/`-wal`
     // sidecar files next to the `.db` while it's open, which survive if importedStore.close()
@@ -575,6 +584,7 @@ export class WalletPortabilityService {
                 await baseStore.removeProfile(profile)
               }
               await baseStore.renameProfile({ fromProfile: backupProfile as string, toProfile: profile })
+              rollbackSucceeded = true
             }
           })
         } catch (rollbackError) {
@@ -593,7 +603,11 @@ export class WalletPortabilityService {
         WalletPortabilityJobType.Import,
         WalletPortabilityJobStatus.Failed,
         IMPORT_FAILED_ERROR_CODE,
-        backupProfile,
+        // Only when the backup profile is genuinely still holding the tenant's data -- a
+        // successful rollback renamed it back to the live name, so reporting it then points an
+        // operator at a profile that no longer exists and hides whether intervention is actually
+        // needed.
+        rollbackSucceeded ? undefined : backupProfile,
       )
     } finally {
       if (importedStore) {

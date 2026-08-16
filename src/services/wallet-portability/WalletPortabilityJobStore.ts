@@ -4,6 +4,8 @@ import type { RedisOptions } from 'ioredis'
 
 import { Redis } from 'ioredis'
 
+import { WalletPortabilityJobStatus } from './WalletPortabilityTypes'
+
 // Job records are small and short-lived (a single export/import run) — 24h is generous headroom
 // for a client to poll status without leaking memory/Redis keys indefinitely.
 const JOB_TTL_SECONDS = 24 * 60 * 60
@@ -204,7 +206,14 @@ export class WalletPortabilityJobStore {
     // no key there (the earlier reservation was memory-only), and wrongly admits a second
     // concurrent job for the same tenant — the exact race this reservation exists to prevent.
     const existingInMemory = this.activeJobMemoryStore.get(tenantId)
-    if (existingInMemory) return existingInMemory
+    if (existingInMemory) {
+      if (await this.isJobStillActive(existingInMemory)) return existingInMemory
+      // The memory-side reservation belongs to a job that's no longer pending/in-progress -- the
+      // process died before releaseActiveJob's finally ran. Memory has no TTL at all (unlike the
+      // Redis key below), so without this the tenant would be wedged out permanently rather than
+      // for a bounded 24h. Reclaim rather than trust a stale pointer.
+      this.activeJobMemoryStore.delete(tenantId)
+    }
 
     if (this.redisClient && this.isRedisReady()) {
       try {
@@ -217,8 +226,19 @@ export class WalletPortabilityJobStore {
           this.activeJobMemoryStore.set(tenantId, jobId)
           return undefined
         }
-        const existing = await this.redisClient.get(key)
-        return existing ?? undefined
+        const holder = await this.redisClient.get(key)
+        // The slot is only genuinely held if the job it points at is still live. A job whose
+        // record is terminal (or gone entirely — its own TTL outlived the process that was
+        // running it) means the previous holder died before its finally could release, and the
+        // 24h TTL on this key would otherwise 409 the tenant for the rest of the day even though
+        // nothing is actually running. Reclaim it on the next attempt instead of waiting out the
+        // full TTL.
+        if (holder && !(await this.isJobStillActive(holder))) {
+          await this.redisClient.set(key, jobId, 'EX', JOB_TTL_SECONDS)
+          this.activeJobMemoryStore.set(tenantId, jobId)
+          return undefined
+        }
+        return holder ?? undefined
       } catch (error) {
         this.logger.error(
           `[WalletPortabilityJobStore] Redis active-job reservation failed, falling back to in-memory: ${error}`,
@@ -227,6 +247,19 @@ export class WalletPortabilityJobStore {
     }
     this.activeJobMemoryStore.set(tenantId, jobId)
     return undefined
+  }
+
+  // A reservation's TTL (24h, Redis) or lack of one (memory) is only a self-heal backstop, not
+  // the primary way a dead reservation gets reclaimed — that's what this checks. A job whose own
+  // record has reached a terminal status (or never got one at all, e.g. an unexpected process
+  // exit before the very first save()) is no longer actually running, regardless of what the
+  // reservation slot still says.
+  private async isJobStillActive(jobId: string): Promise<boolean> {
+    const job = await this.get(jobId)
+    return (
+      !!job &&
+      (job.status === WalletPortabilityJobStatus.Pending || job.status === WalletPortabilityJobStatus.InProgress)
+    )
   }
 
   /**

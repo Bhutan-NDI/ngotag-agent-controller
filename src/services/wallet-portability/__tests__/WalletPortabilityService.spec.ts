@@ -604,9 +604,36 @@ describe('WalletPortabilityService — importWallet', () => {
     // The rollback call reverses the first: the backup name becomes fromProfile, the real
     // profile name becomes toProfile again.
     expect(secondCall[0]).toEqual({ fromProfile: firstCall[0].toProfile, toProfile: PROFILE })
-    // backupProfile must survive onto the Failed record too, not just the Completed one — it's
-    // the only API-visible pointer to where the tenant's real data ended up.
-    expect(job.backupProfile).toEqual(firstCall[0].toProfile)
+    // The rollback here succeeded — the backup profile was renamed back to the live name, so it
+    // no longer exists. Reporting it on the Failed record would point an operator at a profile
+    // that isn't there and hide the fact that the tenant is actually already fully restored.
+    expect(job.backupProfile).toBeUndefined()
+  })
+
+  it("rollback FAILS: backupProfile is still reported on the Failed record, since the tenant's real data is genuinely still there", async () => {
+    importedStoreCopyProfile.mockImplementation(async () => {
+      throw new Error('simulated copy failure')
+    })
+    const copyProfile = jest.fn(async () => undefined)
+    // First call (rename-aside) succeeds; second call (the rollback's rename-back) fails.
+    const renameProfile = jest
+      .fn()
+      .mockImplementationOnce(async () => undefined)
+      .mockImplementationOnce(async () => {
+        throw new Error('simulated rollback failure')
+      })
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(job.error).toContain('simulated copy failure')
+    expect(renameProfile).toHaveBeenCalledTimes(2)
+    // The rollback itself failed, so the tenant's real data is genuinely still sitting at
+    // backupProfile — an operator needs this to find it, unlike the successful-rollback case
+    // above where the profile no longer exists.
+    expect(job.backupProfile).toBeDefined()
   })
 
   it('rollback recovers even when copyProfile left the target profile partially created before failing', async () => {
