@@ -10,7 +10,10 @@ import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { ConflictError } from '../../errors/errors'
 import { getWalletPortabilityService } from '../../services/wallet-portability/WalletPortabilityService'
-import { WalletPortabilityJobConflictError } from '../../services/wallet-portability/WalletPortabilityTypes'
+import {
+  WalletPortabilityJobConflictError,
+  WalletPortabilityJobType,
+} from '../../services/wallet-portability/WalletPortabilityTypes'
 import { TsLogger } from '../../utils/logger'
 import { CreateTenantOptions } from '../types'
 
@@ -197,7 +200,12 @@ export class MultiTenancyController extends Controller {
       const job = await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).getJobStatus(
         jobId,
       )
-      if (!job || job.tenantId !== tenantId) {
+      // job.type checked too, not just tenantId: getJobStatus is type-agnostic, so an export
+      // jobId polled through this route (or an import jobId polled through the mirrored
+      // getImportWalletStatus below) would otherwise resolve successfully with a shape that
+      // doesn't match what this route promises (no downloadUrl on an import job masquerading as
+      // an export one, and vice versa) instead of a clean 404. See the #73 review.
+      if (!job || job.tenantId !== tenantId || job.type !== WalletPortabilityJobType.Export) {
         return notFoundError(404, { reason: `Export job '${jobId}' not found for tenant '${tenantId}'.` })
       }
       return job
@@ -276,7 +284,8 @@ export class MultiTenancyController extends Controller {
       const job = await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).getJobStatus(
         jobId,
       )
-      if (!job || job.tenantId !== tenantId) {
+      // job.type checked too — see getExportWalletStatus's identical comment above.
+      if (!job || job.tenantId !== tenantId || job.type !== WalletPortabilityJobType.Import) {
         return notFoundError(404, { reason: `Import job '${jobId}' not found for tenant '${tenantId}'.` })
       }
       return job
