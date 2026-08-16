@@ -3261,6 +3261,9 @@
 					},
 					"endpoint": {
 						"type": "string"
+					},
+					"isDefault": {
+						"type": "boolean"
 					}
 				},
 				"required": [

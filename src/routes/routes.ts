@@ -1431,6 +1431,7 @@ const models: TsoaRoute.Models = {
             "didDocument": {"ref":"DidDocument"},
             "privatekey": {"dataType":"string"},
             "endpoint": {"dataType":"string"},
+            "isDefault": {"dataType":"boolean"},
         },
         "additionalProperties": false,
     },
