@@ -265,18 +265,38 @@ export class AgentController extends Controller {
       // matches nothing on this Credo version, 404ing unconditionally regardless of how the DID
       // was created.
       const [defaultDidGenericRecord] = await request.agent.genericRecords.findAllByQuery({ isDefaultDid: 'true' })
-      const selfDid = defaultDidGenericRecord?.content.did as string | undefined
+      let selfDid = defaultDidGenericRecord?.content.did as string | undefined
+
+      // Fallback for existing/migrated wallets that predate the GenericRecord-based tracking
+      // above — every one of those had its default written as a DidRecord tag under the legacy
+      // stack, which the GenericRecord lookup above can never see, and there is no backfill step.
+      // Without this, every such wallet permanently 404s here, with a brand-new (re-anchored, for
+      // did:indy/did:web) DID as the only workaround. Only kicks in when unambiguous: a tenant
+      // with exactly one created DID has an obvious "the" DID to self-issue from even though it
+      // was never explicitly marked default; a tenant with more than one gets the same 404 as
+      // before, since guessing among several would risk silently issuing under the wrong identity.
+      if (!selfDid) {
+        const createdDids = await request.agent.dids.getCreatedDids()
+        if (createdDids.length === 1) {
+          selfDid = createdDids[0].did
+        }
+      }
 
       if (!selfDid) {
         throw new NotFoundError('Default DID not found')
       }
 
-      const [defaultDidRecord] = await request.agent.dids.getCreatedDids({ did: selfDid })
-      const selfDidVerificationMethod = defaultDidRecord?.didDocument?.verificationMethod?.[0]?.id
+      // resolveCreatedDidDocumentWithKeys, not getCreatedDids({did}) + record.didDocument directly:
+      // Credo only persists didDocument on the DidRecord for some methods —
+      // KeyDidRegistrar never saves one at all, and PeerDidRegistrar only saves one for numAlgo 1
+      // (DidController's handleDidPeer uses numAlgo 2). Reading record.didDocument straight off
+      // the record would silently be undefined for did:key/did:peer defaults, the two most likely
+      // methods for this endpoint. This API resolves the document when it wasn't persisted, and
+      // throws RecordNotFoundError (mapped to 404 by ErrorHandlingService below) when the DID
+      // itself is gone — covering the old !defaultDidRecord branch too.
+      const { didDocument: defaultDidDocument } = await request.agent.dids.resolveCreatedDidDocumentWithKeys(selfDid)
+      const selfDidVerificationMethod = defaultDidDocument?.verificationMethod?.[0]?.id
 
-      if (!defaultDidRecord) {
-        throw new NotFoundError('Default DID not found')
-      }
       if (!selfDidVerificationMethod) {
         throw new Error('Default DID Verification method is missing or undefined')
       }
