@@ -314,18 +314,29 @@ export class AgentController extends Controller {
       // through purpose-specific setters (addAssertionMethod/addAuthentication/addKeyAgreement),
       // none of which touch didDocument.verificationMethod at all — so for every did:peer,
       // verificationMethod is undefined even though the document is otherwise complete.
-      // assertionMethod/authentication entries can legitimately be either a plain DID-URL string
-      // or an embedded VerificationMethod object, hence the typeof check. Falling back to
-      // verificationMethod[0] last keeps the previous behavior for did:indy/did:web, where
-      // preferring an assertion-capable key first is also more correct than an arbitrary index.
-      const vmRef =
-        defaultDidDocument?.assertionMethod?.[0] ??
-        defaultDidDocument?.authentication?.[0] ??
-        defaultDidDocument?.verificationMethod?.[0]
+      // assertionMethod/verificationMethod entries can legitimately be either a plain DID-URL
+      // string or an embedded VerificationMethod object, hence the typeof check. Falling back to
+      // verificationMethod[0] keeps the previous behavior for did:indy/did:web, where preferring
+      // an assertion-capable key first is also more correct than an arbitrary index.
+      //
+      // No authentication fallback: this signs with proofPurpose: assertionMethod below, and an
+      // authentication-only key is not authorized for that purpose. An earlier version of this
+      // fallback included authentication — which does fix did:peer's 500 (handleDidPeer's
+      // documents have authentication but no assertionMethod), but replaces it with a *worse*
+      // failure: signCredential succeeds (nothing at issuance time checks the key's authorized
+      // purpose), returns 200, and stores a credential that fails verification everywhere else
+      // (ControllerProofPurpose.validate rejects it as "not authorized by controller for proof
+      // purpose 'assertionMethod'"). A loud, immediate error is strictly better than a silently
+      // unverifiable credential persisted in a holder's wallet. See the #75 review. If did:peer
+      // genuinely needs to be usable here, the fix belongs upstream in how the DID is created
+      // (give it an assertion-capable key), not in which key is chosen at signing time.
+      const vmRef = defaultDidDocument?.assertionMethod?.[0] ?? defaultDidDocument?.verificationMethod?.[0]
       const selfDidVerificationMethod = typeof vmRef === 'string' ? vmRef : vmRef?.id
 
       if (!selfDidVerificationMethod) {
-        throw new Error('Default DID Verification method is missing or undefined')
+        throw new Error(
+          `Default DID '${selfDid}' has no assertionMethod verification method; it cannot be used to issue credentials`,
+        )
       }
 
       const {

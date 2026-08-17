@@ -411,10 +411,14 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     expect(signedWith.verificationMethod).toBe(VERIFICATION_METHOD_ID)
   })
 
-  it('prefers assertionMethod over authentication, and authentication over verificationMethod, when more than one is present', async () => {
+  it('prefers assertionMethod over verificationMethod when both are present, and ignores authentication entirely', async () => {
     // Pins the fallback order itself: assertionMethod is the purpose this endpoint actually signs
-    // with (proofPurpose is always assertionMethod, see toSubject above), so it must win over the
-    // other two when a document happens to carry all three.
+    // with (proofPurpose is always assertionMethod, see toSubject above), so it must win over
+    // verificationMethod when a document happens to carry both. authentication is included here
+    // (pointing at yet another wrong id) specifically to prove it is no longer consulted at
+    // all -- see the #75 review: an authentication-only key is not authorized for the
+    // assertionMethod proof purpose this endpoint signs with, so authentication was dropped from
+    // the fallback chain entirely rather than merely being given lower priority.
     const didDocument = {
       verificationMethod: [{ id: 'wrong-vm-id' }],
       authentication: ['wrong-auth-id'],
@@ -439,5 +443,28 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
 
     const signedWith = signCredential.mock.calls[0][0] as { verificationMethod: string }
     expect(signedWith.verificationMethod).toBe(VERIFICATION_METHOD_ID)
+  })
+
+  it('throws instead of silently signing with an authentication-only key, for a did:peer default DID with no assertionMethod', async () => {
+    // The actual vulnerability this fix closes: did:peer's handleDidPeer document has
+    // authentication but no assertionMethod. The pre-fix code fell back to authentication, so
+    // signCredential (nothing at issuance time checks a key's authorized purpose) would succeed
+    // with a 200 and persist a credential that is permanently unverifiable everywhere else --
+    // ControllerProofPurpose.validate rejects it at verification time as "not authorized by
+    // controller for proof purpose 'assertionMethod'". A loud, immediate error here is strictly
+    // better than that silent, delayed failure. See the #75 review.
+    const didDocument = {
+      verificationMethod: undefined,
+      assertionMethod: undefined,
+      authentication: ['wrong-auth-id'],
+    }
+    const signCredential = jest.fn() as jest.Mock
+    const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+    const controller = new AgentController()
+
+    await expect(controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)).rejects.toThrow(
+      `Default DID '${SELF_DID}' has no assertionMethod verification method; it cannot be used to issue credentials`,
+    )
+    expect(signCredential).not.toHaveBeenCalled()
   })
 })
