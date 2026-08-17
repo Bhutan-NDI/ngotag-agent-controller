@@ -331,9 +331,11 @@ export interface DidCreate {
   didDocument?: DidDocument
   privatekey?: string
   endpoint?: string
-  // Tracked via a GenericRecord (tags: { isDefaultDid: 'true' }), not a DidRecord tag — Credo
-  // 0.6.2's DidRecord custom tags are typed to just recipientKeyFingerprints/alternativeDids, so
-  // there's no typed path left to tag a DID record itself as default. See DidController.writeDid.
+  // Marks the newly created DID as this wallet's default issuer DID. Tracked as an `isDefault`
+  // tag on the DID's own DidRecord (booleans round-trip through AskarStorageService as "1"/"0"),
+  // and read back via DidRepository.findByQuery({ isDefault: true }) — see DidController.writeDid
+  // for the clear-previous-default bookkeeping and AgentController's self-attested lookup for the
+  // read path.
   isDefault?: boolean
 }
 
