@@ -15,6 +15,7 @@ import type {
 
 import {
   ClaimFormat,
+  DidRepository,
   JsonTransformer,
   W3cCredential,
   W3cCredentialRecord,
@@ -259,29 +260,34 @@ export class AgentController extends Controller {
     @Body() selfAttestedCredentialOptions: jsonLdCredentialOptions,
   ) {
     try {
-      // Default DID is tracked via a GenericRecord (see DidController.writeDid), not a DidRecord
-      // tag — Credo 0.6.2's DidRecord custom tags are typed to just recipientKeyFingerprints/
-      // alternativeDids, so a query like the legacy findSingleByQuery(..., {isDefault: true})
-      // matches nothing on this Credo version, 404ing unconditionally regardless of how the DID
-      // was created.
-      const [defaultDidGenericRecord] = await request.agent.genericRecords.findAllByQuery({ isDefaultDid: 'true' })
-      let selfDid = defaultDidGenericRecord?.content.did as string | undefined
+      // Default DID is tracked as a tag on the DID's own DidRecord (see DidController.writeDid),
+      // not a separate pointer record. Verified directly against this repo's installed
+      // @credo-ts/core/@credo-ts/askar: BaseRecord.setTag accepts arbitrary tag names, and
+      // AskarStorageService applies the same transformFromRecordTagValues encoding on both save
+      // and query, so a query of `{ isDefault: true }` genuinely matches a DidRecord tagged that
+      // way. findByQuery (not findSingleByQuery) is used deliberately: it tolerates more than one
+      // tagged record rather than throwing RecordDuplicateError, since a wallet migrated from the
+      // legacy stack may already carry more than one isDefault-tagged DID from before
+      // DidController.writeDid started clearing the previous default on every write.
+      const [defaultDidRecord] = await request.agent.dependencyManager
+        .resolve(DidRepository)
+        .findByQuery(request.agent.context, { isDefault: true })
+      let selfDid = defaultDidRecord?.did
 
-      // Fallback for existing/migrated wallets that predate the GenericRecord-based tracking
-      // above — every one of those had its default written as a DidRecord tag under the legacy
-      // stack, which the GenericRecord lookup above can never see, and there is no backfill step.
-      // Without this, every such wallet permanently 404s here, with a brand-new (re-anchored, for
-      // did:indy/did:web) DID as the only workaround. Only kicks in when unambiguous: a tenant
-      // with exactly one created DID has an obvious "the" DID to self-issue from even though it
-      // was never explicitly marked default; a tenant with more than one gets the same 404 as
-      // before, since guessing among several would risk silently issuing under the wrong identity.
+      // Fallback for wallets that have never explicitly marked a DID as default at all (no client
+      // ever called POST /dids/write with isDefault: true) — the tag lookup above correctly finds
+      // nothing for these regardless of storage mechanism, tag or otherwise. Only kicks in when
+      // unambiguous: a tenant with exactly one created DID has an obvious "the" DID to self-issue
+      // from even though it was never explicitly marked default; a tenant with more than one gets
+      // the same 404 as before, since guessing among several would risk silently issuing under the
+      // wrong identity.
       //
       // did:peer entries are excluded from the candidate list before that count: getCreatedDids()
       // is a role filter ("everything with role: Created"), not "DIDs the operator explicitly
       // wrote" — PeerDidRegistrar saves every DIDComm connection/mediation-routing DID with that
       // same role. A holder wallet's whole purpose is DIDComm, so having made at least one
       // connection is the common case, not the exception; without this exclusion, length === 1
-      // would almost never hold for exactly the migrated wallets this fallback exists to unblock.
+      // would almost never hold for exactly the wallets this fallback exists to unblock.
       if (!selfDid) {
         const createdDids = (await request.agent.dids.getCreatedDids()).filter(
           (record) => !record.did.startsWith('did:peer:'),

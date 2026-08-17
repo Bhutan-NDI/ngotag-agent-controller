@@ -116,19 +116,33 @@ export class DidController extends Controller {
 
       didRes = { ...result }
 
-      // Tracked via a GenericRecord, not a DidRecord tag — Credo 0.6.2's DidRecord custom tags
-      // are typed to just recipientKeyFingerprints/alternativeDids, so there's no typed path left
-      // to tag the DID record itself as default (the legacy pipeline-implementation's
-      // didRecord.setTag('isDefault', true) has no equivalent here anymore). Consumed by
-      // AgentController.createW3cSelfAttestedCredential to resolve the tenant's self-issuance DID.
+      // Tracked as a tag on the DID's own DidRecord, not a separate pointer record. Credo 0.6.2's
+      // BaseRecord.setTag accepts arbitrary tag names (`keyof CustomTags | (string & {})`), the
+      // value round-trips through AskarStorageService's transformFromRecordTagValues on both save
+      // and query (booleans <-> "1"/"0"), so `setTag('isDefault', true)` followed later by
+      // `findByQuery({ isDefault: true })` genuinely matches — verified directly against this
+      // repo's installed @credo-ts/core/@credo-ts/askar packages. An earlier version of this code
+      // moved isDefault tracking into a GenericRecord pointer on the (incorrect) belief that
+      // DidRecord tags could no longer carry it; see the #75 review. Reverted back to tagging the
+      // DidRecord directly: it needs no backfill (every DID ever created already carries this tag
+      // if it was ever marked default) and keeps the read path (AgentController's self-attested
+      // lookup, below) a plain tag query instead of a second record type to keep in sync.
+      //
+      // Two real bugs existed in the legacy (pre-migration) version of this same approach, both
+      // fixed here: (1) it never cleared the previous default before tagging a new one, so
+      // `findSingleByQuery` could find N previously-tagged DIDs and throw RecordDuplicateError —
+      // fixed by clearing every other isDefault-tagged record for this tenant first; (2) it always
+      // re-fetched the record via `getCreatedDids({ did, method: DidMethod.Key })`, so isDefault
+      // silently no-opped (`undefined.setTag(...)` throwing, caught below) for any non-did:key
+      // method — fixed by looking the record up by `did` alone, with no method restriction.
       //
       // Best-effort, in its own try/catch: the DID is the expensive, non-idempotent side effect
-      // (for did:indy/did:bcovrin/did:indicio, already a ledger NYM by this point) — the
-      // isDefault pointer record is not. A storage/Askar failure recording it must never turn an
-      // already-successful creation into a 500, since the client's only recourse on a 500 is to
-      // retry the whole request, anchoring a second, orphaned DID for a real ledger method. Logged
-      // as a warning rather than surfaced to the caller — didRes below still returns the real,
-      // successfully created DID either way.
+      // (for did:indy/did:bcovrin/did:indicio, already a ledger NYM by this point) — the isDefault
+      // tag is not. A storage/Askar failure recording it must never turn an already-successful
+      // creation into a 500, since the client's only recourse on a 500 is to retry the whole
+      // request, anchoring a second, orphaned DID for a real ledger method. Logged as a warning
+      // rather than surfaced to the caller — didRes below still returns the real, successfully
+      // created DID either way.
       try {
         // Cast, not a widened type: `result`'s inferred type is a union across all handler
         // branches and TS won't narrow it here without a per-branch type guard. Note that
@@ -142,16 +156,20 @@ export class DidController extends Controller {
           if (!createdDid) {
             throw new InternalServerError('isDefault was requested but the created did could not be determined')
           }
-          const [existingDefault] = await request.agent.genericRecords.findAllByQuery({ isDefaultDid: 'true' })
-          if (existingDefault) {
-            existingDefault.content.did = createdDid
-            await request.agent.genericRecords.update(existingDefault)
-          } else {
-            await request.agent.genericRecords.save({
-              content: { did: createdDid },
-              tags: { isDefaultDid: 'true' },
-            })
+          const didRepository = request.agent.dependencyManager.resolve(DidRepository)
+          const newDefaultRecord = await didRepository.findCreatedDid(request.agent.context, createdDid)
+          if (!newDefaultRecord) {
+            throw new InternalServerError(`isDefault was requested but no DidRecord could be found for ${createdDid}`)
           }
+          const previousDefaults = await didRepository.findByQuery(request.agent.context, { isDefault: true })
+          for (const previousDefault of previousDefaults) {
+            if (previousDefault.id !== newDefaultRecord.id) {
+              previousDefault.setTag('isDefault', false)
+              await didRepository.update(request.agent.context, previousDefault)
+            }
+          }
+          newDefaultRecord.setTag('isDefault', true)
+          await didRepository.update(request.agent.context, newDefaultRecord)
         }
       } catch (bookkeepingError) {
         this.agent.config.logger.warn(

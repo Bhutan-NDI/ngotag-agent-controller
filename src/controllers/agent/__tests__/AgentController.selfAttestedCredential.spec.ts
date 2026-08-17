@@ -20,11 +20,12 @@
  *   5. The response restores a top-level `credential` field for back-compat with consumers that
  *      read response.credential directly — 0.6.2's W3cCredentialRecord only exposes
  *      `credentialInstances` via JsonTransformer.toJSON.
- *   6. The default DID is resolved via a GenericRecord (tags: { isDefaultDid: 'true' }), not a
- *      DidRepository query — Credo 0.6.2's DidRecord custom tags are typed to just
- *      recipientKeyFingerprints/alternativeDids, so a DidRecord-tag-based lookup (the legacy
- *      approach) matches nothing on this Credo version. See DidController.writeDid, which writes
- *      the GenericRecord this reads.
+ *   6. The default DID is resolved via a DidRepository tag query ({ isDefault: true }) against the
+ *      DID's own DidRecord, not a separate GenericRecord pointer — verified directly against the
+ *      installed @credo-ts/core/@credo-ts/askar packages that arbitrary DidRecord tags round-trip
+ *      through save and query. See DidController.writeDid, which writes this same tag. (An earlier
+ *      version of this endpoint read a GenericRecord instead, on the incorrect belief that
+ *      DidRecord tags could no longer carry this on Credo 0.6.2; see the #75 review.)
  *   7. The DID document itself comes from dids.resolveCreatedDidDocumentWithKeys(selfDid), not
  *      getCreatedDids({did}) + record.didDocument — Credo only persists didDocument on the
  *      DidRecord for some methods (never for did:key, only for did:peer numAlgo 1), so reading it
@@ -61,7 +62,8 @@ jest.unstable_mockModule('tsyringe', () => ({
 }))
 
 const { AgentController } = await import('../AgentController')
-const { W3cCredential, W3cJsonLdVerifiableCredential, RecordNotFoundError } = await import('@credo-ts/core')
+const { W3cCredential, W3cJsonLdVerifiableCredential, RecordNotFoundError, DidRepository } =
+  await import('@credo-ts/core')
 
 const SELF_DID = 'did:key:self-attesting-tenant'
 const VERIFICATION_METHOD_ID = `${SELF_DID}#key-1`
@@ -75,8 +77,8 @@ const REQUEST_BODY = {
 
 // request.agent's own shape — no tenantId param, no withTenantAgent() indirection, matching how
 // verifyCredential/verify already consume it on this controller. Default DID resolution goes
-// through genericRecords (the GenericRecord DidController.writeDid saves) then
-// dids.resolveCreatedDidDocumentWithKeys, not DidRepository or a raw getCreatedDids() + record
+// through a DidRepository tag query ({ isDefault: true }, the same tag DidController.writeDid
+// sets) then dids.resolveCreatedDidDocumentWithKeys, not a raw getCreatedDids({did}) + record
 // .didDocument read — the real Credo API resolves the document when the DidRecord itself never
 // persisted one (did:key, did:peer numAlgo 2), and throws RecordNotFoundError when the DID is
 // gone, which is why `didDocument: undefined` here models "known DID, no document" while
@@ -90,17 +92,21 @@ function makeAgent({
 }: {
   defaultDid: string | null
   didDocument?: unknown | null
-  // Backs the no-GenericRecord fallback: dids.getCreatedDids() with no filter, as the endpoint
-  // calls it when there's no explicit default — models an existing/migrated wallet's full set of
-  // created DIDs.
+  // Backs the no-default-tag fallback: dids.getCreatedDids() with no filter, as the endpoint calls
+  // it when there's no explicit default — models an existing/migrated wallet's full set of created
+  // DIDs.
   allCreatedDids?: { did: string }[]
   signCredentialImpl: jest.Mock
 }) {
+  const didRepository = {
+    findByQuery: jest.fn(async () => (defaultDid ? [{ did: defaultDid }] : [])) as jest.Mock,
+  }
   return {
     context: {},
-    genericRecords: {
-      findAllByQuery: jest.fn(async () => (defaultDid ? [{ content: { did: defaultDid } }] : [])) as jest.Mock,
+    dependencyManager: {
+      resolve: jest.fn((token: unknown) => (token === DidRepository ? didRepository : undefined)) as jest.Mock,
     },
+    _didRepository: didRepository,
     dids: {
       resolveCreatedDidDocumentWithKeys: jest.fn(async (did: string) => {
         if (didDocument === null) {
@@ -174,7 +180,7 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
       id: SELF_DID,
       claim: 'value',
     })
-    expect(agent.genericRecords.findAllByQuery).toHaveBeenCalledWith({ isDefaultDid: 'true' })
+    expect(agent._didRepository.findByQuery).toHaveBeenCalledWith(agent.context, { isDefault: true })
     expect(agent.dids.resolveCreatedDidDocumentWithKeys).toHaveBeenCalledWith(SELF_DID)
   })
 
