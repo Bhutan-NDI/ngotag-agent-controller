@@ -275,8 +275,17 @@ export class AgentController extends Controller {
       // with exactly one created DID has an obvious "the" DID to self-issue from even though it
       // was never explicitly marked default; a tenant with more than one gets the same 404 as
       // before, since guessing among several would risk silently issuing under the wrong identity.
+      //
+      // did:peer entries are excluded from the candidate list before that count: getCreatedDids()
+      // is a role filter ("everything with role: Created"), not "DIDs the operator explicitly
+      // wrote" — PeerDidRegistrar saves every DIDComm connection/mediation-routing DID with that
+      // same role. A holder wallet's whole purpose is DIDComm, so having made at least one
+      // connection is the common case, not the exception; without this exclusion, length === 1
+      // would almost never hold for exactly the migrated wallets this fallback exists to unblock.
       if (!selfDid) {
-        const createdDids = await request.agent.dids.getCreatedDids()
+        const createdDids = (await request.agent.dids.getCreatedDids()).filter(
+          (record) => !record.did.startsWith('did:peer:'),
+        )
         if (createdDids.length === 1) {
           selfDid = createdDids[0].did
         }
@@ -295,7 +304,19 @@ export class AgentController extends Controller {
       // throws RecordNotFoundError (mapped to 404 by ErrorHandlingService below) when the DID
       // itself is gone — covering the old !defaultDidRecord branch too.
       const { didDocument: defaultDidDocument } = await request.agent.dids.resolveCreatedDidDocumentWithKeys(selfDid)
-      const selfDidVerificationMethod = defaultDidDocument?.verificationMethod?.[0]?.id
+      // Select by purpose, not array position: did:peer's numAlgo2 document is built purely
+      // through purpose-specific setters (addAssertionMethod/addAuthentication/addKeyAgreement),
+      // none of which touch didDocument.verificationMethod at all — so for every did:peer,
+      // verificationMethod is undefined even though the document is otherwise complete.
+      // assertionMethod/authentication entries can legitimately be either a plain DID-URL string
+      // or an embedded VerificationMethod object, hence the typeof check. Falling back to
+      // verificationMethod[0] last keeps the previous behavior for did:indy/did:web, where
+      // preferring an assertion-capable key first is also more correct than an arbitrary index.
+      const vmRef =
+        defaultDidDocument?.assertionMethod?.[0] ??
+        defaultDidDocument?.authentication?.[0] ??
+        defaultDidDocument?.verificationMethod?.[0]
+      const selfDidVerificationMethod = typeof vmRef === 'string' ? vmRef : vmRef?.id
 
       if (!selfDidVerificationMethod) {
         throw new Error('Default DID Verification method is missing or undefined')

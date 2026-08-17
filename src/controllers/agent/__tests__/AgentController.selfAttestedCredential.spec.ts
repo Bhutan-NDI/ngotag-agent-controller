@@ -259,6 +259,47 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     expect(result.credential.credentialSubject).toMatchObject({ id: SELF_DID })
   })
 
+  it('excludes did:peer connection DIDs from the single-created-DID fallback — the common case for a wallet that has ever connected', async () => {
+    // The fallback's own follow-up finding: getCreatedDids() is a role filter ("everything with
+    // role: Created"), not "DIDs the operator explicitly wrote" — PeerDidRegistrar saves every
+    // DIDComm connection/mediation-routing DID with that same role. A holder wallet's whole
+    // purpose is DIDComm, so a migrated wallet with one real issuer DID and several existing
+    // connections is the common case, not the exception — without excluding did:peer entries
+    // first, length === 1 would almost never hold for exactly the wallets this fallback targets.
+    const didDocument = { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
+      return new W3cJsonLdVerifiableCredential({
+        ...options.credential,
+        proof: {
+          type: 'Ed25519Signature2018',
+          proofPurpose: 'assertionMethod',
+          verificationMethod: VERIFICATION_METHOD_ID,
+          created: new Date().toISOString(),
+          jws: 'fake-jws',
+        },
+      })
+    }) as jest.Mock
+    const agent = makeAgent({
+      defaultDid: null,
+      didDocument,
+      allCreatedDids: [
+        { did: SELF_DID },
+        { did: 'did:peer:2.Ez6L...connection-one' },
+        { did: 'did:peer:2.Ez6L...connection-two' },
+        { did: 'did:peer:4zQm...mediation-routing' },
+      ],
+      signCredentialImpl: signCredential,
+    })
+    const controller = new AgentController()
+
+    const result = (await controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)) as {
+      credential: { credentialSubject: unknown }
+    }
+
+    expect(agent.dids.resolveCreatedDidDocumentWithKeys).toHaveBeenCalledWith(SELF_DID)
+    expect(result.credential.credentialSubject).toMatchObject({ id: SELF_DID })
+  })
+
   it('does not guess among multiple created DIDs — still 404s rather than silently picking one', async () => {
     const { NotFoundError } = await import('../../../errors')
     const signCredential = jest.fn() as jest.Mock
@@ -328,5 +369,69 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
 
     expect(agent.dids.resolveCreatedDidDocumentWithKeys).toHaveBeenCalledWith(SELF_DID)
     expect(signCredential).toHaveBeenCalled()
+  })
+
+  it('resolves the verification method for a did:peer default DID, whose document has no top-level verificationMethod at all', async () => {
+    // The #75 review's follow-up finding: resolveCreatedDidDocumentWithKeys fixed did:key, but
+    // did:peer's numAlgo2 document is built purely through purpose-specific setters
+    // (addAssertionMethod/addAuthentication/addKeyAgreement) — none of which populate
+    // didDocument.verificationMethod at all, so DidDocumentBuilder leaves it undefined for every
+    // did:peer:2. Reading verificationMethod[0] directly (the pre-fix code) would find this
+    // undefined even for a real, fully-resolved did:peer document. assertionMethod holds a plain
+    // DID-URL string here, not an embedded object — proving the fix normalises both forms, not
+    // just the object one didDocument.verificationMethod entries use.
+    const didDocument = {
+      verificationMethod: undefined,
+      assertionMethod: [VERIFICATION_METHOD_ID],
+    }
+    const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
+      return new W3cJsonLdVerifiableCredential({
+        ...options.credential,
+        proof: {
+          type: 'Ed25519Signature2018',
+          proofPurpose: 'assertionMethod',
+          verificationMethod: VERIFICATION_METHOD_ID,
+          created: new Date().toISOString(),
+          jws: 'fake-jws',
+        },
+      })
+    }) as jest.Mock
+    const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+    const controller = new AgentController()
+
+    await controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)
+
+    const signedWith = signCredential.mock.calls[0][0] as { verificationMethod: string }
+    expect(signedWith.verificationMethod).toBe(VERIFICATION_METHOD_ID)
+  })
+
+  it('prefers assertionMethod over authentication, and authentication over verificationMethod, when more than one is present', async () => {
+    // Pins the fallback order itself: assertionMethod is the purpose this endpoint actually signs
+    // with (proofPurpose is always assertionMethod, see toSubject above), so it must win over the
+    // other two when a document happens to carry all three.
+    const didDocument = {
+      verificationMethod: [{ id: 'wrong-vm-id' }],
+      authentication: ['wrong-auth-id'],
+      assertionMethod: [{ id: VERIFICATION_METHOD_ID }],
+    }
+    const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
+      return new W3cJsonLdVerifiableCredential({
+        ...options.credential,
+        proof: {
+          type: 'Ed25519Signature2018',
+          proofPurpose: 'assertionMethod',
+          verificationMethod: VERIFICATION_METHOD_ID,
+          created: new Date().toISOString(),
+          jws: 'fake-jws',
+        },
+      })
+    }) as jest.Mock
+    const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+    const controller = new AgentController()
+
+    await controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)
+
+    const signedWith = signCredential.mock.calls[0][0] as { verificationMethod: string }
+    expect(signedWith.verificationMethod).toBe(VERIFICATION_METHOD_ID)
   })
 })
