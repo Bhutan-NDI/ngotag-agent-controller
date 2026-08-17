@@ -122,27 +122,41 @@ export class DidController extends Controller {
       // didRecord.setTag('isDefault', true) has no equivalent here anymore). Consumed by
       // AgentController.createW3cSelfAttestedCredential to resolve the tenant's self-issuance DID.
       //
-      // Cast, not a widened type: `result`'s inferred type is a union across all handler branches
-      // and TS won't narrow it here without a per-branch type guard. Note that handleIndicio's
-      // non-endorser branch returns the raw registrar result, hence the didState fallback — every
-      // other branch (handleIndy's other paths, handleKey/handleWeb/handlePolygon/handleDidPeer/
-      // handleEthereum, and handleBcovrin's equivalent non-endorser branch) already normalizes to
-      // a top-level `did`.
-      const createdDid = (didRes as { did?: string })?.did ?? (didRes as { didState?: { did?: string } })?.didState?.did
-      if (createDidOptions.isDefault) {
-        if (!createdDid) {
-          throw new InternalServerError('isDefault was requested but the created did could not be determined')
+      // Best-effort, in its own try/catch: the DID is the expensive, non-idempotent side effect
+      // (for did:indy/did:bcovrin/did:indicio, already a ledger NYM by this point) — the
+      // isDefault pointer record is not. A storage/Askar failure recording it must never turn an
+      // already-successful creation into a 500, since the client's only recourse on a 500 is to
+      // retry the whole request, anchoring a second, orphaned DID for a real ledger method. Logged
+      // as a warning rather than surfaced to the caller — didRes below still returns the real,
+      // successfully created DID either way.
+      try {
+        // Cast, not a widened type: `result`'s inferred type is a union across all handler
+        // branches and TS won't narrow it here without a per-branch type guard. Note that
+        // handleIndicio's non-endorser branch returns the raw registrar result, hence the
+        // didState fallback — every other branch (handleIndy's other paths, handleKey/handleWeb/
+        // handlePolygon/handleDidPeer/handleEthereum, and handleBcovrin's equivalent non-endorser
+        // branch) already normalizes to a top-level `did`.
+        const createdDid =
+          (didRes as { did?: string })?.did ?? (didRes as { didState?: { did?: string } })?.didState?.did
+        if (createDidOptions.isDefault) {
+          if (!createdDid) {
+            throw new InternalServerError('isDefault was requested but the created did could not be determined')
+          }
+          const [existingDefault] = await request.agent.genericRecords.findAllByQuery({ isDefaultDid: 'true' })
+          if (existingDefault) {
+            existingDefault.content.did = createdDid
+            await request.agent.genericRecords.update(existingDefault)
+          } else {
+            await request.agent.genericRecords.save({
+              content: { did: createdDid },
+              tags: { isDefaultDid: 'true' },
+            })
+          }
         }
-        const [existingDefault] = await request.agent.genericRecords.findAllByQuery({ isDefaultDid: 'true' })
-        if (existingDefault) {
-          existingDefault.content.did = createdDid
-          await request.agent.genericRecords.update(existingDefault)
-        } else {
-          await request.agent.genericRecords.save({
-            content: { did: createdDid },
-            tags: { isDefaultDid: 'true' },
-          })
-        }
+      } catch (bookkeepingError) {
+        this.agent.config.logger.warn(
+          `[DidController] isDefault bookkeeping failed for a newly created DID — the DID itself was created successfully and is still returned below: ${bookkeepingError}`,
+        )
       }
 
       return didRes

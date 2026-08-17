@@ -7,9 +7,16 @@
  * `isDefault: true` was silently dropped: the request still returned 200, but no GenericRecord
  * was ever written, and the caller had no way to know their isDefault flag was ignored.
  *
- * Fix: writeDid falls back to `didRes.didState?.did` when `didRes.did` is absent, and throws
- * InternalServerError if isDefault was requested but neither yields a did — fail loudly rather
- * than silently no-op.
+ * Fix: writeDid falls back to `didRes.didState?.did` when `didRes.did` is absent.
+ *
+ * Also covers a second, related #75 finding: the isDefault bookkeeping (this same block) runs
+ * AFTER the DID itself has already been created — for did:indy/did:bcovrin/did:indicio, already a
+ * ledger NYM by that point — so a storage failure recording the default pointer must never 500 the
+ * whole request and discard an already-successful, non-idempotent creation. The bookkeeping is
+ * wrapped in its own try/catch and only logs a warning on failure; writeDid still returns the real
+ * created DID either way. This also means "no did could be determined at all" (a genuinely
+ * malformed registrar response) is no longer a hard failure — it is just bookkeeping that couldn't
+ * happen, not a reason to fail a creation that otherwise succeeded.
  *
  * Runs under Jest's ESM mode, mirroring DidController.polygon.spec.ts / DidController.ethereum
  * .spec.ts: tsyringe and cliAgent are mocked so constructing the controller doesn't require a real
@@ -21,7 +28,7 @@ import { jest } from '@jest/globals'
 
 const noopDecorator = () => () => {}
 
-const mockRootAgent = { config: { logger: { info: jest.fn() } } }
+const mockRootAgent = { config: { logger: { info: jest.fn(), warn: jest.fn() } } }
 
 jest.unstable_mockModule('tsyringe', () => ({
   injectable: noopDecorator,
@@ -44,7 +51,6 @@ jest.unstable_mockModule('tsyringe', () => ({
 jest.unstable_mockModule('../../../cliAgent', () => ({}))
 
 const { DidController } = await import('../DidController')
-const { InternalServerError } = await import('../../../errors')
 
 const SEED = 'a'.repeat(32)
 const ENDORSER_DID = 'did:indy:indicio:testnet:endorser123'
@@ -76,6 +82,10 @@ const indicioNonEndorserOptions = (overrides: Record<string, unknown> = {}) =>
 const makeRequest = (agent: unknown) => ({ agent }) as never
 
 describe("writeDid — isDefault via handleIndicio's non-endorser branch", () => {
+  beforeEach(() => {
+    mockRootAgent.config.logger.warn.mockClear()
+  })
+
   it('writes the GenericRecord using didState.did when the branch returns a raw registrar result with no top-level did', async () => {
     const agent = makeAgent({
       didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
@@ -105,16 +115,37 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
     expect(agent.genericRecords.save).not.toHaveBeenCalled()
   })
 
-  it('fails loudly with InternalServerError when isDefault was requested but no did can be determined at all', async () => {
+  it('does not fail the request when no did can be determined at all — logs a warning instead, DID creation already succeeded', async () => {
     // Neither a top-level `did` nor a `didState.did` — a genuinely malformed registrar response.
+    // Even so, the DID itself (for did:indy, already a ledger NYM) was created successfully —
+    // only the isDefault bookkeeping couldn't happen, and that must not turn into a 500.
     const agent = makeAgent({ didState: { state: 'finished' } })
     const controller = new DidController()
 
-    await expect(controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())).rejects.toBeInstanceOf(
-      InternalServerError,
-    )
+    const result = await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())
+
+    expect(result).toEqual({ didState: { state: 'finished' } })
     expect(agent.genericRecords.save).not.toHaveBeenCalled()
     expect(agent.genericRecords.update).not.toHaveBeenCalled()
+    expect(mockRootAgent.config.logger.warn).toHaveBeenCalledWith(expect.stringContaining('isDefault bookkeeping'))
+  })
+
+  it('does not fail the request when the bookkeeping storage write itself throws — the DID was already created successfully', async () => {
+    // A concrete instance of the same principle: a real storage/Askar failure (not a malformed
+    // registrar response) writing the GenericRecord must not discard an already-successful,
+    // non-idempotent DID creation and prompt a client retry that anchors a second orphaned DID.
+    const agent = makeAgent({
+      didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
+    })
+    agent.genericRecords.save = jest.fn(async () => {
+      throw new Error('simulated Askar session failure')
+    }) as jest.Mock
+    const controller = new DidController()
+
+    const result = await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())
+
+    expect(result).toEqual({ didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } } })
+    expect(mockRootAgent.config.logger.warn).toHaveBeenCalledWith(expect.stringContaining('isDefault bookkeeping'))
   })
 
   it('does not touch genericRecords at all when isDefault is not requested', async () => {
