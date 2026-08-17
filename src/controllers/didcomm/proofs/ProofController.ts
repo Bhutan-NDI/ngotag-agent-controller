@@ -289,4 +289,54 @@ export class ProofController extends Controller {
       throw ErrorHandlingService.handle(error)
     }
   }
+
+  /**
+   * Decline a received presentation request as prover, optionally sending a problem-report
+   * message to the verifier associated with the proof record.
+   *
+   * @param proofRecordId
+   * @param body
+   * @returns ProofRecord
+   */
+  @Post('/:proofRecordId/decline-request')
+  @Example<DidCommProofExchangeRecordProps>(ProofRecordExample)
+  public async declineRequest(
+    @Request() request: Req,
+    @Path('proofRecordId') proofRecordId: string,
+    @Body() body: { sendProblemReport?: boolean; problemReportDescription?: string },
+  ) {
+    try {
+      const proof = await request.agent.modules.didcomm.proofs.declineRequest({
+        proofExchangeRecordId: proofRecordId,
+        sendProblemReport: body.sendProblemReport,
+        problemReportDescription: body.problemReportDescription,
+      })
+
+      return proof.toJSON()
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  /**
+   * Retrieve the credentials that satisfy a received presentation request, without selecting or
+   * accepting any of them — lets the holder choose among multiple matching credentials before
+   * accepting. acceptRequest (above) already auto-selects via selectCredentialsForRequest; this is
+   * the corresponding "let the caller choose first" read path.
+   *
+   * @param proofRecordId
+   * @returns the credentials satisfying each requested attribute/predicate
+   */
+  @Get('/:proofRecordId/credentials-for-request')
+  public async getCredentialsForRequest(@Request() request: Req, @Path('proofRecordId') proofRecordId: string) {
+    try {
+      const credentials = await request.agent.modules.didcomm.proofs.getCredentialsForRequest({
+        proofExchangeRecordId: proofRecordId,
+      })
+
+      return credentials
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
 }

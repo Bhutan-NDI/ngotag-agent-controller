@@ -2274,6 +2274,19 @@ const models: TsoaRoute.Models = {
         "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"presentation":{"ref":"ProofFormatDataMessagePayload__40_LegacyIndyDidCommProofFormat-or-AnonCredsDidCommProofFormat-or-DidCommDifPresentationExchangeProofFormat_41_-Array.presentation_"},"request":{"ref":"ProofFormatDataMessagePayload__40_LegacyIndyDidCommProofFormat-or-AnonCredsDidCommProofFormat-or-DidCommDifPresentationExchangeProofFormat_41_-Array.request_"},"proposal":{"ref":"ProofFormatDataMessagePayload__40_LegacyIndyDidCommProofFormat-or-AnonCredsDidCommProofFormat-or-DidCommDifPresentationExchangeProofFormat_41_-Array.proposal_"}},"validators":{}},
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "DidCommProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_": {
+        "dataType": "refAlias",
+        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{},"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "GetCredentialsForProofRequestReturn__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_": {
+        "dataType": "refObject",
+        "properties": {
+            "proofFormats": {"ref":"DidCommProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "OpenId4VcVerifierRecord": {
         "dataType": "refAlias",
         "type": {"ref":"Record_string.unknown_","validators":{}},
@@ -5703,6 +5716,81 @@ export function RegisterRoutes(app: Router) {
 
               await templateService.apiHandler({
                 methodName: 'proofFormData',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsProofController_declineRequest: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                proofRecordId: {"in":"path","name":"proofRecordId","required":true,"dataType":"string"},
+                body: {"in":"body","name":"body","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"problemReportDescription":{"dataType":"string"},"sendProblemReport":{"dataType":"boolean"}}},
+        };
+        app.post('/didcomm/proofs/:proofRecordId/decline-request',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(ProofController)),
+            ...(fetchMiddlewares<RequestHandler>(ProofController.prototype.declineRequest)),
+
+            async function ProofController_declineRequest(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsProofController_declineRequest, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<ProofController>(ProofController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'declineRequest',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsProofController_getCredentialsForRequest: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                proofRecordId: {"in":"path","name":"proofRecordId","required":true,"dataType":"string"},
+        };
+        app.get('/didcomm/proofs/:proofRecordId/credentials-for-request',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(ProofController)),
+            ...(fetchMiddlewares<RequestHandler>(ProofController.prototype.getCredentialsForRequest)),
+
+            async function ProofController_getCredentialsForRequest(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsProofController_getCredentialsForRequest, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<ProofController>(ProofController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'getCredentialsForRequest',
                 controller,
                 response,
                 next,
