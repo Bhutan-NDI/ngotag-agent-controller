@@ -9,6 +9,17 @@
  * own copy was never updated during the outage and nothing ever reconciled it against the newer
  * in-memory record.
  *
+ * Also covers two follow-up fixes to the same >= tie-break:
+ *   1. The tie-break itself could resurface a stale memory entry in the *mirror* direction: once
+ *      Redis takes over a jobId again (a write lands there successfully after an earlier write
+ *      went to memory during an outage), the old memory entry was never cleared, so a later write
+ *      sharing the same updatedAt millisecond could still lose the tie-break to it. save() now
+ *      deletes the memory mirror on a successful Redis write for that jobId.
+ *   2. The in-memory store had no TTL of its own (unlike the Redis side, which self-expires via
+ *      `EX`), so a REDIS_URL-less deployment (or any write that landed in memory during an
+ *      outage) retained every job record for the life of the process. Entries now carry an
+ *      expiresAt, checked lazily on read and swept on every write.
+ *
  * A minimal fake ioredis client (a real EventEmitter backing an in-memory key/value store, with
  * the same connect/ready/reconnecting event names WalletPortabilityJobStore listens for) drives
  * this — real ioredis would require a real Redis server, and the whole point here is to control
@@ -149,5 +160,65 @@ describe('WalletPortabilityJobStore — get() reconciliation', () => {
     await store.save(record)
 
     expect(await store.get(jobId)).toEqual(record)
+  })
+
+  it('does not resurface a stale memory mirror once Redis has taken over the same jobId — the mirror-direction tie', async () => {
+    // The reverse of the very first test above: Redis is unavailable for the *earlier* write
+    // (lands in memory), then recovers before the *next* write for the same job, which lands in
+    // Redis instead — sharing the same updatedAt millisecond (Pending -> InProgress is only a
+    // couple of microtasks apart, the same collision the >= tie-break was written for). Without
+    // clearing the memory mirror on a successful Redis write, get()'s >= tie-break would still
+    // find the stale Pending entry in memory and incorrectly prefer it over the correct,
+    // newer InProgress record Redis actually holds.
+    const store = new WalletPortabilityJobStore(makeLogger() as never, 'redis://fake-host:6379')
+    const redis = lastRedisClient as FakeRedisClient
+    // Starts unready — the constructor leaves connectionState at 'connecting', not 'ready'.
+
+    const jobId = 'job-4'
+    const tiedUpdatedAt = '2026-01-01T00:00:00.456Z'
+    const pendingRecord = {
+      jobId,
+      tenantId: 'tenant-4',
+      type: WalletPortabilityJobType.Export,
+      status: WalletPortabilityJobStatus.Pending,
+      createdAt: tiedUpdatedAt,
+      updatedAt: tiedUpdatedAt,
+    }
+    await store.save(pendingRecord) // Redis unready — lands in memory only.
+
+    redis.emit('ready')
+    const inProgressRecord = {
+      ...pendingRecord,
+      status: WalletPortabilityJobStatus.InProgress,
+      updatedAt: tiedUpdatedAt,
+    }
+    await store.save(inProgressRecord) // Redis ready now — lands in Redis, memory mirror cleared.
+
+    expect(await store.get(jobId)).toEqual(inProgressRecord)
+  })
+
+  it('reclaims an expired in-memory entry instead of returning it forever — no Redis, no TTL of its own otherwise', async () => {
+    const nowSpy = jest.spyOn(Date, 'now')
+    const startedAt = 1_000_000
+    nowSpy.mockReturnValue(startedAt)
+
+    const store = new WalletPortabilityJobStore(makeLogger() as never, undefined)
+    const jobId = 'job-5'
+    const record = {
+      jobId,
+      tenantId: 'tenant-5',
+      type: WalletPortabilityJobType.Export,
+      status: WalletPortabilityJobStatus.Completed,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+    await store.save(record)
+    expect(await store.get(jobId)).toEqual(record)
+
+    // Well past the 24h TTL (JOB_TTL_SECONDS) applied in application code to the memory mirror.
+    nowSpy.mockReturnValue(startedAt + 25 * 60 * 60 * 1000)
+    expect(await store.get(jobId)).toBeUndefined()
+
+    nowSpy.mockRestore()
   })
 })

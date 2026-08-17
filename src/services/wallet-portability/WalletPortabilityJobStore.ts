@@ -32,10 +32,19 @@ enum ConnectionState {
  * `commandTimeout`/`connectTimeout` + a readiness gate, a Redis outage degrades to "fall back to
  * the in-memory store" rather than "hang forever".
  */
+interface MemoryStoreEntry {
+  record: WalletPortabilityJobRecord
+  // Mirrors JOB_TTL_SECONDS, applied in application code since a plain Map has no TTL of its
+  // own — without this, a REDIS_URL-less deployment (or one where Redis is unready at write
+  // time) retains every job record for the life of the process, unlike the Redis side which
+  // self-expires. See the #72 review.
+  expiresAt: number
+}
+
 export class WalletPortabilityJobStore {
   private readonly logger: TsLogger
   private readonly redisClient?: Redis
-  private readonly memoryStore = new Map<string, WalletPortabilityJobRecord>()
+  private readonly memoryStore = new Map<string, MemoryStoreEntry>()
   private connectionState: ConnectionState = ConnectionState.Connecting
 
   public constructor(logger: TsLogger, redisUrl?: string) {
@@ -103,6 +112,12 @@ export class WalletPortabilityJobStore {
     if (this.redisClient && this.isRedisReady()) {
       try {
         await this.redisClient.set(`${JOB_KEY_PREFIX}${job.jobId}`, JSON.stringify(job), 'EX', JOB_TTL_SECONDS)
+        // Clears any stale mirror left by an earlier write that landed here during a Redis
+        // outage. Without this, get()'s tie-break (>=, favoring memory) can pick that stale
+        // memory entry back up if a later write for the same jobId happens to share its
+        // updatedAt millisecond — the exact mirror-direction failure this fixes. Once Redis has
+        // this job's latest write, memory has nothing useful left to contribute for it.
+        this.memoryStore.delete(job.jobId)
         return
       } catch (error) {
         this.logger.error(`[WalletPortabilityJobStore] Redis set failed, falling back to in-memory store: ${error}`)
@@ -110,8 +125,11 @@ export class WalletPortabilityJobStore {
     }
     // Also mirror into the in-memory store when Redis is configured but unreachable, so a job
     // started during an outage is still observable for the life of this process instead of
-    // silently vanishing.
-    this.memoryStore.set(job.jobId, job)
+    // silently vanishing. Sweeps expired entries on every write rather than only lazily on read
+    // — a job whose status is never polled again after this write would otherwise never be
+    // looked up again either, and so would never get a chance to expire lazily.
+    this.pruneExpiredMemoryEntries()
+    this.memoryStore.set(job.jobId, { record: job, expiresAt: Date.now() + JOB_TTL_SECONDS * 1000 })
   }
 
   public async get(jobId: string): Promise<WalletPortabilityJobRecord | undefined> {
@@ -124,7 +142,7 @@ export class WalletPortabilityJobStore {
         this.logger.error(`[WalletPortabilityJobStore] Redis get failed, falling back to in-memory store: ${error}`)
       }
     }
-    const memoryRecord = this.memoryStore.get(jobId)
+    const memoryRecord = this.getUnexpiredMemoryRecord(jobId)
     // Reconcile rather than preferring Redis unconditionally — save() mirrors into memoryStore
     // whenever Redis was unready at write time, so the two can genuinely disagree for the same
     // jobId (Redis holds a stale record from before an outage, memory holds the true latest
@@ -139,6 +157,28 @@ export class WalletPortabilityJobStore {
       return new Date(memoryRecord.updatedAt) >= new Date(redisRecord.updatedAt) ? memoryRecord : redisRecord
     }
     return redisRecord ?? memoryRecord
+  }
+
+  // Lazily reclaims a single expired entry the instant something actually looks it up — on top
+  // of pruneExpiredMemoryEntries' write-time sweep, not instead of it, since a record that's
+  // never read again after its write would never hit this path at all.
+  private getUnexpiredMemoryRecord(jobId: string): WalletPortabilityJobRecord | undefined {
+    const entry = this.memoryStore.get(jobId)
+    if (!entry) return undefined
+    if (entry.expiresAt <= Date.now()) {
+      this.memoryStore.delete(jobId)
+      return undefined
+    }
+    return entry.record
+  }
+
+  private pruneExpiredMemoryEntries(): void {
+    const now = Date.now()
+    for (const [jobId, entry] of this.memoryStore) {
+      if (entry.expiresAt <= now) {
+        this.memoryStore.delete(jobId)
+      }
+    }
   }
 
   /** Graceful shutdown — call from the process shutdown handler so the connection isn't just dropped. */
