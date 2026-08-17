@@ -9,14 +9,16 @@
  *
  * Fix: writeDid falls back to `didRes.didState?.did` when `didRes.did` is absent.
  *
- * Also covers the #75 follow-up finding (kinxa0, 2026-08-17): isDefault is tracked as a tag on the
- * DID's own DidRecord (via DidRepository), not a separate GenericRecord pointer — verified
+ * Also covers the #75 follow-up findings (kinxa0, 2026-08-17): isDefault is tracked as a tag on
+ * the DID's own DidRecord (via DidRepository), not a separate GenericRecord pointer — verified
  * directly against the installed @credo-ts/core/@credo-ts/askar packages that arbitrary DidRecord
  * tags round-trip through save and query. This suite exercises: the didState.did fallback, the
  * previous-default-clearing behavior (fixing the legacy bug where the old default was never
- * cleared), the self-clearing no-op guard, and the same "never 500 an already-successful DID
- * creation over bookkeeping" contract as before (the bookkeeping is wrapped in its own try/catch
- * and only logs a warning on failure; writeDid still returns the real created DID either way).
+ * cleared), the self-clearing no-op guard, that both writes now go through updateByIdWithLock
+ * (Askar's atomic read-modify-write with forUpdate: true, not a plain get+update), and the same
+ * "never 500 an already-successful DID creation over bookkeeping" contract as before (the
+ * bookkeeping is wrapped in its own try/catch and only logs a warning on failure; writeDid still
+ * returns the real created DID either way).
  *
  * Runs under Jest's ESM mode, mirroring DidController.polygon.spec.ts / DidController.ethereum
  * .spec.ts: tsyringe and cliAgent are mocked so constructing the controller doesn't require a real
@@ -61,11 +63,24 @@ const makeDidRecordFake = (id: string) => ({ id, setTag: jest.fn() })
 
 // createEndorserDid (invoked by handleIndicio's non-endorser branch) calls agent.dids.create and
 // returns the raw registrar result unmodified — no top-level `did`, only `didState.did`.
+//
+// updateByIdWithLock is faked against a small id -> record registry rather than a real Askar
+// transaction: production passes the callback a freshly re-fetched (locked) record instance, not
+// necessarily the same object reference findCreatedDid/findByQuery already returned, so the fake
+// must do the same "look up the current record by id, hand it to the callback" indirection for the
+// setTag-call assertions below to mean anything.
 const makeAgent = (createResult: unknown) => {
+  const knownRecords = new Map<string, ReturnType<typeof makeDidRecordFake>>()
   const didRepository = {
     findCreatedDid: jest.fn(async () => null) as jest.Mock,
     findByQuery: jest.fn(async () => []) as jest.Mock,
-    update: jest.fn(async () => undefined) as jest.Mock,
+    updateByIdWithLock: jest.fn(async (_ctx: unknown, id: string, callback: (r: unknown) => Promise<unknown>) => {
+      const record = knownRecords.get(id)
+      if (!record) {
+        throw new Error(`no known record for id ${id}`)
+      }
+      return callback(record)
+    }) as jest.Mock,
   }
   return {
     dids: { create: jest.fn(async () => createResult) as jest.Mock },
@@ -74,6 +89,7 @@ const makeAgent = (createResult: unknown) => {
     },
     context: { contextCorrelationId: 'test-tenant' },
     _didRepository: didRepository,
+    _knownRecords: knownRecords,
   }
 }
 
@@ -101,14 +117,19 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
       didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
     })
     const newRecord = makeDidRecordFake('rec-new')
+    agent._knownRecords.set(newRecord.id, newRecord)
     agent._didRepository.findCreatedDid = jest.fn(async () => newRecord) as jest.Mock
     const controller = new DidController()
 
     await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())
 
     expect(agent._didRepository.findCreatedDid).toHaveBeenCalledWith(agent.context, CREATED_DID)
+    expect(agent._didRepository.updateByIdWithLock).toHaveBeenCalledWith(
+      agent.context,
+      newRecord.id,
+      expect.any(Function),
+    )
     expect(newRecord.setTag).toHaveBeenCalledWith('isDefault', true)
-    expect(agent._didRepository.update).toHaveBeenCalledWith(agent.context, newRecord)
   })
 
   it("clears the previous default DID's tag before tagging the newly created one", async () => {
@@ -117,6 +138,8 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
     })
     const newRecord = makeDidRecordFake('rec-new')
     const oldRecord = makeDidRecordFake('rec-old')
+    agent._knownRecords.set(newRecord.id, newRecord)
+    agent._knownRecords.set(oldRecord.id, oldRecord)
     agent._didRepository.findCreatedDid = jest.fn(async () => newRecord) as jest.Mock
     agent._didRepository.findByQuery = jest.fn(async () => [oldRecord]) as jest.Mock
     const controller = new DidController()
@@ -124,9 +147,17 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
     await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())
 
     expect(oldRecord.setTag).toHaveBeenCalledWith('isDefault', false)
-    expect(agent._didRepository.update).toHaveBeenCalledWith(agent.context, oldRecord)
+    expect(agent._didRepository.updateByIdWithLock).toHaveBeenCalledWith(
+      agent.context,
+      oldRecord.id,
+      expect.any(Function),
+    )
     expect(newRecord.setTag).toHaveBeenCalledWith('isDefault', true)
-    expect(agent._didRepository.update).toHaveBeenCalledWith(agent.context, newRecord)
+    expect(agent._didRepository.updateByIdWithLock).toHaveBeenCalledWith(
+      agent.context,
+      newRecord.id,
+      expect.any(Function),
+    )
   })
 
   it('does not re-clear the new default DID itself if it already appears in the previous-defaults query', async () => {
@@ -134,15 +165,18 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
       didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
     })
     const newRecord = makeDidRecordFake('rec-new')
+    agent._knownRecords.set(newRecord.id, newRecord)
     agent._didRepository.findCreatedDid = jest.fn(async () => newRecord) as jest.Mock
     agent._didRepository.findByQuery = jest.fn(async () => [newRecord]) as jest.Mock
     const controller = new DidController()
 
     await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())
 
-    // Only the final `true` — no spurious `false` clear-then-set on the same record.
+    // Only the final `true` — no spurious `false` clear-then-set on the same record, and only one
+    // updateByIdWithLock call for it (not one for the "clear" plus one for the "set").
     expect(newRecord.setTag).toHaveBeenCalledTimes(1)
     expect(newRecord.setTag).toHaveBeenCalledWith('isDefault', true)
+    expect(agent._didRepository.updateByIdWithLock).toHaveBeenCalledTimes(1)
   })
 
   it('logs a warning instead of failing the request when no DidRecord exists yet for the created did', async () => {
@@ -155,7 +189,7 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
     const result = await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())
 
     expect(result).toEqual({ didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } } })
-    expect(agent._didRepository.update).not.toHaveBeenCalled()
+    expect(agent._didRepository.updateByIdWithLock).not.toHaveBeenCalled()
     expect(mockRootAgent.config.logger.warn).toHaveBeenCalledWith(expect.stringContaining('isDefault bookkeeping'))
   })
 
@@ -181,8 +215,9 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
       didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
     })
     const newRecord = makeDidRecordFake('rec-new')
+    agent._knownRecords.set(newRecord.id, newRecord)
     agent._didRepository.findCreatedDid = jest.fn(async () => newRecord) as jest.Mock
-    agent._didRepository.update = jest.fn(async () => {
+    agent._didRepository.updateByIdWithLock = jest.fn(async () => {
       throw new Error('simulated Askar session failure')
     }) as jest.Mock
     const controller = new DidController()
@@ -203,6 +238,6 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
 
     expect(agent._didRepository.findCreatedDid).not.toHaveBeenCalled()
     expect(agent._didRepository.findByQuery).not.toHaveBeenCalled()
-    expect(agent._didRepository.update).not.toHaveBeenCalled()
+    expect(agent._didRepository.updateByIdWithLock).not.toHaveBeenCalled()
   })
 })

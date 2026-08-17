@@ -22,7 +22,7 @@ import {
 import { Key, KeyAlgorithm, askar } from '@openwallet-foundation/askar-nodejs'
 import axios from 'axios'
 import { Request as Req } from 'express'
-import { Body, Controller, Example, Get, Path, Post, Route, Tags, Security, Request } from 'tsoa'
+import { Body, Controller, Example, Get, Path, Post, Query, Route, Tags, Security, Request } from 'tsoa'
 import { injectable } from 'tsyringe'
 import { container } from 'tsyringe'
 
@@ -136,6 +136,17 @@ export class DidController extends Controller {
       // silently no-opped (`undefined.setTag(...)` throwing, caught below) for any non-did:key
       // method — fixed by looking the record up by `did` alone, with no method restriction.
       //
+      // Each individual write below goes through updateByIdWithLock, not a plain update: Askar's
+      // implementation (AskarStorageService#updateByIdWithLock) wraps the read-modify-write in one
+      // transaction with `forUpdate: true`, so a concurrent write racing the exact same record
+      // can't silently clobber this one's tag. This closes the lost-update case per record — it does
+      // not add a single mutex around the whole "list current defaults, then clear+set" sequence
+      // (Credo's Repository API has no cross-record transaction), so two isDefault: true requests
+      // for two *different* DIDs racing at the read step above can still both proceed to tag a
+      // different record true. See the #75 review; a full fix needs a dedicated lock record, which
+      // was deliberately not reintroduced here to avoid recreating the split-brain risk that came
+      // with the GenericRecord pointer this same fix already reverted away from.
+      //
       // Best-effort, in its own try/catch: the DID is the expensive, non-idempotent side effect
       // (for did:indy/did:bcovrin/did:indicio, already a ledger NYM by this point) — the isDefault
       // tag is not. A storage/Askar failure recording it must never turn an already-successful
@@ -164,12 +175,16 @@ export class DidController extends Controller {
           const previousDefaults = await didRepository.findByQuery(request.agent.context, { isDefault: true })
           for (const previousDefault of previousDefaults) {
             if (previousDefault.id !== newDefaultRecord.id) {
-              previousDefault.setTag('isDefault', false)
-              await didRepository.update(request.agent.context, previousDefault)
+              await didRepository.updateByIdWithLock(request.agent.context, previousDefault.id, async (record) => {
+                record.setTag('isDefault', false)
+                return record
+              })
             }
           }
-          newDefaultRecord.setTag('isDefault', true)
-          await didRepository.update(request.agent.context, newDefaultRecord)
+          await didRepository.updateByIdWithLock(request.agent.context, newDefaultRecord.id, async (record) => {
+            record.setTag('isDefault', true)
+            return record
+          })
         }
       } catch (bookkeepingError) {
         this.agent.config.logger.warn(
@@ -763,9 +778,18 @@ export class DidController extends Controller {
     return didResponse
   }
 
+  // isDefault, not a separate route: mirrors how the default is tracked (a tag on the same
+  // DidRecord, not a separate resource), and keeps the filter query-string based like every other
+  // list endpoint in this file's siblings. Answers platform #71's follow-up finding that there was
+  // no read path at all for isDefault on this repo -- platform's own gateway route now forwards
+  // here instead of failing loudly, see the platform #71 review.
   @Get('/')
-  public async getDids(@Request() request: Req) {
+  public async getDids(@Request() request: Req, @Query('isDefault') isDefault?: boolean) {
     try {
+      if (isDefault) {
+        const didRepository = request.agent.dependencyManager.resolve(DidRepository)
+        return await didRepository.findByQuery(request.agent.context, { isDefault: true })
+      }
       const createdDids = await request.agent.dids.getCreatedDids()
       return createdDids
     } catch (error) {
