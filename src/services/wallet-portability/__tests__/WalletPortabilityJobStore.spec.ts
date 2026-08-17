@@ -18,6 +18,17 @@
  *      also clearing the memory-side entry. Without this, a reservation can survive in whichever
  *      store the *other* call didn't touch, wedging the tenant for up to the 24h Redis TTL — or
  *      permanently, for the memory store, which has none.
+ *   3. The dead-job reclaim added for (2) had its own race: exportWallet/importWallet reserve the
+ *      slot BEFORE writing the job's own Pending record, so a brand-new, perfectly live
+ *      reservation genuinely has no backing record for the first few milliseconds. Reading "no
+ *      record" as "the previous holder is dead" the instant it's checked let a second
+ *      near-simultaneous request reclaim the slot and run a second concurrent job for the same
+ *      tenant. A grace period (RESERVATION_GRACE_PERIOD_MS) now only treats a record-less
+ *      reservation as dead once it has clearly outlived that window; a Redis read that errors
+ *      entirely (e.g. a commandTimeout) is treated as "still active" rather than "not found",
+ *      since a transient failure must never be mistaken for a dead job either; and the Redis-side
+ *      reclaim itself is now a Lua compare-and-swap (RECLAIM_IF_UNCHANGED_SCRIPT), not a plain
+ *      SET-after-GET, so two concurrent reclaimers racing the same stale holder can't both win.
  *
  * Also covers two follow-up fixes to the same >= tie-break:
  *   1. The tie-break itself could resurface a stale memory entry in the *mirror* direction: once
@@ -43,6 +54,9 @@ import 'reflect-metadata'
 
 class FakeRedisClient extends EventEmitter {
   private readonly store = new Map<string, string>()
+  // Test hook: makes the next get() call throw once, then auto-resets — models a transient Redis
+  // read failure (e.g. a commandTimeout) without needing a real flaky connection.
+  public failNextGet = false
 
   public async set(key: string, value: string, ...args: unknown[]): Promise<string | null> {
     const nx = args.includes('NX')
@@ -52,11 +66,32 @@ class FakeRedisClient extends EventEmitter {
   }
 
   public async get(key: string): Promise<string | null> {
+    if (this.failNextGet) {
+      this.failNextGet = false
+      throw new Error('simulated transient Redis read failure')
+    }
     return this.store.get(key) ?? null
   }
 
   public async del(key: string): Promise<number> {
     return this.store.delete(key) ? 1 : 0
+  }
+
+  // Faithful-enough model of the real RECLAIM_IF_UNCHANGED_SCRIPT's compare-and-swap semantics —
+  // real ioredis executes the Lua script server-side atomically; this fake just runs the same
+  // compare-then-set synchronously (JS itself has no concurrent access to race against here).
+  public async eval(
+    _script: string,
+    _numKeys: number,
+    key: string,
+    expectedOld: string,
+    newVal: string,
+  ): Promise<number> {
+    if (this.store.get(key) === expectedOld) {
+      this.store.set(key, newVal)
+      return 1
+    }
+    return 0
   }
 
   public async quit(): Promise<void> {
@@ -352,5 +387,73 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
     // through to the now-ready Redis branch (which has no key for this tenant at all, since the
     // first reservation never reached Redis) and wrongly admit a second concurrent job.
     expect(await store.tryReserveActiveJob(tenantId, 'job-B')).toBe('job-A')
+  })
+
+  it('does not reclaim a still-fresh, record-less reservation — the near-simultaneous-request race the grace period exists for', async () => {
+    // exportWallet/importWallet reserve the slot BEFORE writing the job's own Pending record (see
+    // WalletPortabilityService), so a brand-new, perfectly live reservation genuinely has no
+    // backing record for the first few milliseconds. Without a grace period, a second request
+    // landing in that exact window would misread "no record" as "the holder is dead" and admit a
+    // second concurrent job — this is the #73 review's dead-job-reclaim race.
+    const { store } = makeReadyStore()
+    const tenantId = 'tenant-1'
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-A')).toBeUndefined()
+    // job-A's own save() hasn't landed yet — still, job-B must be blocked, not admitted.
+    expect(await store.tryReserveActiveJob(tenantId, 'job-B')).toBe('job-A')
+  })
+
+  it('reclaims a record-less reservation once the grace period has elapsed — a genuine crash before the first save()', async () => {
+    const nowSpy = jest.spyOn(Date, 'now')
+    const startedAt = 1_000_000
+    nowSpy.mockReturnValue(startedAt)
+    const { store } = makeReadyStore()
+    const tenantId = 'tenant-1'
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-A')).toBeUndefined()
+    // job-A crashes before ever calling save() — no record ever appears for it. Well past any
+    // reasonable grace period (15s in the real constant; 60s here to comfortably clear it):
+    nowSpy.mockReturnValue(startedAt + 60_000)
+    expect(await store.tryReserveActiveJob(tenantId, 'job-B')).toBeUndefined()
+
+    nowSpy.mockRestore()
+  })
+
+  it('treats a failed Redis read as "still active" — a transient timeout must never be mistaken for a dead job', async () => {
+    const { store, redis } = makeReadyStore()
+    const tenantId = 'tenant-1'
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-A')).toBeUndefined()
+    await store.save(makePendingRecord('job-A', tenantId))
+
+    // Simulates a commandTimeout on the read used to decide whether job-A is still active — must
+    // fail safe (treat as active) rather than reclaim the slot out from under a genuinely live job.
+    redis.failNextGet = true
+    expect(await store.tryReserveActiveJob(tenantId, 'job-B')).toBe('job-A')
+  })
+
+  it('two concurrent reclaimers racing the same stale holder do not both win — only one job is admitted', async () => {
+    const { store, redis } = makeReadyStore()
+    const tenantId = 'tenant-1'
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-A')).toBeUndefined()
+    await store.save({ ...makePendingRecord('job-A', tenantId), status: WalletPortabilityJobStatus.Completed })
+
+    // Both reclaimers observe the same stale holder (job-A, terminal) before either one's atomic
+    // swap lands — a plain SET-after-GET here would let both "win" and both get admitted.
+    const [resultB, resultC] = await Promise.all([
+      store.tryReserveActiveJob(tenantId, 'job-B'),
+      store.tryReserveActiveJob(tenantId, 'job-C'),
+    ])
+
+    // Exactly one of the two must have been admitted (undefined); the other must have been told
+    // the winner's jobId, never both undefined.
+    const admitted = [resultB, resultC].filter((r) => r === undefined)
+    expect(admitted).toHaveLength(1)
+
+    // Whichever job won, it must now be the one blocking a further reservation attempt.
+    const winnerJobId = resultB === undefined ? 'job-B' : 'job-C'
+    await store.save(makePendingRecord(winnerJobId, tenantId))
+    expect(await store.tryReserveActiveJob(tenantId, 'job-D')).toBe(winnerJobId)
   })
 })

@@ -22,6 +22,35 @@ const COMMAND_TIMEOUT_MS = 3000
 const RECONNECT_BASE_DELAY_MS = 500
 const RECONNECT_MAX_DELAY_MS = 30000
 
+// exportWallet/importWallet reserve the tenant's slot BEFORE the job's own Pending record is
+// written (see WalletPortabilityService), so there is a genuine window — normally milliseconds,
+// the time for one more `save()` call — where a brand-new, perfectly live reservation has no
+// backing record yet. Without this grace period, a second near-simultaneous request landing in
+// that exact window reads "no record" and misreads it as "the previous holder is dead", reclaiming
+// the slot and letting two portability jobs run concurrently for the same tenant. 15s is generous
+// headroom over a single save() call while still being negligible next to a real job's seconds-
+// to-minutes runtime, so a *genuinely* dead reservation (process crashed before ever saving) is
+// still reclaimed promptly rather than waiting out the full 24h TTL.
+const RESERVATION_GRACE_PERIOD_MS = 15 * 1000
+
+// Redis has no atomic "SET only if the current value equals X" primitive outside Lua/WATCH, and a
+// plain SET after a separate GET-and-check is a classic TOCTOU: two concurrent callers can both
+// observe the same stale holder and both "win" the reclaim, admitting two jobs. This script makes
+// the compare-and-swap a single atomic operation server-side.
+const RECLAIM_IF_UNCHANGED_SCRIPT = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+  return 1
+else
+  return 0
+end
+`
+
+interface ActiveJobReservation {
+  jobId: string
+  reservedAt: number
+}
+
 enum ConnectionState {
   Connecting = 'connecting',
   Ready = 'ready',
@@ -53,7 +82,7 @@ export class WalletPortabilityJobStore {
   private readonly logger: TsLogger
   private readonly redisClient?: Redis
   private readonly memoryStore = new Map<string, MemoryStoreEntry>()
-  private readonly activeJobMemoryStore = new Map<string, string>()
+  private readonly activeJobMemoryStore = new Map<string, ActiveJobReservation>()
   private connectionState: ConnectionState = ConnectionState.Connecting
 
   public constructor(logger: TsLogger, redisUrl?: string) {
@@ -142,13 +171,26 @@ export class WalletPortabilityJobStore {
   }
 
   public async get(jobId: string): Promise<WalletPortabilityJobRecord | undefined> {
+    return (await this.getWithReadStatus(jobId)).record
+  }
+
+  // Split out from get() so the reservation-reclaim logic below can tell "definitively no record
+  // exists" apart from "the Redis read itself failed" — get()'s own callers don't need that
+  // distinction (a failed read degrading to "not found" is the right behavior for them), but a
+  // reclaim decision does: mistaking a timed-out GET for "the job is dead" would let a live job's
+  // active-job slot be reclaimed out from under it.
+  private async getWithReadStatus(
+    jobId: string,
+  ): Promise<{ record?: WalletPortabilityJobRecord; redisReadErrored: boolean }> {
     let redisRecord: WalletPortabilityJobRecord | undefined
+    let redisReadErrored = false
     if (this.redisClient && this.isRedisReady()) {
       try {
         const raw = await this.redisClient.get(`${JOB_KEY_PREFIX}${jobId}`)
         if (raw) redisRecord = JSON.parse(raw) as WalletPortabilityJobRecord
       } catch (error) {
         this.logger.error(`[WalletPortabilityJobStore] Redis get failed, falling back to in-memory store: ${error}`)
+        redisReadErrored = true
       }
     }
     const memoryRecord = this.getUnexpiredMemoryRecord(jobId)
@@ -163,9 +205,10 @@ export class WalletPortabilityJobStore {
       // share a millisecond (Pending -> InProgress is only a couple of microtasks apart). A
       // memoryStore entry only exists because Redis was unavailable for that particular write, so
       // on a tie it is the later of the two, not redisRecord.
-      return new Date(memoryRecord.updatedAt) >= new Date(redisRecord.updatedAt) ? memoryRecord : redisRecord
+      const record = new Date(memoryRecord.updatedAt) >= new Date(redisRecord.updatedAt) ? memoryRecord : redisRecord
+      return { record, redisReadErrored }
     }
-    return redisRecord ?? memoryRecord
+    return { record: redisRecord ?? memoryRecord, redisReadErrored }
   }
 
   // Lazily reclaims a single expired entry the instant something actually looks it up — on top
@@ -199,6 +242,7 @@ export class WalletPortabilityJobStore {
    */
   public async tryReserveActiveJob(tenantId: string, jobId: string): Promise<string | undefined> {
     const key = `${ACTIVE_JOB_KEY_PREFIX}${tenantId}`
+    const reservedAt = Date.now()
     // Checked first, and regardless of Redis's current readiness: a reservation made while Redis
     // was unready lives only in memory, and Redis recovering before that job releases must not
     // make the reservation invisible to a later reserve attempt. Without this check up front, a
@@ -207,7 +251,7 @@ export class WalletPortabilityJobStore {
     // concurrent job for the same tenant — the exact race this reservation exists to prevent.
     const existingInMemory = this.activeJobMemoryStore.get(tenantId)
     if (existingInMemory) {
-      if (await this.isJobStillActive(existingInMemory)) return existingInMemory
+      if (await this.isReservationStillActive(existingInMemory)) return existingInMemory.jobId
       // The memory-side reservation belongs to a job that's no longer pending/in-progress -- the
       // process died before releaseActiveJob's finally ran. Memory has no TTL at all (unlike the
       // Redis key below), so without this the tenant would be wedged out permanently rather than
@@ -217,49 +261,80 @@ export class WalletPortabilityJobStore {
 
     if (this.redisClient && this.isRedisReady()) {
       try {
-        const result = await this.redisClient.set(key, jobId, 'EX', JOB_TTL_SECONDS, 'NX')
+        const value = JSON.stringify({ jobId, reservedAt } satisfies ActiveJobReservation)
+        const result = await this.redisClient.set(key, value, 'EX', JOB_TTL_SECONDS, 'NX')
         if (result === 'OK') {
           // Mirrored into the in-memory store too, not just Redis — a portability job runs for
           // seconds to minutes, so Redis's readiness can flip between reservation and release.
           // releaseActiveJob now clears both stores unconditionally (see its own comment), which
           // only works if a Redis-side reservation is also visible in memory once Redis drops.
-          this.activeJobMemoryStore.set(tenantId, jobId)
+          this.activeJobMemoryStore.set(tenantId, { jobId, reservedAt })
           return undefined
         }
-        const holder = await this.redisClient.get(key)
+        const holderRaw = await this.redisClient.get(key)
+        const holder = holderRaw ? (JSON.parse(holderRaw) as ActiveJobReservation) : undefined
         // The slot is only genuinely held if the job it points at is still live. A job whose
         // record is terminal (or gone entirely — its own TTL outlived the process that was
         // running it) means the previous holder died before its finally could release, and the
         // 24h TTL on this key would otherwise 409 the tenant for the rest of the day even though
         // nothing is actually running. Reclaim it on the next attempt instead of waiting out the
         // full TTL.
-        if (holder && !(await this.isJobStillActive(holder))) {
-          await this.redisClient.set(key, jobId, 'EX', JOB_TTL_SECONDS)
-          this.activeJobMemoryStore.set(tenantId, jobId)
-          return undefined
+        if (holder && !(await this.isReservationStillActive(holder))) {
+          // Compare-and-swap, not a plain SET — two concurrent callers can both reach this branch
+          // having both observed the same stale `holderRaw`; without a CAS, both would "win" and
+          // both admit their own job. Only the caller whose swap actually lands gets undefined
+          // back; the loser re-reads and reports whoever now legitimately holds the slot.
+          const swapped = await this.redisClient.eval(
+            RECLAIM_IF_UNCHANGED_SCRIPT,
+            1,
+            key,
+            holderRaw as string,
+            value,
+            String(JOB_TTL_SECONDS),
+          )
+          if (swapped === 1) {
+            this.activeJobMemoryStore.set(tenantId, { jobId, reservedAt })
+            return undefined
+          }
+          const currentRaw = await this.redisClient.get(key)
+          const current = currentRaw ? (JSON.parse(currentRaw) as ActiveJobReservation) : undefined
+          return current?.jobId
         }
-        return holder ?? undefined
+        return holder?.jobId
       } catch (error) {
         this.logger.error(
           `[WalletPortabilityJobStore] Redis active-job reservation failed, falling back to in-memory: ${error}`,
         )
       }
     }
-    this.activeJobMemoryStore.set(tenantId, jobId)
+    this.activeJobMemoryStore.set(tenantId, { jobId, reservedAt })
     return undefined
   }
 
   // A reservation's TTL (24h, Redis) or lack of one (memory) is only a self-heal backstop, not
   // the primary way a dead reservation gets reclaimed — that's what this checks. A job whose own
-  // record has reached a terminal status (or never got one at all, e.g. an unexpected process
-  // exit before the very first save()) is no longer actually running, regardless of what the
-  // reservation slot still says.
-  private async isJobStillActive(jobId: string): Promise<boolean> {
-    const job = await this.get(jobId)
-    return (
-      !!job &&
-      (job.status === WalletPortabilityJobStatus.Pending || job.status === WalletPortabilityJobStatus.InProgress)
-    )
+  // record has reached a terminal status is no longer actually running, regardless of what the
+  // reservation slot still says. A job with NO record at all is trickier: exportWallet/
+  // importWallet reserve the slot before writing that record, so "no record yet" can mean either
+  // "the process crashed before ever saving" (genuinely dead) or "we're a few milliseconds into a
+  // perfectly live reservation, its save() call just hasn't landed yet" — the grace period below
+  // is what tells those two apart, rather than treating every record-less reservation as dead the
+  // instant it's checked (which readmitted a second concurrent job for the exact race this whole
+  // mechanism exists to prevent).
+  private async isReservationStillActive(reservation: ActiveJobReservation): Promise<boolean> {
+    const { record, redisReadErrored } = await this.getWithReadStatus(reservation.jobId)
+    if (redisReadErrored) {
+      // Fail-safe: a transient Redis timeout must never be mistaken for "the job is dead" — that
+      // would let a live job's slot be reclaimed out from under it on nothing more than one slow
+      // GET, independent of the record-less race above.
+      return true
+    }
+    if (record) {
+      return (
+        record.status === WalletPortabilityJobStatus.Pending || record.status === WalletPortabilityJobStatus.InProgress
+      )
+    }
+    return Date.now() - reservation.reservedAt <= RESERVATION_GRACE_PERIOD_MS
   }
 
   /**
@@ -284,15 +359,16 @@ export class WalletPortabilityJobStore {
     const key = `${ACTIVE_JOB_KEY_PREFIX}${tenantId}`
     if (this.redisClient) {
       try {
-        const current = await this.redisClient.get(key)
-        if (current === jobId) {
+        const currentRaw = await this.redisClient.get(key)
+        const current = currentRaw ? (JSON.parse(currentRaw) as ActiveJobReservation) : undefined
+        if (current?.jobId === jobId) {
           await this.redisClient.del(key)
         }
       } catch (error) {
         this.logger.error(`[WalletPortabilityJobStore] Redis active-job release failed: ${error}`)
       }
     }
-    if (this.activeJobMemoryStore.get(tenantId) === jobId) {
+    if (this.activeJobMemoryStore.get(tenantId)?.jobId === jobId) {
       this.activeJobMemoryStore.delete(tenantId)
     }
   }
