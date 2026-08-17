@@ -48,6 +48,17 @@ const MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024 // 2 GiB
 // gunzipped, and this process also serves DIDComm/every other tenant's traffic.
 const MAX_DECOMPRESSED_BYTES = MAX_DOWNLOAD_BYTES
 
+// node-fetch@2 applies no timeout by default -- a stalled response (S3/network blackhole, a
+// half-open socket after a NAT/LB idle timeout) leaves this await pending forever. That wedges the
+// whole tenant, not just this job: runImport/runExport's finally never runs, releaseActiveJob is
+// never called, and the job record stays Pending/InProgress, which is exactly the state
+// isReservationStillActive treats as "still running" -- every subsequent export AND import for the
+// tenant 409s until the process restarts (activeJobMemoryStore has no TTL) or, at best, the 24h
+// Redis TTL expires. `timeout` covers the whole request/response cycle, not just connect, so a
+// stalled body (not just a refused connection) still rejects this fetch and reaches runImport's
+// catch -> Failed -> finally -> reservation released.
+const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000
+
 // Deliberately NOT typed as the real `AWS.S3` class (only the 2 methods actually used here) —
 // referencing that type pulls the entirety of aws-sdk's (famously enormous) type declarations
 // into the type-checker's program, which is fine for `tsc` but reliably OOMs ts-jest's type-aware
@@ -669,7 +680,7 @@ export class WalletPortabilityService {
       throw new Error(`Refusing to download export artifact from untrusted host '${parsedUrl.hostname}'`)
     }
 
-    const response = await fetch(url, { redirect: 'error' })
+    const response = await fetch(url, { redirect: 'error', timeout: DOWNLOAD_TIMEOUT_MS })
     if (!response.ok || !response.body) {
       throw new Error(`Failed to download export artifact: HTTP ${response.status}`)
     }

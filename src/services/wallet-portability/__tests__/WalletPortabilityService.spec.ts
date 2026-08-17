@@ -366,7 +366,7 @@ describe('WalletPortabilityService — importWallet', () => {
     const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
     const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
 
-    expect(fetchMock).toHaveBeenCalledWith(EXPORT_URL, { redirect: 'error' })
+    expect(fetchMock).toHaveBeenCalledWith(EXPORT_URL, { redirect: 'error', timeout: expect.any(Number) })
     expect(storeOpen).toHaveBeenCalledWith(expect.objectContaining({ passKey: PASS_KEY }))
     expect(renameProfile).toHaveBeenCalledWith({ fromProfile: PROFILE, toProfile: job.backupProfile })
     expect(importedStoreCopyProfile).toHaveBeenCalledWith(
@@ -434,7 +434,7 @@ describe('WalletPortabilityService — importWallet', () => {
     const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
 
     expect(job.error).toBeUndefined()
-    expect(fetchMock).toHaveBeenCalledWith(url, { redirect: 'error' })
+    expect(fetchMock).toHaveBeenCalledWith(url, { redirect: 'error', timeout: expect.any(Number) })
   })
 
   it('SSRF guard: accepts a path-style URL for a dotted bucket name (aws-sdk emits this shape, not virtual-hosted, when the bucket name is not DNS-compatible over TLS)', async () => {
@@ -452,7 +452,7 @@ describe('WalletPortabilityService — importWallet', () => {
       const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
 
       expect(job.error).toBeUndefined()
-      expect(fetchMock).toHaveBeenCalledWith(url, { redirect: 'error' })
+      expect(fetchMock).toHaveBeenCalledWith(url, { redirect: 'error', timeout: expect.any(Number) })
     } finally {
       process.env.AWS_WALLET_EXPORT_BUCKET = 'test-wallet-export-bucket'
     }

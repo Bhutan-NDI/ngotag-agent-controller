@@ -33,6 +33,13 @@ const RECONNECT_MAX_DELAY_MS = 30000
 // still reclaimed promptly rather than waiting out the full 24h TTL.
 const RESERVATION_GRACE_PERIOD_MS = 15 * 1000
 
+// Placeholder "holder" returned when Redis has already told tryReserveActiveJob the slot is taken
+// (SET ... NX refused) but a subsequent round trip to identify who holds it then fails. Denying
+// the request either way is correct; this exists so the caller's WalletPortabilityJobConflictError
+// message reads sensibly ("A wallet portability job (unknown) is already in progress...") instead
+// of surfacing a raw undefined as if the reservation had succeeded.
+const UNKNOWN_HOLDER_JOB_ID = 'unknown'
+
 // Redis has no atomic "SET only if the current value equals X" primitive outside Lua/WATCH, and a
 // plain SET after a separate GET-and-check is a classic TOCTOU: two concurrent callers can both
 // observe the same stale holder and both "win" the reclaim, admitting two jobs. This script makes
@@ -44,6 +51,26 @@ if redis.call('GET', KEYS[1]) == ARGV[1] then
 else
   return 0
 end
+`
+
+// Same TOCTOU class as the reclaim script above, on the release path instead: a plain GET-then-DEL
+// lets a newer reservation get created in the gap and then deleted by a release that believed it
+// still owned the (now stale) value it read. Compares only jobId, not the full {jobId, reservedAt}
+// value tryReserveActiveJob wrote — releaseActiveJob only ever receives (tenantId, jobId), and
+// re-reading the value first to compare it in full would reintroduce the exact TOCTOU this script
+// exists to remove. cjson is a standard part of Redis's Lua scripting environment, not an
+// application dependency.
+const RELEASE_IF_OWNED_SCRIPT = `
+local current = redis.call('GET', KEYS[1])
+if not current then
+  return 0
+end
+local ok, parsed = pcall(cjson.decode, current)
+if not ok or parsed.jobId ~= ARGV[1] then
+  return 0
+end
+redis.call('DEL', KEYS[1])
+return 1
 `
 
 interface ActiveJobReservation {
@@ -175,22 +202,34 @@ export class WalletPortabilityJobStore {
   }
 
   // Split out from get() so the reservation-reclaim logic below can tell "definitively no record
-  // exists" apart from "the Redis read itself failed" — get()'s own callers don't need that
-  // distinction (a failed read degrading to "not found" is the right behavior for them), but a
-  // reclaim decision does: mistaking a timed-out GET for "the job is dead" would let a live job's
-  // active-job slot be reclaimed out from under it.
+  // exists" apart from "we cannot currently see Redis's true state" — get()'s own callers don't
+  // need that distinction (degrading to "not found" is the right behavior for them either way),
+  // but a reclaim decision does: mistaking either a timed-out GET *or* an unready connection for
+  // "the job is dead" would let a live job's active-job slot be reclaimed out from under it.
+  //
+  // redisUnavailable covers both cases that mean "a miss here might not be a real miss": a read
+  // that threw, and — the gap the read-threw check alone missed — Redis being configured but not
+  // currently ready, so the read is never even attempted (a reconnecting/closed connection reports
+  // empty exactly like a genuine cache miss unless this is checked separately). It is only ever
+  // true when NO record was found by either store: a memory record answers the question on its
+  // own regardless of Redis's state (that's the whole point of the memory mirror), so a
+  // Redis-configured-but-perpetually-unready deployment operating correctly off memory the entire
+  // time must not have every lookup treated as untrustworthy just because isRedisReady() is false.
+  // A deployment with no REDIS_URL at all must also never trip this — that's a legitimate
+  // memory-only mode, not an outage.
   private async getWithReadStatus(
     jobId: string,
-  ): Promise<{ record?: WalletPortabilityJobRecord; redisReadErrored: boolean }> {
+  ): Promise<{ record?: WalletPortabilityJobRecord; redisUnavailable: boolean }> {
     let redisRecord: WalletPortabilityJobRecord | undefined
-    let redisReadErrored = false
+    let redisReadFailed = false
+    const redisSkippedDueToUnready = this.redisClient ? !this.isRedisReady() : false
     if (this.redisClient && this.isRedisReady()) {
       try {
         const raw = await this.redisClient.get(`${JOB_KEY_PREFIX}${jobId}`)
         if (raw) redisRecord = JSON.parse(raw) as WalletPortabilityJobRecord
       } catch (error) {
         this.logger.error(`[WalletPortabilityJobStore] Redis get failed, falling back to in-memory store: ${error}`)
-        redisReadErrored = true
+        redisReadFailed = true
       }
     }
     const memoryRecord = this.getUnexpiredMemoryRecord(jobId)
@@ -206,9 +245,10 @@ export class WalletPortabilityJobStore {
       // memoryStore entry only exists because Redis was unavailable for that particular write, so
       // on a tie it is the later of the two, not redisRecord.
       const record = new Date(memoryRecord.updatedAt) >= new Date(redisRecord.updatedAt) ? memoryRecord : redisRecord
-      return { record, redisReadErrored }
+      return { record, redisUnavailable: redisReadFailed }
     }
-    return { record: redisRecord ?? memoryRecord, redisReadErrored }
+    const record = redisRecord ?? memoryRecord
+    return { record, redisUnavailable: !record && (redisReadFailed || redisSkippedDueToUnready) }
   }
 
   // Lazily reclaims a single expired entry the instant something actually looks it up — on top
@@ -260,6 +300,13 @@ export class WalletPortabilityJobStore {
     }
 
     if (this.redisClient && this.isRedisReady()) {
+      // Tracks whether Redis has already answered "the slot is taken" (SET ... NX refused) before
+      // the catch below runs. Without this, a follow-up round trip failing *after* that answer —
+      // the holder GET, or the reclaim CAS eval, both a few lines below — falls into the same catch
+      // as a failure on the initial NX itself, and previously fell through to the unconditional
+      // in-memory grant at the bottom of this method: silently discarding Redis's own "taken"
+      // answer and admitting a second concurrent job for the tenant.
+      let redisRefusedReservation = false
       try {
         const value = JSON.stringify({ jobId, reservedAt } satisfies ActiveJobReservation)
         const result = await this.redisClient.set(key, value, 'EX', JOB_TTL_SECONDS, 'NX')
@@ -271,6 +318,7 @@ export class WalletPortabilityJobStore {
           this.activeJobMemoryStore.set(tenantId, { jobId, reservedAt })
           return undefined
         }
+        redisRefusedReservation = true
         const holderRaw = await this.redisClient.get(key)
         const holder = holderRaw ? (JSON.parse(holderRaw) as ActiveJobReservation) : undefined
         // The slot is only genuinely held if the job it points at is still live. A job whose
@@ -305,6 +353,13 @@ export class WalletPortabilityJobStore {
         this.logger.error(
           `[WalletPortabilityJobStore] Redis active-job reservation failed, falling back to in-memory: ${error}`,
         )
+        if (redisRefusedReservation) {
+          // Redis already told us the slot is taken; a follow-up round trip timing out afterward
+          // must fail closed, not fall through to the in-memory grant below — that would silently
+          // overturn the answer Redis already gave. The exact holder is unknown (that's the round
+          // trip that just failed), but the slot must still be reported as held.
+          return UNKNOWN_HOLDER_JOB_ID
+        }
       }
     }
     this.activeJobMemoryStore.set(tenantId, { jobId, reservedAt })
@@ -322,11 +377,12 @@ export class WalletPortabilityJobStore {
   // instant it's checked (which readmitted a second concurrent job for the exact race this whole
   // mechanism exists to prevent).
   private async isReservationStillActive(reservation: ActiveJobReservation): Promise<boolean> {
-    const { record, redisReadErrored } = await this.getWithReadStatus(reservation.jobId)
-    if (redisReadErrored) {
-      // Fail-safe: a transient Redis timeout must never be mistaken for "the job is dead" — that
-      // would let a live job's slot be reclaimed out from under it on nothing more than one slow
-      // GET, independent of the record-less race above.
+    const { record, redisUnavailable } = await this.getWithReadStatus(reservation.jobId)
+    if (redisUnavailable) {
+      // Fail-safe: a transient Redis timeout OR a merely-unready connection must never be mistaken
+      // for "the job is dead" — either would let a live job's slot be reclaimed out from under it
+      // on nothing more than "we can't see the record right now", independent of the record-less
+      // race above.
       return true
     }
     if (record) {
@@ -354,16 +410,18 @@ export class WalletPortabilityJobStore {
    * disconnected (enableOfflineQueue: false means the call rejects fast instead of hanging, same
    * as everywhere else in this class) and is the only way the Redis-side key ever gets cleared in
    * the disagreement window this finding described.
+   *
+   * The ownership check and the delete happen in one Lua eval (RELEASE_IF_OWNED_SCRIPT), not a
+   * separate GET-then-DEL: between those two round trips, a newer job can legitimately take over
+   * the slot (a tryReserveActiveJob reclaim, exactly like the one this class already makes atomic
+   * on the reclaim side), and the plain DEL would then remove that new owner's reservation even
+   * though *this* jobId was the owner when the GET ran.
    */
   public async releaseActiveJob(tenantId: string, jobId: string): Promise<void> {
     const key = `${ACTIVE_JOB_KEY_PREFIX}${tenantId}`
     if (this.redisClient) {
       try {
-        const currentRaw = await this.redisClient.get(key)
-        const current = currentRaw ? (JSON.parse(currentRaw) as ActiveJobReservation) : undefined
-        if (current?.jobId === jobId) {
-          await this.redisClient.del(key)
-        }
+        await this.redisClient.eval(RELEASE_IF_OWNED_SCRIPT, 1, key, jobId)
       } catch (error) {
         this.logger.error(`[WalletPortabilityJobStore] Redis active-job release failed: ${error}`)
       }

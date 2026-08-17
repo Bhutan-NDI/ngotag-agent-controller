@@ -30,6 +30,28 @@
  *      reclaim itself is now a Lua compare-and-swap (RECLAIM_IF_UNCHANGED_SCRIPT), not a plain
  *      SET-after-GET, so two concurrent reclaimers racing the same stale holder can't both win.
  *
+ * A second review pass on this same reservation logic (2026-08-17) found three more races, all
+ * fixed here too:
+ *   4. The "Redis read failed" fail-safe (point 3 above) only covered a *thrown* read — when
+ *      Redis is merely unready (reconnecting/closed), the read is never attempted at all, so the
+ *      fail-safe never tripped and a live job's slot could be reclaimed once the grace period
+ *      elapsed, purely because this process couldn't currently see Redis. getWithReadStatus now
+ *      reports unavailable (redisUnavailable) whenever Redis is configured but not ready, not just
+ *      when a read throws — a REDIS_URL-less deployment is unaffected, since that's a legitimate
+ *      memory-only mode, not an outage.
+ *   5. tryReserveActiveJob's own catch block previously fell through to the unconditional
+ *      in-memory grant at the bottom of the method even when Redis had already answered "the slot
+ *      is taken" (SET ... NX refused) — a follow-up round trip (the holder GET, or the reclaim CAS
+ *      eval) timing out afterward silently discarded that answer and admitted a second concurrent
+ *      job. A flag now tracks whether Redis already refused the reservation before the try block's
+ *      remaining round trips; if so, the catch reports the slot as held by an indeterminate holder
+ *      (UNKNOWN_HOLDER_JOB_ID) instead of granting it.
+ *   6. releaseActiveJob was a non-atomic GET-then-DEL: between the two round trips, a newer
+ *      reservation could legitimately take over the slot, and the DEL would then remove that new
+ *      owner's key even though the jobId being released was the owner when the GET ran. Replaced
+ *      with RELEASE_IF_OWNED_SCRIPT, a single atomic compare-and-delete (matching the shape of the
+ *      reclaim script's own compare-and-swap).
+ *
  * Also covers two follow-up fixes to the same >= tie-break:
  *   1. The tie-break itself could resurface a stale memory entry in the *mirror* direction: once
  *      Redis takes over a jobId again (a write lands there successfully after an earlier write
@@ -77,16 +99,31 @@ class FakeRedisClient extends EventEmitter {
     return this.store.delete(key) ? 1 : 0
   }
 
-  // Faithful-enough model of the real RECLAIM_IF_UNCHANGED_SCRIPT's compare-and-swap semantics —
-  // real ioredis executes the Lua script server-side atomically; this fake just runs the same
-  // compare-then-set synchronously (JS itself has no concurrent access to race against here).
-  public async eval(
-    _script: string,
-    _numKeys: number,
-    key: string,
-    expectedOld: string,
-    newVal: string,
-  ): Promise<number> {
+  // Faithful-enough model of both Lua scripts' server-side-atomic semantics — real ioredis
+  // executes them atomically on the server; this fake just runs the equivalent JS synchronously
+  // (JS itself has no concurrent access to race against here). Branches on the script text since
+  // both RECLAIM_IF_UNCHANGED_SCRIPT and RELEASE_IF_OWNED_SCRIPT go through this one method with
+  // different arg shapes.
+  public async eval(script: string, _numKeys: number, key: string, ...args: string[]): Promise<number> {
+    if (script.includes('cjson')) {
+      // RELEASE_IF_OWNED_SCRIPT: ARGV[1] is the plain jobId, not the full reservation JSON —
+      // releaseActiveJob only ever has (tenantId, jobId) to compare with, not the reservedAt the
+      // key was originally written with.
+      const [jobId] = args
+      const current = this.store.get(key)
+      if (!current) return 0
+      let parsed: { jobId?: string }
+      try {
+        parsed = JSON.parse(current) as { jobId?: string }
+      } catch {
+        return 0
+      }
+      if (parsed.jobId !== jobId) return 0
+      this.store.delete(key)
+      return 1
+    }
+    // RECLAIM_IF_UNCHANGED_SCRIPT: ARGV is [expectedOld, newVal, ttlSeconds].
+    const [expectedOld, newVal] = args
     if (this.store.get(key) === expectedOld) {
       this.store.set(key, newVal)
       return 1
@@ -455,5 +492,80 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
     const winnerJobId = resultB === undefined ? 'job-B' : 'job-C'
     await store.save(makePendingRecord(winnerJobId, tenantId))
     expect(await store.tryReserveActiveJob(tenantId, 'job-D')).toBe(winnerJobId)
+  })
+
+  it('treats Redis being merely unready (not just a failed read) as still active — a live job must not be reclaimed just because this process cannot currently see Redis', async () => {
+    const nowSpy = jest.spyOn(Date, 'now')
+    const startedAt = 1_000_000
+    nowSpy.mockReturnValue(startedAt)
+
+    const { store, redis } = makeReadyStore()
+    const tenantId = 'tenant-1'
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-A')).toBeUndefined()
+    // job-A's Pending save lands in Redis (ready at this point) — its Redis-success branch clears
+    // the memory mirror, so memory now holds nothing for job-A's own job record, only the
+    // activeJobMemoryStore reservation entry mirrored at reserve time.
+    await store.save(makePendingRecord('job-A', tenantId))
+
+    // Redis drops. No read ever throws here — the fail-safe from a failed read alone would not
+    // catch this; the connection is simply not ready, so getWithReadStatus's Redis branch is
+    // skipped entirely.
+    redis.emit('reconnecting')
+
+    // Advanced well past RESERVATION_GRACE_PERIOD_MS (15s) — proves this isn't the grace period
+    // saving us. The pre-fix code would treat "no record visible, past the grace period" as dead
+    // and reclaim it; the fix must refuse to reclaim purely because Redis is unavailable, not
+    // because the job might still be within its grace window.
+    nowSpy.mockReturnValue(startedAt + 60_000)
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-B')).toBe('job-A')
+
+    nowSpy.mockRestore()
+  })
+
+  it('does not grant the slot when Redis already refused the reservation and a follow-up round trip then fails — fails closed, not open', async () => {
+    const { store, redis } = makeReadyStore()
+    const tenantId = 'tenant-1'
+    // Seeded directly on the fake Redis store, bypassing tryReserveActiveJob entirely — models a
+    // *different* process/instance holding the slot, so this store's own activeJobMemoryStore has
+    // no entry for it. Without that, the existingInMemory fail-safe check at the very top of
+    // tryReserveActiveJob would consume the injected Redis failure below on job-A's own record
+    // lookup, never reaching the code path this test actually targets. Prefix matches
+    // ACTIVE_JOB_KEY_PREFIX.
+    await redis.set(
+      `walletPortabilityActiveJob:${tenantId}`,
+      JSON.stringify({ jobId: 'job-A', reservedAt: Date.now() }),
+    )
+
+    // SET ... NX is refused (the key already exists) — the follow-up holder lookup (the GET right
+    // after NX is refused) then fails.
+    redis.failNextGet = true
+    const result = await store.tryReserveActiveJob(tenantId, 'job-B')
+
+    // Must not be undefined (granted) — Redis already said the slot was taken before this round
+    // trip failed; discarding that answer and granting anyway is the bug. The holder is genuinely
+    // unknown (that's the round trip that just failed), but the slot must still be reported held.
+    expect(typeof result).toBe('string')
+  })
+
+  it('releaseActiveJob uses a single atomic compare-and-delete, not a separate GET then DEL', async () => {
+    const { store, redis } = makeReadyStore()
+    const tenantId = 'tenant-1'
+    const jobId = 'job-1'
+    await store.tryReserveActiveJob(tenantId, jobId)
+
+    const delSpy = jest.spyOn(redis, 'del')
+    const evalSpy = jest.spyOn(redis, 'eval')
+
+    await store.releaseActiveJob(tenantId, jobId)
+
+    // The ownership check and the delete must happen as one server-side operation (eval), not two
+    // separate round trips (get then del) — a plain get-then-del leaves a window where a newer
+    // reservation can take over the key in between, and the del would then remove that new
+    // owner's key instead of the one actually being released.
+    expect(evalSpy).toHaveBeenCalled()
+    expect(delSpy).not.toHaveBeenCalled()
+    expect(await store.tryReserveActiveJob(tenantId, 'job-2')).toBeUndefined()
   })
 })
