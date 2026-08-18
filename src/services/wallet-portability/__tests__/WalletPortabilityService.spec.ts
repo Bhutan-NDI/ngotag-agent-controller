@@ -381,7 +381,8 @@ describe('WalletPortabilityService — importWallet', () => {
     const copyProfile = jest.fn(async () => undefined)
     const renameProfile = jest.fn(async () => undefined)
     const { agent } = makeAgent(copyProfile, renameProfile)
-    const service = new WalletPortabilityService(makeLogger() as never)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
 
     const { jobId } = await service.importWallet(
       agent as never,
@@ -392,7 +393,10 @@ describe('WalletPortabilityService — importWallet', () => {
     )
     const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
 
-    expect(job.error).toContain('Checksum mismatch')
+    // #72 review: the job record is externally readable, so it carries a sanitized code, not the
+    // raw error text — the real error still reaches the server-side log.
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('Checksum mismatch'))
     expect(renameProfile).not.toHaveBeenCalled()
     expect(importedStoreCopyProfile).not.toHaveBeenCalled()
     expect(storeOpen).not.toHaveBeenCalled()
@@ -404,7 +408,8 @@ describe('WalletPortabilityService — importWallet', () => {
     // must not be trusted just because the host is generically "an S3 host".
     const copyProfile = jest.fn(async () => undefined)
     const { agent } = makeAgent(copyProfile)
-    const service = new WalletPortabilityService(makeLogger() as never)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
 
     const { jobId } = await service.importWallet(
       agent as never,
@@ -415,7 +420,8 @@ describe('WalletPortabilityService — importWallet', () => {
     )
     const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
 
-    expect(job.error).toContain('untrusted host')
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('untrusted host'))
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -467,12 +473,14 @@ describe('WalletPortabilityService — importWallet', () => {
       const url = 'https://s3.ap-south-1.amazonaws.com/some-other-attacker-bucket/some-export.db.gz'
       const copyProfile = jest.fn(async () => undefined)
       const { agent } = makeAgent(copyProfile)
-      const service = new WalletPortabilityService(makeLogger() as never)
+      const logger = makeLogger()
+      const service = new WalletPortabilityService(logger as never)
 
       const { jobId } = await service.importWallet(agent as never, TENANT_ID, url, PASS_KEY, CHECKSUM)
       const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
 
-      expect(job.error).toContain('untrusted host')
+      expect(job.error).toBe('IMPORT_FAILED')
+      expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('untrusted host'))
       expect(fetchMock).not.toHaveBeenCalled()
     } finally {
       process.env.AWS_WALLET_EXPORT_BUCKET = 'test-wallet-export-bucket'
@@ -550,12 +558,14 @@ describe('WalletPortabilityService — importWallet', () => {
     const copyProfile = jest.fn(async () => undefined)
     const renameProfile = jest.fn(async () => undefined)
     const { agent } = makeAgent(copyProfile, renameProfile)
-    const service = new WalletPortabilityService(makeLogger() as never)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
 
     const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
     const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
 
-    expect(job.error).toContain('must contain exactly one profile')
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('must contain exactly one profile'))
     expect(renameProfile).not.toHaveBeenCalled()
     expect(importedStoreCopyProfile).not.toHaveBeenCalled()
   })
@@ -588,12 +598,14 @@ describe('WalletPortabilityService — importWallet', () => {
     const copyProfile = jest.fn(async () => undefined)
     const renameProfile = jest.fn(async () => undefined)
     const { agent } = makeAgent(copyProfile, renameProfile)
-    const service = new WalletPortabilityService(makeLogger() as never)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
 
     const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
     const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
 
-    expect(job.error).toContain('simulated copy failure')
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('simulated copy failure'))
     // Two renameProfile calls: the initial rename-aside, then the rollback renaming it back.
     expect(renameProfile).toHaveBeenCalledTimes(2)
     const [firstCall, secondCall] = renameProfile.mock.calls as unknown as {
@@ -623,12 +635,14 @@ describe('WalletPortabilityService — importWallet', () => {
         throw new Error('simulated rollback failure')
       })
     const { agent } = makeAgent(copyProfile, renameProfile)
-    const service = new WalletPortabilityService(makeLogger() as never)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
 
     const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
     const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
 
-    expect(job.error).toContain('simulated copy failure')
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('simulated copy failure'))
     expect(renameProfile).toHaveBeenCalledTimes(2)
     // The rollback itself failed, so the tenant's real data is genuinely still sitting at
     // backupProfile — an operator needs this to find it, unlike the successful-rollback case
@@ -651,12 +665,14 @@ describe('WalletPortabilityService — importWallet', () => {
       listProfilesImpl: listProfiles,
       removeProfileImpl: removeProfile,
     })
-    const service = new WalletPortabilityService(makeLogger() as never)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
 
     const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
     const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
 
-    expect(job.error).toContain('simulated partial copy failure')
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('simulated partial copy failure'))
     // The partial profile is removed before the rename-back is attempted — without this, the
     // rename would hit a Duplicate/UNIQUE error and the rollback would itself fail.
     expect(removeProfile).toHaveBeenCalledWith(PROFILE)
