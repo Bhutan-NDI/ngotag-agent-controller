@@ -191,17 +191,23 @@ describe('WalletPortabilityService — exportWallet', () => {
     )
   })
 
-  it('on failure: reaches Failed with the error message, and never uploads a partial artifact', async () => {
+  it('on failure: reaches Failed with a sanitized error code (not the raw exception), logs the real error server-side, and never uploads a partial artifact', async () => {
+    // #72 review: the job record is externally readable via getJobStatus, so it must never carry
+    // raw Askar/filesystem/AWS error text (paths, bucket names, stack traces) — only a stable
+    // sanitized code. The real error must still reach the server-side log, just not the caller.
     const copyProfile = jest.fn(async () => {
       throw new Error('simulated Askar failure')
     })
     const agent = makeAgent(copyProfile)
-    const service = new WalletPortabilityService(makeLogger() as never)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
 
     const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY)
     const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
 
-    expect(job.error).toContain('simulated Askar failure')
+    expect(job.error).toBe('EXPORT_FAILED')
+    expect(job.error).not.toContain('simulated Askar failure')
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('simulated Askar failure'))
     expect(job.downloadUrl).toBeUndefined()
     expect(s3Upload).not.toHaveBeenCalled()
   })

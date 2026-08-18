@@ -27,7 +27,10 @@ export interface WalletPortabilityJobRecord {
   checksum?: string
   // Computed on read, never persisted — see s3Key above.
   downloadUrl?: string
-  // Populated on Failed
+  // Populated on Failed — a stable, sanitized code (e.g. EXPORT_FAILED), never the raw
+  // Askar/filesystem/AWS error text. The real error is logged server-side with the job id at the
+  // point of failure; this field is externally readable via getJobStatus, so it must never carry
+  // operational details (paths, bucket names, stack traces). See the #72 review.
   error?: string
 }
 

@@ -22,6 +22,12 @@ import { WalletPortabilityJobStatus, WalletPortabilityJobType } from './WalletPo
 // stay valid longer than a normal download takes.
 const PRE_SIGNED_URL_EXPIRY_SECONDS = 15 * 60
 
+// Sanitized code stored on a Failed job record and returned to callers — the real error (Askar,
+// filesystem, or AWS SDK internals) can carry operational details a caller has no business seeing
+// (paths, bucket names, stack traces). The full error is still logged server-side with the job id
+// at every call site below; this is only what getJobStatus ever hands back. See the #72 review.
+const EXPORT_FAILED_ERROR_CODE = 'EXPORT_FAILED'
+
 // Deliberately NOT typed as the real `AWS.S3` class (only the 2 methods actually used here) —
 // referencing that type pulls the entirety of aws-sdk's (famously enormous) type declarations
 // into the type-checker's program, which is fine for `tsc` but reliably OOMs ts-jest's type-aware
@@ -76,9 +82,10 @@ export class WalletPortabilityService {
 
   /**
    * @param passKey Caller-supplied passphrase for the exported artifact — matches the legacy
-   *   `POST /export/:tenantId { passKey, walletID }` contract. Any string is accepted: it is
-   *   run through Argon2i key derivation (KdfMethod.Argon2IMod) rather than passed to Askar's
-   *   raw KDF, which only accepts a base58-encoded 32-byte key and would reject a normal
+   *   `POST /export/:tenantId { passKey, walletID }` contract. The controller enforces a minimum
+   *   length (MIN_PASSKEY_LENGTH in MultiTenancyController) before this is ever reached; below
+   *   that, it is run through Argon2i key derivation (KdfMethod.Argon2IMod) rather than passed to
+   *   Askar's raw KDF, which only accepts a base58-encoded 32-byte key and would reject a normal
    *   passphrase outright (see runExport below). The caller must retain this to import the
    *   artifact later; it is never generated or persisted server-side, and never logged.
    */
@@ -106,11 +113,13 @@ export class WalletPortabilityService {
     // logged, never recorded a terminal status).
     this.runExport(agent, tenantId, jobId, passKey).catch((error) => {
       this.logger.error(`[WalletPortabilityService] export job ${jobId} failed to start: ${error}`)
-      this.setJobStatus(jobId, tenantId, WalletPortabilityJobStatus.Failed, `${error}`).catch((statusError) => {
-        this.logger.error(
-          `[WalletPortabilityService] export job ${jobId} also failed to record its Failed status: ${statusError}`,
-        )
-      })
+      this.setJobStatus(jobId, tenantId, WalletPortabilityJobStatus.Failed, EXPORT_FAILED_ERROR_CODE).catch(
+        (statusError) => {
+          this.logger.error(
+            `[WalletPortabilityService] export job ${jobId} also failed to record its Failed status: ${statusError}`,
+          )
+        },
+      )
     })
 
     return { jobId, status: WalletPortabilityJobStatus.Pending }
@@ -194,7 +203,7 @@ export class WalletPortabilityService {
       })
     } catch (error) {
       this.logger.error(`[WalletPortabilityService] export job ${jobId} failed: ${error}`)
-      await this.setJobStatus(jobId, tenantId, WalletPortabilityJobStatus.Failed, `${error}`)
+      await this.setJobStatus(jobId, tenantId, WalletPortabilityJobStatus.Failed, EXPORT_FAILED_ERROR_CODE)
     } finally {
       // Guaranteed cleanup regardless of success/failure — the export key and the plaintext
       // wallet artifact must never linger on local disk. Removing the whole workDir (rather

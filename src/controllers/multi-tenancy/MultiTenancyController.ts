@@ -12,6 +12,15 @@ import { getWalletPortabilityService } from '../../services/wallet-portability/W
 import { TsLogger } from '../../utils/logger'
 import { CreateTenantOptions } from '../types'
 
+// Minimum length for a caller-supplied wallet export/import passKey. Argon2i (KdfMethod.Argon2IMod)
+// derives a real encryption key from whatever string is supplied, so a bare non-empty check let
+// through one-character passphrases like "a" -- practical to brute-force offline against an
+// artifact that otherwise sits in S3. 16 is a floor, not a strength guarantee: it rules out the
+// trivial cases without forcing the caller-remembered-passphrase design (matches the legacy
+// contract) into a server-generated-key one, which would be a bigger, separate change. See the
+// #72 review.
+const MIN_PASSKEY_LENGTH = 16
+
 @Tags('MultiTenancy')
 @Security('jwt', [SCOPES.MULTITENANT_BASE_AGENT])
 @Route('/multi-tenancy')
@@ -142,8 +151,8 @@ export class MultiTenancyController extends Controller {
     @Res() badRequestError: TsoaResponse<400, { reason: string }>,
   ) {
     const { passKey } = exportWalletRequest
-    if (!passKey) {
-      return badRequestError(400, { reason: 'passKey is required.' })
+    if (!passKey || passKey.length < MIN_PASSKEY_LENGTH) {
+      return badRequestError(400, { reason: `passKey must be at least ${MIN_PASSKEY_LENGTH} characters.` })
     }
     const agent = request.agent as Agent<RestMultiTenantAgentModules>
     try {
