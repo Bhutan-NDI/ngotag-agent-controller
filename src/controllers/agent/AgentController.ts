@@ -366,7 +366,23 @@ export class AgentController extends Controller {
         proofType: selfAttestedProofType,
         verificationMethod: selfDidVerificationMethod,
       }
-      const signedCred = await request.agent.w3cCredentials.signCredential(selfAttestedJsonLdCredential)
+      // Sanitized catch around signCredential specifically (not the outer one, which still returns
+      // clear, safe messages like the assertionMethod check above): CachedDocumentLoader falls
+      // back to Credo's native JSON-LD loader for any @context URL outside its small static map,
+      // which can reach attacker-chosen or internal addresses (SSRF) via this caller-controlled
+      // field. ErrorHandlingService's generic branch serializes error.message verbatim into the
+      // HTTP response, which would turn that into a probing oracle (resolved URL, HTTP status,
+      // redirect/network failure detail). Log the real cause server-side; the caller only ever
+      // sees a generic failure. See the #75 review.
+      let signedCred
+      try {
+        signedCred = await request.agent.w3cCredentials.signCredential(selfAttestedJsonLdCredential)
+      } catch (signError) {
+        request.agent.config.logger.error(
+          `[AgentController] createW3cSelfAttestedCredential: signCredential failed for DID '${selfDid}': ${signError}`,
+        )
+        throw new Error('Failed to sign the self-attested credential')
+      }
       const selfAttestedStoredCredential = await request.agent.w3cCredentials.store({
         record: W3cCredentialRecord.fromCredential(signedCred),
       })

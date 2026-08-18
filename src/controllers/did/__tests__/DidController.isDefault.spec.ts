@@ -132,6 +132,27 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
     expect(newRecord.setTag).toHaveBeenCalledWith('isDefault', true)
   })
 
+  it('reports isDefaultSet: true on the response when the bookkeeping actually succeeds', async () => {
+    // #75 review: the response must distinguish "isDefault was requested and actually recorded"
+    // from "isDefault was requested but the bookkeeping silently failed" -- see the isDefaultSet:
+    // false cases below for the failure side of this same contract.
+    const agent = makeAgent({
+      didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
+    })
+    const newRecord = makeDidRecordFake('rec-new')
+    agent._knownRecords.set(newRecord.id, newRecord)
+    agent._didRepository.findCreatedDid = jest.fn(async () => newRecord) as jest.Mock
+    const controller = new DidController()
+
+    const result = await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        isDefaultSet: true,
+      }),
+    )
+  })
+
   it("clears the previous default DID's tag before tagging the newly created one", async () => {
     const agent = makeAgent({
       didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
@@ -188,7 +209,13 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
 
     const result = await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())
 
-    expect(result).toEqual({ didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } } })
+    // isDefaultSet: false -- #75 review: isDefault was explicitly requested but the bookkeeping
+    // couldn't happen, so the response must say so rather than silently looking identical to a
+    // request that succeeded.
+    expect(result).toEqual({
+      didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
+      isDefaultSet: false,
+    })
     expect(agent._didRepository.updateByIdWithLock).not.toHaveBeenCalled()
     expect(mockRootAgent.config.logger.warn).toHaveBeenCalledWith(expect.stringContaining('isDefault bookkeeping'))
   })
@@ -202,7 +229,7 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
 
     const result = await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())
 
-    expect(result).toEqual({ didState: { state: 'finished' } })
+    expect(result).toEqual({ didState: { state: 'finished' }, isDefaultSet: false })
     expect(agent._didRepository.findCreatedDid).not.toHaveBeenCalled()
     expect(mockRootAgent.config.logger.warn).toHaveBeenCalledWith(expect.stringContaining('isDefault bookkeeping'))
   })
@@ -224,7 +251,10 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
 
     const result = await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())
 
-    expect(result).toEqual({ didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } } })
+    expect(result).toEqual({
+      didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
+      isDefaultSet: false,
+    })
     expect(mockRootAgent.config.logger.warn).toHaveBeenCalledWith(expect.stringContaining('isDefault bookkeeping'))
   })
 
@@ -234,10 +264,13 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
     })
     const controller = new DidController()
 
-    await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions({ isDefault: false }))
+    const result = await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions({ isDefault: false }))
 
     expect(agent._didRepository.findCreatedDid).not.toHaveBeenCalled()
     expect(agent._didRepository.findByQuery).not.toHaveBeenCalled()
     expect(agent._didRepository.updateByIdWithLock).not.toHaveBeenCalled()
+    // isDefaultSet must be absent (not even `undefined` as an own key), not just falsy -- existing
+    // callers that never use isDefault must see no shape change at all from this fix.
+    expect(result).not.toHaveProperty('isDefaultSet')
   })
 })

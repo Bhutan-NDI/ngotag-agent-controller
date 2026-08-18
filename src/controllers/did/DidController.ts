@@ -151,9 +151,15 @@ export class DidController extends Controller {
       // (for did:indy/did:bcovrin/did:indicio, already a ledger NYM by this point) — the isDefault
       // tag is not. A storage/Askar failure recording it must never turn an already-successful
       // creation into a 500, since the client's only recourse on a 500 is to retry the whole
-      // request, anchoring a second, orphaned DID for a real ledger method. Logged as a warning
-      // rather than surfaced to the caller — didRes below still returns the real, successfully
-      // created DID either way.
+      // request, anchoring a second, orphaned DID for a real ledger method. Logged as a warning,
+      // and — per the #75 review — also surfaced on the response itself as `isDefaultSet: false`
+      // when `isDefault` was requested but the bookkeeping below didn't actually happen: a client
+      // that explicitly asked for this DID to become the default has no other way to learn its
+      // request was silently not honored (a subsequent self-attested-issuance call would otherwise
+      // just 404 or sign under a stale default, with no link back to this response). Absent
+      // entirely (not `true`) when isDefault was never requested, so existing callers that don't
+      // use isDefault see no shape change.
+      let isDefaultSet: boolean | undefined
       try {
         // Cast, not a widened type: `result`'s inferred type is a union across all handler
         // branches and TS won't narrow it here without a per-branch type guard. Note that
@@ -185,14 +191,18 @@ export class DidController extends Controller {
             record.setTag('isDefault', true)
             return record
           })
+          isDefaultSet = true
         }
       } catch (bookkeepingError) {
         this.agent.config.logger.warn(
           `[DidController] isDefault bookkeeping failed for a newly created DID — the DID itself was created successfully and is still returned below: ${bookkeepingError}`,
         )
+        if (createDidOptions.isDefault) {
+          isDefaultSet = false
+        }
       }
 
-      return didRes
+      return isDefaultSet === undefined ? didRes : { ...didRes, isDefaultSet }
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }

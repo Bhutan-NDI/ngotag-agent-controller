@@ -101,8 +101,11 @@ function makeAgent({
   const didRepository = {
     findByQuery: jest.fn(async () => (defaultDid ? [{ did: defaultDid }] : [])) as jest.Mock,
   }
+  const logger = { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() }
   return {
     context: {},
+    config: { logger },
+    _logger: logger,
     dependencyManager: {
       resolve: jest.fn((token: unknown) => (token === DidRepository ? didRepository : undefined)) as jest.Mock,
     },
@@ -466,5 +469,33 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
       `Default DID '${SELF_DID}' has no assertionMethod verification method; it cannot be used to issue credentials`,
     )
     expect(signCredential).not.toHaveBeenCalled()
+  })
+
+  it('sanitizes a signCredential failure instead of exposing its raw message, and logs the real cause server-side', async () => {
+    // #75 review: a caller-controlled @context can drive CachedDocumentLoader's fallback to
+    // Credo's native JSON-LD loader, reaching attacker-chosen or internal addresses (SSRF).
+    // Whatever that document loader (or signCredential itself) throws must not be echoed back
+    // verbatim -- ErrorHandlingService's generic branch serializes error.message straight into the
+    // HTTP response, which would turn this into a probing oracle (resolved URL, HTTP status,
+    // redirect/network failure detail). The real error must still reach the server-side log.
+    const didDocument = { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    const signCredential = jest.fn(async () => {
+      throw new Error('getaddrinfo ENOTFOUND internal-service.svc.cluster.local:8080/secrets')
+    }) as jest.Mock
+    const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+    const controller = new AgentController()
+
+    let caught: Error | undefined
+    try {
+      await controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)
+    } catch (error) {
+      caught = error as Error
+    }
+
+    expect(caught?.message).toContain('Failed to sign the self-attested credential')
+    expect(caught?.message).not.toMatch(/internal-service|ENOTFOUND/)
+    expect((agent._logger as { error: jest.Mock }).error).toHaveBeenCalledWith(
+      expect.stringContaining('internal-service.svc.cluster.local'),
+    )
   })
 })
