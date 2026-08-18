@@ -13,6 +13,7 @@ import { injectable } from 'tsyringe'
 
 import { SCOPES } from '../../../enums'
 import ErrorHandlingService from '../../../errorHandlingService'
+import { BadRequestError } from '../../../errors'
 import { PurgeRecordType } from '../../../purge/PurgeTypes'
 import { SchedulePurge } from '../../../purge/decorators/SchedulePurge'
 import { ProofRecordExample, RecordId } from '../../examples'
@@ -22,6 +23,13 @@ import {
   RequestProofOptions,
   RequestProofProposalOptions,
 } from '../../types'
+
+// A human-readable DIDComm problem-report reason has no business being large -- the field
+// otherwise accepts an unbounded string (up to the application-wide 5 MB body limit) that gets
+// encrypted, stored, and delivered to the verifier's agent. An authenticated caller could
+// otherwise repeatedly make this agent build and send multi-megabyte reports. 500 is generous for
+// a real explanation, far below anything that could be mistaken for a payload. See the #76 review.
+const MAX_PROBLEM_REPORT_DESCRIPTION_LENGTH = 500
 
 @Tags('DIDComm - Proofs')
 @Route('/didcomm/proofs')
@@ -306,6 +314,14 @@ export class ProofController extends Controller {
     @Body() body: { sendProblemReport?: boolean; problemReportDescription?: string },
   ) {
     try {
+      if (
+        body.problemReportDescription &&
+        body.problemReportDescription.length > MAX_PROBLEM_REPORT_DESCRIPTION_LENGTH
+      ) {
+        throw new BadRequestError(
+          `problemReportDescription must be at most ${MAX_PROBLEM_REPORT_DESCRIPTION_LENGTH} characters.`,
+        )
+      }
       const proof = await request.agent.modules.didcomm.proofs.declineRequest({
         proofExchangeRecordId: proofRecordId,
         sendProblemReport: body.sendProblemReport,

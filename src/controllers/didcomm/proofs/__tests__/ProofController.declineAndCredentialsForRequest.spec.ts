@@ -101,6 +101,34 @@ describe('ProofController.declineRequest', () => {
 
     await expect(controller.declineRequest(makeRequest(agent), PROOF_RECORD_ID, {})).rejects.toBeDefined()
   })
+
+  it('rejects an oversized problemReportDescription before it ever reaches declineRequest/the DIDComm send', async () => {
+    // #76 review: the field otherwise accepts an unbounded string (up to the app-wide 5 MB body
+    // limit) that gets encrypted, stored, and delivered to the verifier -- an authenticated caller
+    // could repeatedly make the agent build and send multi-megabyte reports.
+    const agent = makeAgent()
+    const controller = new ProofController()
+
+    await expect(
+      controller.declineRequest(makeRequest(agent), PROOF_RECORD_ID, {
+        sendProblemReport: true,
+        problemReportDescription: 'x'.repeat(501),
+      }),
+    ).rejects.toThrow('problemReportDescription must be at most 500 characters.')
+    expect(agent.modules.didcomm.proofs.declineRequest).not.toHaveBeenCalled()
+  })
+
+  it('accepts a problemReportDescription right at the length boundary', async () => {
+    const agent = makeAgent()
+    const controller = new ProofController()
+
+    await controller.declineRequest(makeRequest(agent), PROOF_RECORD_ID, {
+      sendProblemReport: true,
+      problemReportDescription: 'x'.repeat(500),
+    })
+
+    expect(agent.modules.didcomm.proofs.declineRequest).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('ProofController.getCredentialsForRequest', () => {
