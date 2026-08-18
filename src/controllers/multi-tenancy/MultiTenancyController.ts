@@ -241,6 +241,12 @@ export class MultiTenancyController extends Controller {
     if (!exportUrl || !passKey || !checksum) {
       return badRequestError(400, { reason: 'exportUrl, passKey and checksum are all required.' })
     }
+    // Same MIN_PASSKEY_LENGTH floor as exportTenantWallet -- this passKey is the same one the
+    // caller supplied at export time, so a weak one accepted here just means the earlier check
+    // was bypassable via import's own endpoint. See the #73 review.
+    if (passKey.length < MIN_PASSKEY_LENGTH) {
+      return badRequestError(400, { reason: `passKey must be at least ${MIN_PASSKEY_LENGTH} characters.` })
+    }
     const agent = request.agent as Agent<RestMultiTenantAgentModules>
     try {
       // Same upfront guard as exportTenantWallet, for the same reason — and doubly so here:
