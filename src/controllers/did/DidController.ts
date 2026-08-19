@@ -178,6 +178,21 @@ export class DidController extends Controller {
           if (!newDefaultRecord) {
             throw new InternalServerError(`isDefault was requested but no DidRecord could be found for ${createdDid}`)
           }
+          // Tag the new default FIRST, then clear the previous ones -- not the other order. Both
+          // writes are separate updateByIdWithLock calls (Credo's Repository API has no
+          // cross-record transaction to lean on instead), so either order can still fail partway
+          // through a real Askar/storage error or a lock timeout. Tagging first makes the worst
+          // case strictly better: a failure after this write but before the clearing loop below
+          // leaves the tenant with *two* tagged defaults, which the read path already tolerates
+          // by design (findByQuery, not findSingleByQuery -- see AgentController's own comment on
+          // the same query). The previous order's worst case was clearing every previous default
+          // and then failing on this exact write, leaving the tenant with *zero* defaults and a
+          // self-attested-issuance endpoint that 404s where it worked a moment before. See the
+          // #73 review.
+          await didRepository.updateByIdWithLock(request.agent.context, newDefaultRecord.id, async (record) => {
+            record.setTag('isDefault', true)
+            return record
+          })
           const previousDefaults = await didRepository.findByQuery(request.agent.context, { isDefault: true })
           for (const previousDefault of previousDefaults) {
             if (previousDefault.id !== newDefaultRecord.id) {
@@ -187,10 +202,6 @@ export class DidController extends Controller {
               })
             }
           }
-          await didRepository.updateByIdWithLock(request.agent.context, newDefaultRecord.id, async (record) => {
-            record.setTag('isDefault', true)
-            return record
-          })
           isDefaultSet = true
         }
       } catch (bookkeepingError) {

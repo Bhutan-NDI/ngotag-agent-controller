@@ -153,7 +153,7 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
     )
   })
 
-  it("clears the previous default DID's tag before tagging the newly created one", async () => {
+  it("tags the newly created DID as default and clears the previous default DID's tag", async () => {
     const agent = makeAgent({
       didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
     })
@@ -179,6 +179,60 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
       newRecord.id,
       expect.any(Function),
     )
+  })
+
+  it('tags the new default BEFORE clearing the previous one — not the other order', async () => {
+    // #73 review: the previous order (clear old defaults, then tag the new one) made the worst
+    // case of a failure on that final write "zero tagged defaults" -- the self-attested-issuance
+    // endpoint 404s where it worked a moment before. Tagging first makes the worst case "two
+    // tagged defaults" instead, which the read path already tolerates by design.
+    const agent = makeAgent({
+      didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
+    })
+    const newRecord = makeDidRecordFake('rec-new')
+    const oldRecord = makeDidRecordFake('rec-old')
+    agent._knownRecords.set(newRecord.id, newRecord)
+    agent._knownRecords.set(oldRecord.id, oldRecord)
+    agent._didRepository.findCreatedDid = jest.fn(async () => newRecord) as jest.Mock
+    agent._didRepository.findByQuery = jest.fn(async () => [oldRecord]) as jest.Mock
+    const controller = new DidController()
+
+    await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())
+
+    const updateCalls = (agent._didRepository.updateByIdWithLock as jest.Mock).mock.calls as Array<[unknown, string]>
+    const newRecordCallIndex = updateCalls.findIndex(([, id]) => id === newRecord.id)
+    const oldRecordCallIndex = updateCalls.findIndex(([, id]) => id === oldRecord.id)
+    expect(newRecordCallIndex).toBeLessThan(oldRecordCallIndex)
+  })
+
+  it('leaves the previous default tagged (not cleared) when tagging the new default fails — the old order left zero defaults instead', async () => {
+    const agent = makeAgent({
+      didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
+    })
+    const newRecord = makeDidRecordFake('rec-new')
+    const oldRecord = makeDidRecordFake('rec-old')
+    agent._knownRecords.set(newRecord.id, newRecord)
+    agent._knownRecords.set(oldRecord.id, oldRecord)
+    agent._didRepository.findCreatedDid = jest.fn(async () => newRecord) as jest.Mock
+    agent._didRepository.findByQuery = jest.fn(async () => [oldRecord]) as jest.Mock
+    // The write that tags the new record as default fails (a real Askar/storage error, a lock
+    // timeout) -- the same class of failure the surrounding best-effort try/catch exists for.
+    agent._didRepository.updateByIdWithLock = jest.fn(
+      async (_ctx: unknown, id: string, callback: (r: unknown) => Promise<unknown>) => {
+        if (id === newRecord.id) {
+          throw new Error('simulated storage failure tagging the new default')
+        }
+        return callback(agent._knownRecords.get(id))
+      },
+    ) as jest.Mock
+    const controller = new DidController()
+
+    const result = await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())
+
+    // oldRecord's tag is never touched -- the clearing loop only runs after the new-tag write
+    // succeeds, so the tenant is left with its previous default still intact rather than none.
+    expect(oldRecord.setTag).not.toHaveBeenCalled()
+    expect(result).toEqual(expect.objectContaining({ isDefaultSet: false }))
   })
 
   it('does not re-clear the new default DID itself if it already appears in the previous-defaults query', async () => {

@@ -326,6 +326,43 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     expect(agent.dids.resolveCreatedDidDocumentWithKeys).not.toHaveBeenCalled()
   })
 
+  it('picks the most recently created DID when more than one is tagged isDefault — not an arbitrary unordered pick', async () => {
+    // #73 review: findByQuery applies no ordering of its own (a plain Askar scan, no createdAt
+    // sort). A wallet migrated from the legacy stack can carry more than one isDefault-tagged
+    // DID (the old default was never cleared before writeDid's own fix), so an unordered [0]
+    // pick is whatever the store happens to return first -- Askar's rowid-ordered scan returns
+    // the EARLIEST-created record, which can be a long-superseded DID, not the one an operator
+    // actually tagged default most recently.
+    const didDocument = { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    const RECENT_DID = 'did:indy:recent-default'
+    const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
+      return new W3cJsonLdVerifiableCredential({
+        ...options.credential,
+        proof: {
+          type: 'Ed25519Signature2018',
+          proofPurpose: 'assertionMethod',
+          verificationMethod: VERIFICATION_METHOD_ID,
+          created: new Date().toISOString(),
+          jws: 'fake-jws',
+        },
+      })
+    }) as jest.Mock
+    const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+    // Deliberately returned in earliest-first order, matching an unordered store scan -- the fix
+    // must sort these itself rather than rely on query order.
+    agent._didRepository.findByQuery = jest.fn(async () => [
+      { did: SELF_DID, createdAt: new Date('2024-01-01T00:00:00.000Z') },
+      { did: RECENT_DID, createdAt: new Date('2025-06-01T00:00:00.000Z') },
+    ]) as jest.Mock
+    const controller = new AgentController()
+
+    await controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)
+
+    const signedWith = signCredential.mock.calls[0][0] as { credential: InstanceType<typeof W3cCredential> }
+    expect(signedWith.credential.issuerId).toBe(RECENT_DID)
+    expect(agent.dids.resolveCreatedDidDocumentWithKeys).toHaveBeenCalledWith(RECENT_DID)
+  })
+
   it('throws NotFoundError when the default DID GenericRecord points at a DID that no longer resolves', async () => {
     const { NotFoundError } = await import('../../../errors')
     const signCredential = jest.fn() as jest.Mock
