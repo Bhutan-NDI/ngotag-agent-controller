@@ -289,6 +289,15 @@ export class WalletPortabilityService {
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       error,
+      // Carried forward, not dropped -- this rebuilds the whole record, and s3Key/checksum are
+      // only ever set by runExport's own inline Completed save, never by this helper. Any future
+      // call site that marks an already-completed job Failed/InProgress from outside runExport
+      // (a job-level timeout, say) would otherwise silently erase the download pointer:
+      // getJobStatus only mints a downloadUrl when job.status === Completed && job.s3Key, so a
+      // later re-save missing s3Key orphans the artifact in the bucket with no way to reach it
+      // through the API. See the #72 review.
+      s3Key: existing?.s3Key,
+      checksum: existing?.checksum,
     })
   }
 

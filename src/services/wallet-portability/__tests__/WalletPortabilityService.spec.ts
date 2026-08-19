@@ -191,6 +191,31 @@ describe('WalletPortabilityService — exportWallet', () => {
     )
   })
 
+  it('preserves s3Key/checksum when setJobStatus re-saves an already-Completed job from a different call site', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const agent = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY)
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    // setJobStatus is private -- this models a call site outside runExport (e.g. a future
+    // job-level timeout) re-saving the job's status after it has already completed. See the
+    // #72 review: this used to rebuild the whole record from scratch and silently drop
+    // s3Key/checksum, which getJobStatus's downloadUrl requires (job.status === Completed &&
+    // job.s3Key) -- so a completed export becomes unreachable through the API after any such
+    // re-save.
+    await (
+      service as unknown as {
+        setJobStatus: (jobId: string, tenantId: string, status: string, error?: string) => Promise<void>
+      }
+    ).setJobStatus(jobId, TENANT_ID, WalletPortabilityJobStatus.Completed)
+
+    const job = await service.getJobStatus(jobId)
+    expect(job?.downloadUrl).toBe('https://example-bucket.s3.amazonaws.com/signed-url')
+    expect(job?.checksum).toMatch(/^[0-9a-f]{64}$/)
+  })
+
   it('on failure: reaches Failed with a sanitized error code (not the raw exception), logs the real error server-side, and never uploads a partial artifact', async () => {
     // #72 review: the job record is externally readable via getJobStatus, so it must never carry
     // raw Askar/filesystem/AWS error text (paths, bucket names, stack traces) — only a stable
