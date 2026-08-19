@@ -92,6 +92,12 @@ export const setupServer = async (
   // apply rate limiter to all requests
   app.use(limiter)
 
+  // Deliberately unauthenticated: used only by container orchestration to determine
+  // whether the HTTP server is available. It must remain before SecurityMiddleware.
+  app.get('/health', (_req, res) => {
+    res.status(200).json({ status: 'ok' })
+  })
+
   // Note: Having used it above, redirects accordingly
   app.use((req, res, next) => {
     if (req.url == '/') {
