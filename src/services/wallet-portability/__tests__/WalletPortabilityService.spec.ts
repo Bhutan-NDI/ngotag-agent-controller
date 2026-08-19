@@ -115,7 +115,7 @@ jest.unstable_mockModule('node-fetch', () => ({
 }))
 
 const { WalletPortabilityService } = await import('../WalletPortabilityService')
-const { WalletPortabilityJobStatus } = await import('../WalletPortabilityTypes')
+const { WalletPortabilityJobStatus, WalletPortabilityJobType } = await import('../WalletPortabilityTypes')
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -261,7 +261,7 @@ describe('WalletPortabilityService — exportWallet', () => {
 
   it('preserves s3Key/checksum when setJobStatus re-saves an already-Completed job from a different call site', async () => {
     const copyProfile = jest.fn(async () => undefined)
-    const agent = makeAgent(copyProfile)
+    const { agent } = makeAgent(copyProfile)
     const service = new WalletPortabilityService(makeLogger() as never)
 
     const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY)
@@ -275,12 +275,19 @@ describe('WalletPortabilityService — exportWallet', () => {
     // re-save.
     await (
       service as unknown as {
-        setJobStatus: (jobId: string, tenantId: string, status: string, error?: string) => Promise<void>
+        setJobStatus: (
+          jobId: string,
+          tenantId: string,
+          type: string,
+          status: string,
+          error?: string,
+          backupProfile?: string,
+        ) => Promise<void>
       }
-    ).setJobStatus(jobId, TENANT_ID, WalletPortabilityJobStatus.Completed)
+    ).setJobStatus(jobId, TENANT_ID, WalletPortabilityJobType.Export, WalletPortabilityJobStatus.Completed)
 
     const job = await service.getJobStatus(jobId)
-    expect(job?.downloadUrl).toBe('https://example-bucket.s3.amazonaws.com/signed-url')
+    expect(job?.downloadUrl).toBe('https://test-wallet-export-bucket.s3.amazonaws.com/signed-url')
     expect(job?.checksum).toMatch(/^[0-9a-f]{64}$/)
   })
 
@@ -648,6 +655,30 @@ describe('WalletPortabilityService — importWallet', () => {
     // backupProfile — an operator needs this to find it, unlike the successful-rollback case
     // above where the profile no longer exists.
     expect(job.backupProfile).toBeDefined()
+  })
+
+  it('renameProfile itself fails (the rename-aside never lands): no backupProfile is reported, since no profile was ever created', async () => {
+    // #73 review: the earlier reporting logic only checked "did rollback succeed", which
+    // correctly covered the case above (rollback attempted and failed, real data still at
+    // backupProfile) but missed this mirror -- when the very first renameProfile call throws,
+    // no backup profile is ever created at all, no rollback is attempted (renamedAway never
+    // becomes true), and reporting backupProfile here would hand an operator a recovery pointer
+    // to a profile that was never created.
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => {
+      throw new Error('simulated rename-aside failure')
+    })
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(renameProfile).toHaveBeenCalledTimes(1) // only the rename-aside attempt, no rollback
+    expect(copyProfile).not.toHaveBeenCalled()
+    expect(job.backupProfile).toBeUndefined()
   })
 
   it('rollback recovers even when copyProfile left the target profile partially created before failing', async () => {

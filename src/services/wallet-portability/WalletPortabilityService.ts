@@ -35,10 +35,6 @@ const PRE_SIGNED_URL_EXPIRY_SECONDS = 15 * 60
 const EXPORT_FAILED_ERROR_CODE = 'EXPORT_FAILED'
 const IMPORT_FAILED_ERROR_CODE = 'IMPORT_FAILED'
 
-// downloadAndChecksum only ever fetches a pre-signed URL this service itself minted — refusing
-// anything else closes off an SSRF primitive (an arbitrary caller-supplied fetch target) and a
-// content-confirmation oracle (the checksum-mismatch error echoes sha256(response body)).
-const TRUSTED_S3_HOSTNAME_PATTERN = /^([a-z0-9.-]+\.)?s3([.-][a-z0-9-]+)?\.amazonaws\.com$/i
 // Generous ceiling for a real wallet export. Enforced against actual bytes read, not a trusted
 // Content-Length header, so a response that lies about its size still gets capped.
 const MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024 // 2 GiB
@@ -463,15 +459,18 @@ export class WalletPortabilityService {
     let importedDbPath: string | undefined
     let backupProfile: string | undefined
     let renamedAway = false
-    // Distinguishes the two shapes a Failed record can have after a rollback attempt: true means
-    // the backup profile was successfully renamed back to the live name (the tenant is fully
-    // restored, and backupProfile no longer points at anything real); false (the default) covers
-    // both "no rollback was attempted" and "the rollback itself failed" -- in both of those cases
-    // backupProfile still holds the tenant's data and is worth reporting. Without this, a
-    // successful rollback and a failed one were indistinguishable over the API, and an operator
-    // following the documented meaning of backupProfile would go looking for a profile that
-    // rollback had already put back. See the #73 review.
-    let rollbackSucceeded = false
+    // Tracks "does a profile actually exist at backupProfile's name right now" -- deliberately
+    // NOT reusable from renamedAway, which the success path clears once copyProfile completes
+    // (so a later, unrelated failure — e.g. the job-store write — doesn't wrongly trigger
+    // rollback against an already-imported profile). Sits true from the instant renameProfile
+    // lands, false again once rollback puts it back; stays false the whole time if renameProfile
+    // itself is what throws, since no profile was ever created. Read by the Failed-record report
+    // below so a successful rollback and a never-attempted-because-nothing-existed-yet failure
+    // are both correctly reported as "no backup to report" -- an earlier version only checked
+    // "did rollback succeed", which missed that second case: renameProfile failing outright left
+    // backupProfile pointing at a profile name that was never created, handing an operator a
+    // recovery pointer to nothing. See the #73 review.
+    let backupExists = false
     // Hoisted out of the try (was a local const inside it, out of scope for the finally below) —
     // same reasoning as runExport's identical field: Askar's sqlite backend leaves `-shm`/`-wal`
     // sidecar files next to the `.db` while it's open, which survive if importedStore.close()
@@ -532,10 +531,21 @@ export class WalletPortabilityService {
         // establishes that askar-wallet-tools' own export always yields exactly one profile
         // (e.g. no leftover default profile alongside it) the way this service's export does. See
         // the #73 review — trimmed the claim rather than assert compatibility that isn't tested.
-        const profilesInArtifact = await importedStore?.listProfiles()
-        if (!profilesInArtifact || profilesInArtifact.length !== 1) {
+        // Asserted once, then used unconditionally below — importedStore is always assigned
+        // (from an awaited Store.open) before this callback runs, so this isn't reachable
+        // today. But the `?.` it replaces made that assumption silently: a nullish
+        // importedStore would have skipped copyProfile entirely while renamedAway/backupExists
+        // still say the rename succeeded, completing the job with the tenant's live profile
+        // gone. listProfiles() above already threw loudly on its own nullish case; this makes
+        // the one destructive step (copyProfile) fail the same way instead of silently no-op.
+        // See the #73 review.
+        if (!importedStore) {
+          throw new Error('Imported store was not opened before the destructive copy step')
+        }
+        const profilesInArtifact = await importedStore.listProfiles()
+        if (profilesInArtifact.length !== 1) {
           throw new Error(
-            `Imported artifact must contain exactly one profile (found: ${profilesInArtifact?.join(', ') ?? 'none'})`,
+            `Imported artifact must contain exactly one profile (found: ${profilesInArtifact.join(', ')})`,
           )
         }
         const sourceProfile = profilesInArtifact[0]
@@ -543,8 +553,12 @@ export class WalletPortabilityService {
         backupProfile = `${profile}-pre-import-${jobId}`
         await baseStore.renameProfile({ fromProfile: profile, toProfile: backupProfile })
         renamedAway = true
+        // Set the instant the rename lands, independent of renamedAway (which the success path
+        // below clears once copyProfile completes) -- this tracks "does a backup profile exist
+        // right now", not "would rollback be attempted". See the backupExists reporting fix below.
+        backupExists = true
 
-        await importedStore?.copyProfile({ toStore: baseStore, fromProfile: sourceProfile, toProfile: profile })
+        await importedStore.copyProfile({ toStore: baseStore, fromProfile: sourceProfile, toProfile: profile })
 
         // Past this point the imported profile is in place under the tenant's real name — a
         // later failure (e.g. the job-store write below) must NOT trigger the rollback, which
@@ -595,7 +609,7 @@ export class WalletPortabilityService {
                 await baseStore.removeProfile(profile)
               }
               await baseStore.renameProfile({ fromProfile: backupProfile as string, toProfile: profile })
-              rollbackSucceeded = true
+              backupExists = false
             }
           })
         } catch (rollbackError) {
@@ -614,11 +628,14 @@ export class WalletPortabilityService {
         WalletPortabilityJobType.Import,
         WalletPortabilityJobStatus.Failed,
         IMPORT_FAILED_ERROR_CODE,
-        // Only when the backup profile is genuinely still holding the tenant's data -- a
-        // successful rollback renamed it back to the live name, so reporting it then points an
-        // operator at a profile that no longer exists and hides whether intervention is actually
-        // needed.
-        rollbackSucceeded ? undefined : backupProfile,
+        // backupExists, not "!rollbackSucceeded" -- the earlier check covered a successful
+        // rollback correctly, but missed its mirror: when renameProfile itself is what throws,
+        // backupExists (like renamedAway) never becomes true, so no profile was ever created at
+        // all, and reporting backupProfile here would hand an operator a recovery pointer to a
+        // profile that doesn't exist. backupExists means exactly "a profile currently sits at
+        // this name", true from the instant the rename lands and cleared again only once
+        // rollback successfully puts it back. See the #73 review.
+        backupExists ? backupProfile : undefined,
       )
     } finally {
       if (importedStore) {

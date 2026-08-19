@@ -33,6 +33,17 @@ const RECONNECT_MAX_DELAY_MS = 30000
 // still reclaimed promptly rather than waiting out the full 24h TTL.
 const RESERVATION_GRACE_PERIOD_MS = 15 * 1000
 
+// A crash/restart *after* setJobStatus(InProgress) has already landed in Redis leaves a job
+// record that is neither terminal nor absent — without this, isReservationStillActive's
+// record-based branch below returns true for the rest of the job's 24h TTL, wedging the tenant
+// out of every future export AND import for a full day with no way to clear it (see the #73
+// review: a container rolled ~30s into a 3-minute export leaves the tenant 409ing on both
+// endpoints until the TTL expires). No real export/import run anywhere near this long; treating
+// an InProgress record whose own updatedAt is older than this as dead lets a genuinely stuck job
+// self-heal on the next request without giving a real in-flight job (seconds to minutes) any
+// realistic chance of being reclaimed out from under it.
+const MAX_IN_PROGRESS_DURATION_MS = 30 * 60 * 1000
+
 // Placeholder "holder" returned when Redis has already told tryReserveActiveJob the slot is taken
 // (SET ... NX refused) but a subsequent round trip to identify who holds it then fails. Denying
 // the request either way is correct; this exists so the caller's WalletPortabilityJobConflictError
@@ -346,9 +357,18 @@ export class WalletPortabilityJobStore {
           }
           const currentRaw = await this.redisClient.get(key)
           const current = currentRaw ? (JSON.parse(currentRaw) as ActiveJobReservation) : undefined
-          return current?.jobId
+          // Never a bare `current?.jobId` here — Redis already told us this CAS lost (or the
+          // holder released between our GET and this one), which only means "the slot is
+          // spoken for by someone", not "nobody holds it". A falsy return is read by the caller
+          // as "I own the slot"; on this path we categorically do not, so fail closed with the
+          // sentinel rather than silently admitting a second concurrent job. See the #73 review.
+          return current?.jobId ?? UNKNOWN_HOLDER_JOB_ID
         }
-        return holder?.jobId
+        // Same reasoning as above: Redis's own NX refusal already established the slot is held.
+        // `holder` can still be undefined here if the previous holder released between the NX
+        // refusal and this GET — that's "held a moment ago, not held now", not "free"; report it
+        // as held via the sentinel rather than falling through to an admitting `undefined`.
+        return holder?.jobId ?? UNKNOWN_HOLDER_JOB_ID
       } catch (error) {
         this.logger.error(
           `[WalletPortabilityJobStore] Redis active-job reservation failed, falling back to in-memory: ${error}`,
@@ -386,9 +406,13 @@ export class WalletPortabilityJobStore {
       return true
     }
     if (record) {
-      return (
-        record.status === WalletPortabilityJobStatus.Pending || record.status === WalletPortabilityJobStatus.InProgress
-      )
+      if (record.status === WalletPortabilityJobStatus.Pending) return true
+      if (record.status === WalletPortabilityJobStatus.InProgress) {
+        // See MAX_IN_PROGRESS_DURATION_MS above — an InProgress record this old belongs to a
+        // job whose process died without ever reaching a terminal setJobStatus call.
+        return Date.now() - new Date(record.updatedAt).getTime() <= MAX_IN_PROGRESS_DURATION_MS
+      }
+      return false
     }
     return Date.now() - reservation.reservedAt <= RESERVATION_GRACE_PERIOD_MS
   }

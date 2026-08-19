@@ -79,6 +79,19 @@ class FakeRedisClient extends EventEmitter {
   // Test hook: makes the next get() call throw once, then auto-resets — models a transient Redis
   // read failure (e.g. a commandTimeout) without needing a real flaky connection.
   public failNextGet = false
+  // Test hook: makes the Nth get() call for a specific key return null regardless of the store's
+  // actual contents, then auto-resets — models the previous holder releasing (or its key
+  // otherwise vanishing) in the exact window between an NX refusal/CAS loss and the immediately
+  // following read that tries to identify who holds the slot now. Keyed per-key + call-number
+  // (not just "the next get() overall") since isReservationStillActive makes its own get() calls
+  // against a *different* key (the job record) in between the two active-job-key reads this
+  // targets.
+  public hideKeyOnCall: { key: string; callNumber: number } | undefined
+  private getCallCountByKey = new Map<string, number>()
+  // Test hook: makes the next eval() call report a CAS loss (0) regardless of whether the
+  // key's value actually still matches — models a genuine race where a different process's own
+  // reclaim/release already changed the key by the time this caller's compare-and-swap runs.
+  public forceNextEvalMiss = false
 
   public async set(key: string, value: string, ...args: unknown[]): Promise<string | null> {
     const nx = args.includes('NX')
@@ -91,6 +104,12 @@ class FakeRedisClient extends EventEmitter {
     if (this.failNextGet) {
       this.failNextGet = false
       throw new Error('simulated transient Redis read failure')
+    }
+    const callNumber = (this.getCallCountByKey.get(key) ?? 0) + 1
+    this.getCallCountByKey.set(key, callNumber)
+    if (this.hideKeyOnCall && this.hideKeyOnCall.key === key && this.hideKeyOnCall.callNumber === callNumber) {
+      this.hideKeyOnCall = undefined
+      return null
     }
     return this.store.get(key) ?? null
   }
@@ -105,6 +124,10 @@ class FakeRedisClient extends EventEmitter {
   // both RECLAIM_IF_UNCHANGED_SCRIPT and RELEASE_IF_OWNED_SCRIPT go through this one method with
   // different arg shapes.
   public async eval(script: string, _numKeys: number, key: string, ...args: string[]): Promise<number> {
+    if (this.forceNextEvalMiss) {
+      this.forceNextEvalMiss = false
+      return 0
+    }
     if (script.includes('cjson')) {
       // RELEASE_IF_OWNED_SCRIPT: ARGV[1] is the plain jobId, not the full reservation JSON —
       // releaseActiveJob only ever has (tenantId, jobId) to compare with, not the reservedAt the
@@ -547,6 +570,83 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
     // trip failed; discarding that answer and granting anyway is the bug. The holder is genuinely
     // unknown (that's the round trip that just failed), but the slot must still be reported held.
     expect(typeof result).toBe('string')
+  })
+
+  it('reports the slot as held, not granted, when the follow-up holder lookup finds nothing — the previous holder released between NX refusal and this read', async () => {
+    const { store, redis } = makeReadyStore()
+    const tenantId = 'tenant-1'
+    // Seeded directly on the fake Redis store, bypassing tryReserveActiveJob — same reasoning as
+    // the test above: this store's own activeJobMemoryStore has no entry for it, so the
+    // reservation must be resolved through Redis, not the in-memory fast path.
+    await redis.set(
+      `walletPortabilityActiveJob:${tenantId}`,
+      JSON.stringify({ jobId: 'job-A', reservedAt: Date.now() }),
+    )
+
+    // SET ... NX is refused (the key exists) — but job-A releases (or its key otherwise
+    // vanishes) in the exact window before the follow-up GET that tries to identify the holder.
+    // The old code returned `holder?.jobId` here — undefined, since holder ends up genuinely
+    // undefined — which the caller reads as "I own the slot", admitting a second concurrent job
+    // even though this job's own SET NX never actually landed. See the #73 review.
+    redis.hideKeyOnCall = { key: `walletPortabilityActiveJob:${tenantId}`, callNumber: 1 }
+    const result = await store.tryReserveActiveJob(tenantId, 'job-B')
+
+    expect(typeof result).toBe('string')
+    expect(result).not.toBe('job-B')
+  })
+
+  it('reports the slot as held, not granted, when the reclaim CAS loses and the follow-up read then also finds nothing', async () => {
+    const { store, redis } = makeReadyStore()
+    const tenantId = 'tenant-1'
+    await redis.set(
+      `walletPortabilityActiveJob:${tenantId}`,
+      JSON.stringify({ jobId: 'job-A', reservedAt: Date.now() }),
+    )
+    // job-A's own record has reached a terminal status, making the CAS-reclaim branch eligible.
+    await store.save({ ...makePendingRecord('job-A', tenantId), status: WalletPortabilityJobStatus.Completed })
+
+    // The reclaim CAS itself loses (another process's own reclaim/release already changed the
+    // key by the time this caller's eval runs), and by the time the follow-up GET tries to
+    // identify the new holder, that key has *also* already vanished. The old code returned
+    // `current?.jobId` here — undefined, since current ends up genuinely undefined — which the
+    // caller reads as "I own the slot", admitting a concurrent job even though this caller's own
+    // CAS never actually landed. See the #73 review.
+    redis.forceNextEvalMiss = true
+    redis.hideKeyOnCall = { key: `walletPortabilityActiveJob:${tenantId}`, callNumber: 2 }
+    const result = await store.tryReserveActiveJob(tenantId, 'job-B')
+
+    expect(typeof result).toBe('string')
+    expect(result).not.toBe('job-B')
+  })
+
+  it('reclaims an InProgress reservation whose record has gone stale — a crash/restart after the first status write, not just a terminal-status reclaim', async () => {
+    const { store } = makeReadyStore()
+    const tenantId = 'tenant-1'
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-1')).toBeUndefined()
+    // job-1 crashed mid-run: its own record reached InProgress (the very first write
+    // runExport/runImport makes) and nothing ever marked it terminal afterward — the process
+    // died. Before this fix, an InProgress record was treated as live regardless of age,
+    // wedging the tenant out of both export and import for the rest of the 24h TTL.
+    // makePendingRecord's fixed 2026-01-01 updatedAt is already far older than
+    // MAX_IN_PROGRESS_DURATION_MS. See the #73 review.
+    await store.save({ ...makePendingRecord('job-1', tenantId), status: WalletPortabilityJobStatus.InProgress })
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-2')).toBeUndefined()
+  })
+
+  it('does not reclaim a genuinely fresh InProgress reservation — a real job mid-run must not be treated as dead', async () => {
+    const { store } = makeReadyStore()
+    const tenantId = 'tenant-1'
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-1')).toBeUndefined()
+    await store.save({
+      ...makePendingRecord('job-1', tenantId),
+      status: WalletPortabilityJobStatus.InProgress,
+      updatedAt: new Date().toISOString(),
+    })
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-2')).toBe('job-1')
   })
 
   it('releaseActiveJob uses a single atomic compare-and-delete, not a separate GET then DEL', async () => {
