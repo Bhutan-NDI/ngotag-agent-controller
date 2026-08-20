@@ -82,6 +82,12 @@ export const setupServer = async (
       })
       .catch(next)
   })
+  // Deliberately unauthenticated and unthrottled: used only by the load balancer
+  // to determine whether the initialized HTTP server is available.
+  app.get('/health', (_req, res) => {
+    res.status(200).json({ status: 'ok' })
+  })
+
   const windowMs = Number(process.env.windowMs)
   const maxRateLimit = Number(process.env.maxRateLimit)
   const limiter = rateLimit({
@@ -89,7 +95,7 @@ export const setupServer = async (
     max: maxRateLimit, // max 800 requests per second
   })
 
-  // apply rate limiter to all requests
+  // apply rate limiter to all remaining requests
   app.use(limiter)
 
   // Note: Having used it above, redirects accordingly
