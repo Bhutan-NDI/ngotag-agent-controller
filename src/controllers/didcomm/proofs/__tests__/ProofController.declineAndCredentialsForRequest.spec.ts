@@ -43,16 +43,35 @@ const { ProofController } = await import('../ProofController')
 
 const PROOF_RECORD_ID = 'proof-record-1'
 
-const makeAgent = (overrides: { declineRequestImpl?: jest.Mock; getCredentialsForRequestImpl?: jest.Mock } = {}) => ({
+const makeAgent = (
+  overrides: {
+    declineRequestImpl?: jest.Mock
+    getCredentialsForRequestImpl?: jest.Mock
+    getByIdImpl?: jest.Mock
+  } = {},
+) => ({
   modules: {
     didcomm: {
       proofs: {
+        // Defaults to a record in request-received -- the only state declineRequest/
+        // getCredentialsForRequest actually accept -- so every test below exercises the happy
+        // path unless it explicitly overrides this. See the #76 review's state-guard finding.
+        getById:
+          overrides.getByIdImpl ??
+          (jest.fn(async () => ({
+            state: 'request-received',
+            toJSON: () => ({ id: PROOF_RECORD_ID, state: 'request-received' }),
+          })) as jest.Mock),
         declineRequest:
           overrides.declineRequestImpl ??
           (jest.fn(async () => ({ toJSON: () => ({ id: PROOF_RECORD_ID, state: 'declined' }) })) as jest.Mock),
         getCredentialsForRequest:
           overrides.getCredentialsForRequestImpl ??
           (jest.fn(async () => ({ proofFormats: { indy: [{ credentialId: 'cred-1' }] } })) as jest.Mock),
+        // Only ever asserted on with not.toHaveBeenCalled() below -- getCredentialsForRequest is
+        // a read-only lookup and must never reach either of these.
+        acceptRequest: jest.fn() as jest.Mock,
+        selectCredentialsForRequest: jest.fn() as jest.Mock,
       },
     },
   },
@@ -129,6 +148,56 @@ describe('ProofController.declineRequest', () => {
 
     expect(agent.modules.didcomm.proofs.declineRequest).toHaveBeenCalledTimes(1)
   })
+
+  it('forwards an empty-string problemReportDescription as undefined, not "" — an empty string defeats Credo\'s own default reason', async () => {
+    // #76 review: the previous truthiness guard let "" through unvalidated, and Credo's
+    // `description: options.problemReportDescription ?? 'Request declined'` does not treat ""
+    // as nullish, so the verifier received a reasonless problem report instead of the default.
+    const agent = makeAgent()
+    const controller = new ProofController()
+
+    await controller.declineRequest(makeRequest(agent), PROOF_RECORD_ID, {
+      sendProblemReport: true,
+      problemReportDescription: '',
+    })
+
+    expect(agent.modules.didcomm.proofs.declineRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ problemReportDescription: undefined }),
+    )
+  })
+
+  it('is idempotent when the record is already declined — returns the existing record instead of erroring', async () => {
+    // #76 review: Credo's own assertState throws a plain CredoError for a repeat decline (e.g. a
+    // retry after a lost response, or a double-tap), which ErrorHandlingService maps to a raw
+    // 500. A caller retrying can't distinguish "nothing to do" from a genuine failure.
+    const agent = makeAgent({
+      getByIdImpl: jest.fn(async () => ({
+        state: 'declined',
+        toJSON: () => ({ id: PROOF_RECORD_ID, state: 'declined' }),
+      })) as jest.Mock,
+    })
+    const controller = new ProofController()
+
+    const result = await controller.declineRequest(makeRequest(agent), PROOF_RECORD_ID, {})
+
+    expect(result).toEqual({ id: PROOF_RECORD_ID, state: 'declined' })
+    expect(agent.modules.didcomm.proofs.declineRequest).not.toHaveBeenCalled()
+  })
+
+  it('rejects declining a record that is not in request-received with a 4xx, not a raw 500 from Credo', async () => {
+    const agent = makeAgent({
+      getByIdImpl: jest.fn(async () => ({
+        state: 'presentation-sent',
+        toJSON: () => ({ id: PROOF_RECORD_ID, state: 'presentation-sent' }),
+      })) as jest.Mock,
+    })
+    const controller = new ProofController()
+
+    await expect(controller.declineRequest(makeRequest(agent), PROOF_RECORD_ID, {})).rejects.toThrow(
+      /presentation-sent/,
+    )
+    expect(agent.modules.didcomm.proofs.declineRequest).not.toHaveBeenCalled()
+  })
 })
 
 describe('ProofController.getCredentialsForRequest', () => {
@@ -145,11 +214,33 @@ describe('ProofController.getCredentialsForRequest', () => {
   })
 
   it('does not call acceptRequest/selectCredentialsForRequest — this is a read-only lookup', async () => {
+    // #76 review: the previous version of this test asserted on declineRequest, a method that
+    // was never reachable from getCredentialsForRequest in the first place (and isn't even
+    // defined on this test's own agent mock at the time) -- the assertion was vacuous. Asserting
+    // on the two methods the title actually names makes this test protect the invariant it claims to.
     const agent = makeAgent()
     const controller = new ProofController()
 
     await controller.getCredentialsForRequest(makeRequest(agent), PROOF_RECORD_ID)
 
-    expect(agent.modules.didcomm.proofs.declineRequest).not.toHaveBeenCalled()
+    expect(agent.modules.didcomm.proofs.acceptRequest).not.toHaveBeenCalled()
+    expect(agent.modules.didcomm.proofs.selectCredentialsForRequest).not.toHaveBeenCalled()
+  })
+
+  it('rejects listing credentials for a record that is not in request-received with a 4xx, not a raw 500 from Credo', async () => {
+    // #76 review: DidCommProofV2Protocol.getCredentialsForRequest asserts protocol version and
+    // state (request-received only) itself and throws a plain CredoError otherwise -- including
+    // immediately after a successful decline, on a verifier-side record, or a v1 record reached
+    // via this v2-only path.
+    const agent = makeAgent({
+      getByIdImpl: jest.fn(async () => ({
+        state: 'declined',
+        toJSON: () => ({ id: PROOF_RECORD_ID, state: 'declined' }),
+      })) as jest.Mock,
+    })
+    const controller = new ProofController()
+
+    await expect(controller.getCredentialsForRequest(makeRequest(agent), PROOF_RECORD_ID)).rejects.toThrow(/declined/)
+    expect(agent.modules.didcomm.proofs.getCredentialsForRequest).not.toHaveBeenCalled()
   })
 })

@@ -4,6 +4,7 @@ import { PeerDidNumAlgo, createPeerDidDocumentFromServices } from '@credo-ts/cor
 import {
   AcceptProofRequestOptions,
   DidCommProofExchangeRecordProps,
+  DidCommProofState,
   ProofsProtocolVersionType,
   DidCommRouting,
 } from '@credo-ts/didcomm'
@@ -314,18 +315,40 @@ export class ProofController extends Controller {
     @Body() body: { sendProblemReport?: boolean; problemReportDescription?: string },
   ) {
     try {
-      if (
-        body.problemReportDescription &&
-        body.problemReportDescription.length > MAX_PROBLEM_REPORT_DESCRIPTION_LENGTH
-      ) {
+      // Trimmed, and checked with a length comparison rather than truthiness -- the previous
+      // `if (body.problemReportDescription && ...)` guard let an empty string ("") through
+      // unvalidated, which also defeats Credo's own `?? 'Request declined'` default (`??` only
+      // fires on null/undefined, not ""), so the verifier received a reasonless problem report
+      // instead of the intended default text. See the #76 review.
+      const problemReportDescription = body.problemReportDescription?.trim()
+      if (problemReportDescription && problemReportDescription.length > MAX_PROBLEM_REPORT_DESCRIPTION_LENGTH) {
         throw new BadRequestError(
           `problemReportDescription must be at most ${MAX_PROBLEM_REPORT_DESCRIPTION_LENGTH} characters.`,
         )
       }
+
+      // Pre-check state before calling Credo's declineRequest: Credo's own assertState throws a
+      // plain CredoError for a repeat/late decline (already declined, or the record has moved
+      // past request-received), which ErrorHandlingService maps to a raw 500 -- a client that
+      // retries after a lost response, or double-taps Decline, can't tell "nothing to do" from a
+      // genuine failure. Narrower than the escalated P1 fix (atomic claim + outbox): this only
+      // maps the state-mismatch case to a sensible status/response, it does not close the
+      // underlying race between two concurrent callers. See the #76 review.
+      const existingProof = await request.agent.modules.didcomm.proofs.getById(proofRecordId)
+      if (existingProof.state === DidCommProofState.Declined) {
+        // Idempotent: the record is already in the terminal state this call is trying to reach.
+        return existingProof.toJSON()
+      }
+      if (existingProof.state !== DidCommProofState.RequestReceived) {
+        throw new BadRequestError(
+          `Cannot decline a proof record in state '${existingProof.state}'; expected '${DidCommProofState.RequestReceived}'.`,
+        )
+      }
+
       const proof = await request.agent.modules.didcomm.proofs.declineRequest({
         proofExchangeRecordId: proofRecordId,
         sendProblemReport: body.sendProblemReport,
-        problemReportDescription: body.problemReportDescription,
+        problemReportDescription: problemReportDescription || undefined,
       })
 
       return proof.toJSON()
@@ -346,6 +369,18 @@ export class ProofController extends Controller {
   @Get('/:proofRecordId/credentials-for-request')
   public async getCredentialsForRequest(@Request() request: Req, @Path('proofRecordId') proofRecordId: string) {
     try {
+      // Pre-check state for the same reason declineRequest does above: DidCommProofV2Protocol's
+      // getCredentialsForRequest asserts protocol version and state (request-received only)
+      // itself and throws a plain CredoError otherwise, which ErrorHandlingService maps to a raw
+      // 500 -- including immediately after a successful decline, on a verifier-side record, or on
+      // a v1 record reached via this v2-only path. See the #76 review.
+      const existingProof = await request.agent.modules.didcomm.proofs.getById(proofRecordId)
+      if (existingProof.state !== DidCommProofState.RequestReceived) {
+        throw new BadRequestError(
+          `Cannot list credentials for a proof record in state '${existingProof.state}'; expected '${DidCommProofState.RequestReceived}'.`,
+        )
+      }
+
       const credentials = await request.agent.modules.didcomm.proofs.getCredentialsForRequest({
         proofExchangeRecordId: proofRecordId,
       })
