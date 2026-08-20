@@ -40,7 +40,7 @@ const { DidController } = await import('../DidController')
 const { DidRepository } = await import('@credo-ts/core')
 
 const ALL_CREATED_DIDS = [{ did: 'did:key:one' }, { did: 'did:key:two' }, { did: 'did:peer:2.connection' }]
-const DEFAULT_TAGGED_RECORD = { did: 'did:key:one', id: 'rec-one' }
+const DEFAULT_TAGGED_RECORD = { did: 'did:key:one', id: 'rec-one', createdAt: new Date('2026-01-01T00:00:00.000Z') }
 
 const makeAgent = () => {
   const didRepository = {
@@ -79,6 +79,29 @@ describe('DidController.getDids', () => {
     expect(result).toEqual([DEFAULT_TAGGED_RECORD])
     expect(agent._didRepository.findByQuery).toHaveBeenCalledWith(agent.context, { isDefault: true })
     expect(agent.dids.getCreatedDids).not.toHaveBeenCalled()
+  })
+
+  it('sorts multiple isDefault-tagged records by createdAt descending — not an arbitrary unordered pick that could disagree with issuance', async () => {
+    // #75 review: findByQuery applies no ordering of its own (a plain Askar scan). A wallet
+    // migrated from the legacy stack can carry more than one isDefault-tagged DID, and
+    // AgentController.createW3cSelfAttestedCredential already sorts this identical query by
+    // createdAt descending before picking one. Without the same sort here, this endpoint could
+    // return the unsorted list with the superseded, earliest-tagged DID first -- the obvious way
+    // to consume a "which DID is default" endpoint -- while issuance signs under a different one.
+    const OLD_RECORD = { did: 'did:indy:old-default', id: 'rec-old', createdAt: new Date('2024-01-01T00:00:00.000Z') }
+    const RECENT_RECORD = {
+      did: 'did:indy:recent-default',
+      id: 'rec-recent',
+      createdAt: new Date('2025-06-01T00:00:00.000Z'),
+    }
+    const agent = makeAgent()
+    // Deliberately returned in earliest-first order, matching an unordered store scan.
+    agent._didRepository.findByQuery = jest.fn(async () => [OLD_RECORD, RECENT_RECORD]) as jest.Mock
+    const controller = new DidController()
+
+    const result = await controller.getDids(makeRequest(agent), true)
+
+    expect(result).toEqual([RECENT_RECORD, OLD_RECORD])
   })
 
   it('falls back to the full unfiltered list when isDefault=false', async () => {

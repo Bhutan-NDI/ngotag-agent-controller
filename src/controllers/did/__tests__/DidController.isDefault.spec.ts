@@ -235,6 +235,68 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
     expect(result).toEqual(expect.objectContaining({ isDefaultSet: false }))
   })
 
+  it('reports isDefaultSet: true even when the clearing loop itself fails — the tag write already succeeded and is what issuance actually uses', async () => {
+    // #75 review: isDefaultSet was only set true after the *whole* tag+clear sequence completed,
+    // so a failure in the clearing loop alone reported isDefaultSet: false even though the new
+    // DID was already tagged and, being the newest by createdAt, is exactly what
+    // AgentController's sorted read path picks. A client told "not set" for a request that was
+    // in fact honored has one recourse -- retry -- which anchors a second, orphaned ledger DID.
+    const agent = makeAgent({
+      didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
+    })
+    const newRecord = makeDidRecordFake('rec-new')
+    const oldRecord = makeDidRecordFake('rec-old')
+    agent._knownRecords.set(newRecord.id, newRecord)
+    agent._knownRecords.set(oldRecord.id, oldRecord)
+    agent._didRepository.findCreatedDid = jest.fn(async () => newRecord) as jest.Mock
+    agent._didRepository.findByQuery = jest.fn(async () => [oldRecord]) as jest.Mock
+    // The clearing write (oldRecord) fails; the tagging write (newRecord) already succeeded.
+    agent._didRepository.updateByIdWithLock = jest.fn(
+      async (_ctx: unknown, id: string, callback: (r: unknown) => Promise<unknown>) => {
+        if (id === oldRecord.id) {
+          throw new Error('simulated storage failure clearing the previous default')
+        }
+        return callback(agent._knownRecords.get(id))
+      },
+    ) as jest.Mock
+    const controller = new DidController()
+
+    const result = await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())
+
+    expect(newRecord.setTag).toHaveBeenCalledWith('isDefault', true)
+    expect(result).toEqual(expect.objectContaining({ isDefaultSet: true }))
+  })
+
+  it('snapshots previousDefaults BEFORE tagging the new default, not after — the after-tagging order let two concurrent isDefault writes each clear the other and converge on zero defaults', async () => {
+    // #75 review, reviewer confirming and owning it: reading previousDefaults *after* the tag
+    // write (the shape the #73 fix landed in) let two concurrent isDefault:true requests for two
+    // different DIDs each observe the other's freshly-tagged record as "previous" and clear it --
+    // both converging on ZERO tagged defaults, worse than the pre-#73 order (which at least
+    // converged on a single winner). Snapshotting first keeps the #73 fix's "worst case is two
+    // defaults, never zero" property while closing this race: this request's own view of
+    // "previous" can no longer include a default a concurrent request tags after this read.
+    const agent = makeAgent({
+      didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
+    })
+    const newRecord = makeDidRecordFake('rec-new')
+    const oldRecord = makeDidRecordFake('rec-old')
+    agent._knownRecords.set(newRecord.id, newRecord)
+    agent._knownRecords.set(oldRecord.id, oldRecord)
+    agent._didRepository.findCreatedDid = jest.fn(async () => newRecord) as jest.Mock
+    agent._didRepository.findByQuery = jest.fn(async () => [oldRecord]) as jest.Mock
+    const controller = new DidController()
+
+    await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())
+
+    const findByQueryOrder = (agent._didRepository.findByQuery as jest.Mock).mock.invocationCallOrder[0]
+    const updateCalls = (agent._didRepository.updateByIdWithLock as jest.Mock).mock.calls as Array<[unknown, string]>
+    const tagNewRecordCallIndex = updateCalls.findIndex(([, id]) => id === newRecord.id)
+    const tagNewRecordOrder = (agent._didRepository.updateByIdWithLock as jest.Mock).mock.invocationCallOrder[
+      tagNewRecordCallIndex
+    ]
+    expect(findByQueryOrder).toBeLessThan(tagNewRecordOrder)
+  })
+
   it('does not re-clear the new default DID itself if it already appears in the previous-defaults query', async () => {
     const agent = makeAgent({
       didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },

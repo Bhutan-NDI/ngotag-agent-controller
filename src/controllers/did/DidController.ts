@@ -178,6 +178,14 @@ export class DidController extends Controller {
           if (!newDefaultRecord) {
             throw new InternalServerError(`isDefault was requested but no DidRecord could be found for ${createdDid}`)
           }
+          // Snapshotted BEFORE the tag write below, not after -- reading it after (the previous
+          // fix's own shape) let two concurrent isDefault:true writes for two different DIDs each
+          // see the other's freshly-tagged record as "previous" and clear it, converging on ZERO
+          // tagged defaults (worse than the pre-#73 clear-then-tag order, which at least
+          // converged on a single winner). Snapshotting first keeps that race's worst case at
+          // "two defaults" -- this request's own view of "previous" can no longer include a
+          // default a *concurrent* request tags after this read. See the #75 review.
+          const previousDefaults = await didRepository.findByQuery(request.agent.context, { isDefault: true })
           // Tag the new default FIRST, then clear the previous ones -- not the other order. Both
           // writes are separate updateByIdWithLock calls (Credo's Repository API has no
           // cross-record transaction to lean on instead), so either order can still fail partway
@@ -193,7 +201,16 @@ export class DidController extends Controller {
             record.setTag('isDefault', true)
             return record
           })
-          const previousDefaults = await didRepository.findByQuery(request.agent.context, { isDefault: true })
+          // Set as soon as the write above succeeds, not after the whole tag+clear sequence -- a
+          // failure in the clearing loop below (thrown, caught by the outer catch) used to report
+          // isDefaultSet: false even though the new DID was already tagged and, being the newest
+          // by createdAt, is exactly what AgentController's sorted read path picks. A client told
+          // "not set" for a request that was in fact honored has one recourse -- retry
+          // POST /dids/write -- which for did:indy/bcovrin/indicio anchors a second, orphaned NYM
+          // on the ledger. The catch block below only downgrades this to false when it is still
+          // undefined, so a clearing-loop failure now stays a logged warning about stale extra
+          // tags, which the read path already tolerates. See the #75 review.
+          isDefaultSet = true
           for (const previousDefault of previousDefaults) {
             if (previousDefault.id !== newDefaultRecord.id) {
               await didRepository.updateByIdWithLock(request.agent.context, previousDefault.id, async (record) => {
@@ -202,13 +219,12 @@ export class DidController extends Controller {
               })
             }
           }
-          isDefaultSet = true
         }
       } catch (bookkeepingError) {
         this.agent.config.logger.warn(
           `[DidController] isDefault bookkeeping failed for a newly created DID — the DID itself was created successfully and is still returned below: ${bookkeepingError}`,
         )
-        if (createDidOptions.isDefault) {
+        if (createDidOptions.isDefault && undefined === isDefaultSet) {
           isDefaultSet = false
         }
       }
@@ -809,7 +825,16 @@ export class DidController extends Controller {
     try {
       if (isDefault) {
         const didRepository = request.agent.dependencyManager.resolve(DidRepository)
-        return await didRepository.findByQuery(request.agent.context, { isDefault: true })
+        // Sorted the same way AgentController.createW3cSelfAttestedCredential already sorts this
+        // identical query -- findByQuery applies no ordering of its own (a plain Askar scan), so
+        // an unordered result let this read path disagree with what issuance actually uses for a
+        // wallet migrated with more than one isDefault-tagged DID: issuance picks the most
+        // recently tagged (sorted), while this endpoint returned the whole unsorted list with the
+        // superseded, earliest-tagged DID at [0] -- the obvious way to consume a "which DID is
+        // default" endpoint. See the #75 review.
+        return (await didRepository.findByQuery(request.agent.context, { isDefault: true })).sort(
+          (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+        )
       }
       const createdDids = await request.agent.dids.getCreatedDids()
       return createdDids
