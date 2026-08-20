@@ -479,6 +479,46 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
     nowSpy.mockRestore()
   })
 
+  it('reclaims a Pending reservation once its grace period has elapsed — a crash/restart between the Pending save and the first InProgress write', async () => {
+    // #73 review: the InProgress staleness check only closed half the 24h-wedge bug -- a
+    // crash/restart between exportWallet/importWallet's initial Pending save and runExport/
+    // runImport's first setJobStatus(InProgress) call left a Pending record that read as "still
+    // running" unconditionally, for the whole 24h JOB_TTL_SECONDS.
+    const nowSpy = jest.spyOn(Date, 'now')
+    const startedAt = 1_000_000
+    nowSpy.mockReturnValue(startedAt)
+    const { store } = makeReadyStore()
+    const tenantId = 'tenant-1'
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-A')).toBeUndefined()
+    // job-A's own record reaches Pending -- the very first write -- but the process dies before
+    // ever reaching the first setJobStatus(InProgress) call.
+    await store.save(makePendingRecord('job-A', tenantId))
+
+    // Past RESERVATION_GRACE_PERIOD_MS (15s) -- comfortably past Pending's one-save()-round-trip
+    // legitimate lifetime.
+    nowSpy.mockReturnValue(startedAt + 60_000)
+    expect(await store.tryReserveActiveJob(tenantId, 'job-B')).toBeUndefined()
+
+    nowSpy.mockRestore()
+  })
+
+  it('does not reclaim a genuinely fresh Pending reservation — the near-simultaneous-request race this shares with the record-less case', async () => {
+    const nowSpy = jest.spyOn(Date, 'now')
+    const startedAt = 1_000_000
+    nowSpy.mockReturnValue(startedAt)
+    const { store } = makeReadyStore()
+    const tenantId = 'tenant-1'
+
+    expect(await store.tryReserveActiveJob(tenantId, 'job-A')).toBeUndefined()
+    await store.save(makePendingRecord('job-A', tenantId))
+
+    nowSpy.mockReturnValue(startedAt + 1_000) // well within the grace period
+    expect(await store.tryReserveActiveJob(tenantId, 'job-B')).toBe('job-A')
+
+    nowSpy.mockRestore()
+  })
+
   it('treats a failed Redis read as "still active" — a transient timeout must never be mistaken for a dead job', async () => {
     const { store, redis } = makeReadyStore()
     const tenantId = 'tenant-1'

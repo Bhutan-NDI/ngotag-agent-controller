@@ -16,7 +16,7 @@ import { pipeline } from 'stream/promises'
 import { v4 as uuid } from 'uuid'
 import { createGunzip, createGzip } from 'zlib'
 
-import { WalletPortabilityJobStore } from './WalletPortabilityJobStore'
+import { HEARTBEAT_INTERVAL_MS, WalletPortabilityJobStore } from './WalletPortabilityJobStore'
 import {
   WalletPortabilityJobConflictError,
   WalletPortabilityJobStatus,
@@ -187,12 +187,14 @@ export class WalletPortabilityService {
     // service creates (`${jobId}.db`, `${jobId}.db.gz`) left those sidecars — and the mkdtemp
     // directory itself — behind indefinitely.
     let workDir: string | undefined
+    let heartbeat: NodeJS.Timeout | undefined
 
     try {
       // Inside the try now (was previously outside it): if this itself throws — e.g. Redis is
       // flapping — the job must land in the catch below and be marked Failed, not silently
       // stay at Pending forever.
       await this.setJobStatus(jobId, tenantId, WalletPortabilityJobType.Export, WalletPortabilityJobStatus.InProgress)
+      heartbeat = this.startHeartbeat(jobId, tenantId, WalletPortabilityJobType.Export)
 
       workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-export-'))
       tempDbPath = path.join(workDir, `${jobId}.db`)
@@ -257,6 +259,11 @@ export class WalletPortabilityService {
         EXPORT_FAILED_ERROR_CODE,
       )
     } finally {
+      // Stop the heartbeat before anything else in this block -- no point touching updatedAt
+      // again once cleanup has started.
+      if (heartbeat) {
+        clearInterval(heartbeat)
+      }
       // Guaranteed cleanup regardless of success/failure — the export key and the plaintext
       // wallet artifact must never linger on local disk. Removing the whole workDir (rather
       // than the individual .db/.db.gz paths) also catches Askar's -shm/-wal sidecars and the
@@ -359,6 +366,30 @@ export class WalletPortabilityService {
       // if this particular call doesn't pass one explicitly (export callers never do).
       backupProfile: backupProfile ?? existing?.backupProfile,
     })
+  }
+
+  // Touches the job record's updatedAt on HEARTBEAT_INTERVAL_MS while runExport/runImport is
+  // still working, so WalletPortabilityJobStore's MAX_IN_PROGRESS_DURATION_MS reclaim genuinely
+  // means "this process stopped heartbeating", not "this job started more than N ago" -- a
+  // real, unbounded-duration transfer (up to MAX_DOWNLOAD_BYTES/MAX_DECOMPRESSED_BYTES) must not
+  // be falsely reclaimed mid-run, which would admit a second concurrent job on the same tenant
+  // profile. See the #73 review. Callers must clearInterval() the returned handle in their own
+  // finally block regardless of outcome.
+  private startHeartbeat(jobId: string, tenantId: string, type: WalletPortabilityJobType): NodeJS.Timeout {
+    return setInterval(() => {
+      this.jobStore
+        .get(jobId)
+        .then((job) => {
+          // Guard against resurrecting a stale InProgress status: a tick already in flight when
+          // the main flow's terminal write (Completed/Failed) lands must not overwrite it.
+          if (job?.status === WalletPortabilityJobStatus.InProgress) {
+            return this.setJobStatus(jobId, tenantId, type, WalletPortabilityJobStatus.InProgress)
+          }
+        })
+        .catch((error) => {
+          this.logger.error(`[WalletPortabilityService] heartbeat failed for job ${jobId}: ${error}`)
+        })
+    }, HEARTBEAT_INTERVAL_MS)
   }
 
   // ---------------------------------------------------------------------------
@@ -478,12 +509,14 @@ export class WalletPortabilityService {
     // explicit paths this service creates left those sidecars — which hold the imported tenant
     // wallet's contents — and the mkdtemp directory itself behind indefinitely.
     let workDir: string | undefined
+    let heartbeat: NodeJS.Timeout | undefined
 
     try {
       // Inside the try now (was previously outside it) — same reasoning as runExport: if this
       // itself throws, the job must land in the catch below and be marked Failed, not silently
       // stay at Pending forever.
       await this.setJobStatus(jobId, tenantId, WalletPortabilityJobType.Import, WalletPortabilityJobStatus.InProgress)
+      heartbeat = this.startHeartbeat(jobId, tenantId, WalletPortabilityJobType.Import)
 
       workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-import-'))
       gzipPath = path.join(workDir, `${jobId}.db.gz`)
@@ -638,6 +671,11 @@ export class WalletPortabilityService {
         backupExists ? backupProfile : undefined,
       )
     } finally {
+      // Stop the heartbeat before anything else in this block, same reasoning as runExport's
+      // identical finally.
+      if (heartbeat) {
+        clearInterval(heartbeat)
+      }
       if (importedStore) {
         await importedStore.close().catch(() => undefined)
       }
@@ -708,7 +746,29 @@ export class WalletPortabilityService {
     const hash = createHash('sha256')
     const dest = createWriteStream(destPath)
     let bytesRead = 0
+
+    // node-fetch@2's own `timeout` option (passed to fetch() above) only covers time-to-first-byte
+    // -- it's cleared the instant response headers arrive (verified against the installed
+    // node-fetch@2.7.0 source: the request timer is armed on the 'socket' event and cleared in
+    // the 'response' handler; the only body-level timer lives inside Body.consumeBody(), which
+    // this code deliberately bypasses by streaming response.body directly). Without an inactivity
+    // timer here, a stalled body (S3/an LB returns headers, then the socket goes half-open) never
+    // rejects: pipeline() below hangs forever, runImport/runExport's finally never runs, the job
+    // stays InProgress indefinitely, and the mkdtemp workDir + open write stream leak for the life
+    // of the process. Reset on every 'data' event so this bounds inactivity, not total transfer
+    // time -- a large (near MAX_DOWNLOAD_BYTES) but genuinely progressing download must not be
+    // killed just for taking a while. See the #73 review.
+    let inactivityTimer: NodeJS.Timeout | undefined
+    const resetInactivityTimer = (): void => {
+      if (inactivityTimer) clearTimeout(inactivityTimer)
+      inactivityTimer = setTimeout(() => {
+        body.destroy(new Error(`Export artifact download stalled: no data received for ${DOWNLOAD_TIMEOUT_MS}ms`))
+      }, DOWNLOAD_TIMEOUT_MS)
+    }
+    resetInactivityTimer()
+
     body.on('data', (chunk: Buffer) => {
+      resetInactivityTimer()
       bytesRead += chunk.length
       if (bytesRead > MAX_DOWNLOAD_BYTES) {
         // Aborts the stream; pipeline() below rejects with this same error, which propagates up
@@ -718,7 +778,11 @@ export class WalletPortabilityService {
       }
       hash.update(chunk)
     })
-    await pipeline(body, dest)
+    try {
+      await pipeline(body, dest)
+    } finally {
+      if (inactivityTimer) clearTimeout(inactivityTimer)
+    }
     return hash.digest('hex')
   }
 

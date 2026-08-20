@@ -115,6 +115,7 @@ jest.unstable_mockModule('node-fetch', () => ({
 }))
 
 const { WalletPortabilityService } = await import('../WalletPortabilityService')
+const { HEARTBEAT_INTERVAL_MS } = await import('../WalletPortabilityJobStore')
 const { WalletPortabilityJobStatus, WalletPortabilityJobType } = await import('../WalletPortabilityTypes')
 
 // ---------------------------------------------------------------------------
@@ -289,6 +290,89 @@ describe('WalletPortabilityService — exportWallet', () => {
     const job = await service.getJobStatus(jobId)
     expect(job?.downloadUrl).toBe('https://test-wallet-export-bucket.s3.amazonaws.com/signed-url')
     expect(job?.checksum).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('startHeartbeat touches an InProgress job record on HEARTBEAT_INTERVAL_MS — this is what makes the reclaim staleness bound a real lease, not just "job started more than N ago"', async () => {
+    // #73 review: a bare "InProgress record older than N" check bounds total job duration, not
+    // liveness -- a genuinely long-running transfer (up to MAX_DOWNLOAD_BYTES/MAX_DECOMPRESSED_BYTES,
+    // 2 GiB, no time cap of its own) could get falsely reclaimed mid-run, admitting a second
+    // concurrent job on the same tenant profile. The heartbeat re-saves the record on an interval
+    // so the reclaim bound tracks "stopped heartbeating", not "has been running a while".
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask'] })
+    try {
+      const service = new WalletPortabilityService(makeLogger() as never)
+      const jobId = 'heartbeat-test-job'
+      const initialUpdatedAt = new Date(0).toISOString()
+
+      // Seed an InProgress record directly, the same shape setJobStatus(..., InProgress) itself
+      // produces -- avoids entangling this test with the rest of runExport's async flow (mkdtemp,
+      // withTenantAgent, S3) under fake timers.
+      const jobStore = (
+        service as unknown as {
+          jobStore: {
+            get: (id: string) => Promise<Record<string, unknown> | undefined>
+            save: (record: unknown) => Promise<void>
+          }
+        }
+      ).jobStore
+      await (
+        service as unknown as {
+          setJobStatus: (jobId: string, tenantId: string, type: string, status: string) => Promise<void>
+        }
+      ).setJobStatus(jobId, TENANT_ID, WalletPortabilityJobType.Export, WalletPortabilityJobStatus.InProgress)
+      // Force updatedAt back to a known-old value -- setJobStatus above always stamps "now".
+      const existing = await jobStore.get(jobId)
+      await jobStore.save({ ...existing, updatedAt: initialUpdatedAt })
+
+      const heartbeat = (
+        service as unknown as {
+          startHeartbeat: (jobId: string, tenantId: string, type: string) => NodeJS.Timeout
+        }
+      ).startHeartbeat(jobId, TENANT_ID, WalletPortabilityJobType.Export)
+
+      // One tick -- the heartbeat's own internal jobStore.get()/setJobStatus() round trip is
+      // real async work even under fake timers, so flush microtasks after advancing.
+      await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
+
+      const job = await service.getJobStatus(jobId)
+      expect(job?.updatedAt).not.toBe(initialUpdatedAt)
+      expect(new Date(job?.updatedAt as string).getTime()).toBeGreaterThan(new Date(initialUpdatedAt).getTime())
+
+      clearInterval(heartbeat)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('startHeartbeat does not resurrect a stale status once the job has already reached a terminal state', async () => {
+    // Guards the narrow race the implementation's own comment calls out: a tick already in
+    // flight when the main flow's terminal write (Completed/Failed) lands must not overwrite it.
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask'] })
+    try {
+      const service = new WalletPortabilityService(makeLogger() as never)
+      const jobId = 'heartbeat-terminal-test-job'
+
+      await (
+        service as unknown as {
+          setJobStatus: (jobId: string, tenantId: string, type: string, status: string) => Promise<void>
+        }
+      ).setJobStatus(jobId, TENANT_ID, WalletPortabilityJobType.Export, WalletPortabilityJobStatus.Completed)
+
+      const heartbeat = (
+        service as unknown as {
+          startHeartbeat: (jobId: string, tenantId: string, type: string) => NodeJS.Timeout
+        }
+      ).startHeartbeat(jobId, TENANT_ID, WalletPortabilityJobType.Export)
+
+      await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
+
+      const job = await service.getJobStatus(jobId)
+      expect(job?.status).toBe(WalletPortabilityJobStatus.Completed)
+
+      clearInterval(heartbeat)
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it('on failure: reaches Failed with a sanitized error code (not the raw exception), logs the real error server-side, and never uploads a partial artifact', async () => {
@@ -516,6 +600,47 @@ describe('WalletPortabilityService — importWallet', () => {
     ).rejects.toThrow('Decompressed export artifact exceeds the 100-byte cap')
 
     await fsPromises.rm(workDir, { recursive: true, force: true })
+  })
+
+  it("a stalled download body eventually rejects instead of hanging forever — node-fetch@2's own timeout only covers time-to-first-byte", async () => {
+    // #73 review, verified against the installed node-fetch@2.7.0 source: the `timeout` option
+    // passed to fetch() is armed on the request's 'socket' event and cleared the instant response
+    // headers arrive -- it does not cover a stall in the response *body* (an S3/LB connection
+    // that delivers headers, then goes half-open). downloadAndChecksum streams the body directly
+    // rather than using node-fetch's own buffered .text()/.json() (the only path with a body-level
+    // timer), so without its own inactivity timer, a stalled body left runImport hanging forever:
+    // no catch, no finally, no released reservation, and now (see the heartbeat fix above) a
+    // second job admitted on the same tenant once the lease expired while this one still held its
+    // handles.
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask'] })
+    try {
+      // Delivers one chunk, then never pushes more and never ends -- models the socket going
+      // half-open after some bytes, not a connection that never responds at all (that case is
+      // already covered by node-fetch's own time-to-first-byte timeout).
+      const stalledBody = new Readable({ read() {} })
+      stalledBody.push(Buffer.from('partial-bytes-then-the-socket-goes-half-open'))
+      fetchMock.mockImplementation(async () => ({ ok: true, status: 200, body: stalledBody }))
+
+      const service = new WalletPortabilityService(makeLogger() as never)
+      const workDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'stalled-download-test-'))
+      const destPath = path.join(workDir, 'output.db.gz')
+
+      const downloadPromise = (
+        service as unknown as { downloadAndChecksum(url: string, destPath: string): Promise<string> }
+      ).downloadAndChecksum('https://test-wallet-export-bucket.s3.amazonaws.com/x.db.gz', destPath)
+      // Attached defensively so an unhandled-rejection warning can't fire regardless of exactly
+      // when the fake-timer advance below settles this promise relative to the assertion.
+      downloadPromise.catch(() => undefined)
+
+      // DOWNLOAD_TIMEOUT_MS (5 minutes) -- the inactivity timer's own bound.
+      await jest.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+      await expect(downloadPromise).rejects.toThrow(/stalled/)
+
+      await fsPromises.rm(workDir, { recursive: true, force: true })
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it('cleans up the whole workDir on success — not just the two files it used to remove individually', async () => {

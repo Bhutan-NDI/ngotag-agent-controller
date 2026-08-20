@@ -38,11 +38,21 @@ const RESERVATION_GRACE_PERIOD_MS = 15 * 1000
 // record-based branch below returns true for the rest of the job's 24h TTL, wedging the tenant
 // out of every future export AND import for a full day with no way to clear it (see the #73
 // review: a container rolled ~30s into a 3-minute export leaves the tenant 409ing on both
-// endpoints until the TTL expires). No real export/import run anywhere near this long; treating
-// an InProgress record whose own updatedAt is older than this as dead lets a genuinely stuck job
-// self-heal on the next request without giving a real in-flight job (seconds to minutes) any
-// realistic chance of being reclaimed out from under it.
-const MAX_IN_PROGRESS_DURATION_MS = 30 * 60 * 1000
+// endpoints until the TTL expires).
+//
+// This is a real lease, not just "job started more than N ago": WalletPortabilityService's
+// runExport/runImport re-save the record on this interval for the duration of the run (see
+// HEARTBEAT_INTERVAL_MS), touching updatedAt each time. A second review pass on the first
+// version of this fix (a bare "30 minutes since InProgress was first written" check) correctly
+// pointed out that MAX_DOWNLOAD_BYTES/MAX_DECOMPRESSED_BYTES explicitly permit a 2 GiB transfer
+// with no time cap of its own — a genuinely long-running large import could cross a fixed
+// duration threshold and get falsely reclaimed, admitting a second concurrent job on the same
+// tenant profile. Exported so the service can share the exact interval its heartbeat runs on.
+export const HEARTBEAT_INTERVAL_MS = 30 * 1000
+// Missing this many consecutive heartbeats (with headroom for one slow/delayed tick) means the
+// process genuinely stopped, not just "hasn't finished yet" — independent of how long the job
+// has been running in total.
+const MAX_IN_PROGRESS_DURATION_MS = 3 * HEARTBEAT_INTERVAL_MS
 
 // Placeholder "holder" returned when Redis has already told tryReserveActiveJob the slot is taken
 // (SET ... NX refused) but a subsequent round trip to identify who holds it then fails. Denying
@@ -406,7 +416,16 @@ export class WalletPortabilityJobStore {
       return true
     }
     if (record) {
-      if (record.status === WalletPortabilityJobStatus.Pending) return true
+      if (record.status === WalletPortabilityJobStatus.Pending) {
+        // Pending's legitimate lifetime is one save() round trip -- runExport/runImport's first
+        // act after writing it is setJobStatus(InProgress) -- so the same grace period the
+        // record-less case below uses is a generous bound here too. Without this, a crash/roll
+        // between the Pending save and the first InProgress write left a Pending record that
+        // read as "still running" for the whole 24h JOB_TTL_SECONDS, wedging the tenant out of
+        // every export AND import for a full day -- the exact failure mode the InProgress
+        // staleness check exists to close, one status earlier. See the #73 review.
+        return Date.now() - reservation.reservedAt <= RESERVATION_GRACE_PERIOD_MS
+      }
       if (record.status === WalletPortabilityJobStatus.InProgress) {
         // See MAX_IN_PROGRESS_DURATION_MS above — an InProgress record this old belongs to a
         // job whose process died without ever reaching a terminal setJobStatus call.
