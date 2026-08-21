@@ -133,6 +133,14 @@ export class WalletPortabilityService {
       throw new WalletPortabilityJobConflictError(tenantId, conflictingJobId)
     }
 
+    // Started before the Pending save lands below, not after InProgress is reached — see
+    // WalletPortabilityJobStore's touchIfActive/isReservationStillActive for why: Pending now
+    // relies on the exact same refreshed lease InProgress already did, so it has to start ticking
+    // before there's even a Pending record to refresh. Passed into runExport rather than started
+    // there, since by the time runExport's own try block runs, this Pending window has already
+    // passed. See the #73 review.
+    const heartbeat = this.startHeartbeat(jobId)
+
     const now = new Date().toISOString()
     await this.jobStore.save({
       jobId,
@@ -149,7 +157,7 @@ export class WalletPortabilityService {
     // mid-outage), that rejection propagates out to this .catch() instead, and without this the
     // job would otherwise be stranded at Pending forever (the original bug: this handler only
     // logged, never recorded a terminal status).
-    this.runExport(agent, tenantId, jobId, passKey).catch((error) => {
+    this.runExport(agent, tenantId, jobId, passKey, heartbeat).catch((error) => {
       this.logger.error(`[WalletPortabilityService] export job ${jobId} failed to start: ${error}`)
       this.setJobStatus(
         jobId,
@@ -176,6 +184,7 @@ export class WalletPortabilityService {
     tenantId: string,
     jobId: string,
     passKey: string,
+    heartbeat: NodeJS.Timeout,
   ): Promise<void> {
     let tempStore: Store | undefined
     let tempDbPath: string | undefined
@@ -187,14 +196,12 @@ export class WalletPortabilityService {
     // service creates (`${jobId}.db`, `${jobId}.db.gz`) left those sidecars — and the mkdtemp
     // directory itself — behind indefinitely.
     let workDir: string | undefined
-    let heartbeat: NodeJS.Timeout | undefined
 
     try {
       // Inside the try now (was previously outside it): if this itself throws — e.g. Redis is
       // flapping — the job must land in the catch below and be marked Failed, not silently
       // stay at Pending forever.
       await this.setJobStatus(jobId, tenantId, WalletPortabilityJobType.Export, WalletPortabilityJobStatus.InProgress)
-      heartbeat = this.startHeartbeat(jobId, tenantId, WalletPortabilityJobType.Export)
 
       workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-export-'))
       tempDbPath = path.join(workDir, `${jobId}.db`)
@@ -260,10 +267,9 @@ export class WalletPortabilityService {
       )
     } finally {
       // Stop the heartbeat before anything else in this block -- no point touching updatedAt
-      // again once cleanup has started.
-      if (heartbeat) {
-        clearInterval(heartbeat)
-      }
+      // again once cleanup has started. Always defined now — see exportWallet, which starts it
+      // before the Pending save and passes it in, rather than this function starting its own.
+      clearInterval(heartbeat)
       // Guaranteed cleanup regardless of success/failure — the export key and the plaintext
       // wallet artifact must never linger on local disk. Removing the whole workDir (rather
       // than the individual .db/.db.gz paths) also catches Askar's -shm/-wal sidecars and the
@@ -368,27 +374,25 @@ export class WalletPortabilityService {
     })
   }
 
-  // Touches the job record's updatedAt on HEARTBEAT_INTERVAL_MS while runExport/runImport is
-  // still working, so WalletPortabilityJobStore's MAX_IN_PROGRESS_DURATION_MS reclaim genuinely
-  // means "this process stopped heartbeating", not "this job started more than N ago" -- a
-  // real, unbounded-duration transfer (up to MAX_DOWNLOAD_BYTES/MAX_DECOMPRESSED_BYTES) must not
-  // be falsely reclaimed mid-run, which would admit a second concurrent job on the same tenant
-  // profile. See the #73 review. Callers must clearInterval() the returned handle in their own
-  // finally block regardless of outcome.
-  private startHeartbeat(jobId: string, tenantId: string, type: WalletPortabilityJobType): NodeJS.Timeout {
+  // Touches the job record's updatedAt on HEARTBEAT_INTERVAL_MS while its job is still
+  // Pending/InProgress, so WalletPortabilityJobStore's MAX_IN_PROGRESS_DURATION_MS reclaim
+  // genuinely means "this process stopped heartbeating", not "this job started more than N ago"
+  // -- a real, unbounded-duration transfer (up to MAX_DOWNLOAD_BYTES/MAX_DECOMPRESSED_BYTES) must
+  // not be falsely reclaimed mid-run, which would admit a second concurrent job on the same
+  // tenant profile. See the #73 review. Callers must clearInterval() the returned handle in
+  // their own finally block regardless of outcome.
+  //
+  // Delegates the actual check-and-write to jobStore.touchIfActive rather than doing its own
+  // get() + setJobStatus(): that two-round-trip shape left a window where a tick already in
+  // flight when the main flow's terminal write (Completed/Failed) landed would silently clobber
+  // it back to non-terminal. touchIfActive does the check and the write as one atomic operation,
+  // closing that window outright rather than narrowing it with an extra re-check. See the #73
+  // review.
+  private startHeartbeat(jobId: string): NodeJS.Timeout {
     return setInterval(() => {
-      this.jobStore
-        .get(jobId)
-        .then((job) => {
-          // Guard against resurrecting a stale InProgress status: a tick already in flight when
-          // the main flow's terminal write (Completed/Failed) lands must not overwrite it.
-          if (job?.status === WalletPortabilityJobStatus.InProgress) {
-            return this.setJobStatus(jobId, tenantId, type, WalletPortabilityJobStatus.InProgress)
-          }
-        })
-        .catch((error) => {
-          this.logger.error(`[WalletPortabilityService] heartbeat failed for job ${jobId}: ${error}`)
-        })
+      this.jobStore.touchIfActive(jobId).catch((error) => {
+        this.logger.error(`[WalletPortabilityService] heartbeat failed for job ${jobId}: ${error}`)
+      })
     }, HEARTBEAT_INTERVAL_MS)
   }
 
@@ -423,6 +427,12 @@ export class WalletPortabilityService {
       throw new WalletPortabilityJobConflictError(tenantId, conflictingJobId)
     }
 
+    // See exportWallet's identical reasoning — started before the Pending save below, not after
+    // InProgress is reached, so Pending gets the same refreshed lease InProgress already relies
+    // on. Passed into runImport rather than started there, since by the time runImport's own try
+    // block runs, this Pending window has already passed.
+    const heartbeat = this.startHeartbeat(jobId)
+
     const now = new Date().toISOString()
     await this.jobStore.save({
       jobId,
@@ -438,7 +448,7 @@ export class WalletPortabilityService {
     // exportWallet's identical handler: if setJobStatus(InProgress) itself is what threw, the job
     // would otherwise be stranded at Pending *and* the tenant's active-job slot would never be
     // released, wedging every future export/import for this tenant until the 24h TTL self-clears.
-    this.runImport(agent, tenantId, jobId, exportUrl, passKey, checksum).catch((error) => {
+    this.runImport(agent, tenantId, jobId, exportUrl, passKey, checksum, heartbeat).catch((error) => {
       this.logger.error(`[WalletPortabilityService] import job ${jobId} failed to start: ${error}`)
       this.setJobStatus(
         jobId,
@@ -484,6 +494,7 @@ export class WalletPortabilityService {
     exportUrl: string,
     passKey: string,
     checksum: string,
+    heartbeat: NodeJS.Timeout,
   ): Promise<void> {
     let importedStore: Store | undefined
     let gzipPath: string | undefined
@@ -509,14 +520,12 @@ export class WalletPortabilityService {
     // explicit paths this service creates left those sidecars — which hold the imported tenant
     // wallet's contents — and the mkdtemp directory itself behind indefinitely.
     let workDir: string | undefined
-    let heartbeat: NodeJS.Timeout | undefined
 
     try {
       // Inside the try now (was previously outside it) — same reasoning as runExport: if this
       // itself throws, the job must land in the catch below and be marked Failed, not silently
       // stay at Pending forever.
       await this.setJobStatus(jobId, tenantId, WalletPortabilityJobType.Import, WalletPortabilityJobStatus.InProgress)
-      heartbeat = this.startHeartbeat(jobId, tenantId, WalletPortabilityJobType.Import)
 
       workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-import-'))
       gzipPath = path.join(workDir, `${jobId}.db.gz`)
@@ -600,6 +609,16 @@ export class WalletPortabilityService {
         // constraint), so the practical effect was a false "manual intervention required" alert
         // for an import that had, in fact, already succeeded.
         renamedAway = false
+        // Cleared at the same point, for the same reason: from this instant, whatever sits at
+        // backupProfile is a stale pre-import copy, not the tenant's current data. A later throw
+        // in this same try (e.g. withTenantAgent's own endSession() rejecting under load) used to
+        // still report this Failed record with backupExists left true, so an operator following
+        // the documented recovery path ("the tenant's real data may still be at profile X") would
+        // rename the stale backup back over the successfully-imported profile, destroying it. The
+        // -pre-import-<jobId> profile itself is still left in the store either way -- this only
+        // stops it being named in a Failed record as though it were the recovery path. See the
+        // #73 review.
+        backupExists = false
       })
 
       const existing = await this.jobStore.get(jobId)
@@ -672,10 +691,9 @@ export class WalletPortabilityService {
       )
     } finally {
       // Stop the heartbeat before anything else in this block, same reasoning as runExport's
-      // identical finally.
-      if (heartbeat) {
-        clearInterval(heartbeat)
-      }
+      // identical finally. Always defined now — see importWallet, which starts it before the
+      // Pending save and passes it in, rather than this function starting its own.
+      clearInterval(heartbeat)
       if (importedStore) {
         await importedStore.close().catch(() => undefined)
       }
@@ -737,6 +755,17 @@ export class WalletPortabilityService {
 
     const response = await fetch(url, { redirect: 'error', timeout: DOWNLOAD_TIMEOUT_MS })
     if (!response.ok || !response.body) {
+      // An HTTP-error response (a 403/404 from S3, typically with a small XML error body) still
+      // has bytes to consume -- abandoning it unread without draining or destroying it can leave
+      // its underlying keep-alive socket stuck open rather than freed back to node-fetch's
+      // connection pool, since the pool doesn't consider a socket free for reuse until the body
+      // is fully consumed or explicitly destroyed. destroy() covers a stream that never emits
+      // further data on its own; resume() drains one that's still flowing. See the #73 review.
+      if (response.body) {
+        const errorBody = response.body as unknown as Readable
+        errorBody.destroy()
+        errorBody.resume()
+      }
       throw new Error(`Failed to download export artifact: HTTP ${response.status}`)
     }
     // node-fetch v2's Response.body is a real Node Readable at runtime (hence the existing

@@ -52,6 +52,21 @@
  *      with RELEASE_IF_OWNED_SCRIPT, a single atomic compare-and-delete (matching the shape of the
  *      reclaim script's own compare-and-swap).
  *
+ * A third review pass found the Pending bound itself was wall-clock, not lease-based: it measured
+ * staleness from reservation.reservedAt (a value captured once, at reserve time, and never
+ * refreshed) rather than from anything actually kept alive while the job runs. A live job stalled
+ * on scheduling delay (a GC pause, an event-loop backlog) before ever reaching its first save()
+ * could still have its reservation reclaimed once that fixed window elapsed. WalletPortability
+ * Service now starts the heartbeat (jobStore.touchIfActive) *before* the Pending save, not only
+ * once InProgress is reached, so Pending gets the same refreshed lease InProgress already relied
+ * on — isReservationStillActive now applies the one MAX_IN_PROGRESS_DURATION_MS bound to both
+ * Pending and InProgress records alike, checked against the record's own (now heartbeat-refreshed)
+ * updatedAt rather than the reservation's fixed reservedAt. makePendingRecord's default updatedAt
+ * below tracks Date.now() (not new Date(), which jest.spyOn(Date, 'now') doesn't intercept) so it
+ * reflects "freshly saved right now" by default, matching a real Pending record's own timestamp —
+ * tests that specifically want a stale record (see the InProgress-staleness test below) pass an
+ * explicit old updatedAt instead of relying on the default.
+ *
  * Also covers two follow-up fixes to the same >= tie-break:
  *   1. The tie-break itself could resurface a stale memory entry in the *mirror* direction: once
  *      Redis takes over a jobId again (a write lands there successfully after an earlier write
@@ -92,6 +107,10 @@ class FakeRedisClient extends EventEmitter {
   // key's value actually still matches — models a genuine race where a different process's own
   // reclaim/release already changed the key by the time this caller's compare-and-swap runs.
   public forceNextEvalMiss = false
+  // Test hook: makes the next eval() call throw once, then auto-resets — models a transient
+  // Redis failure on touchIfActive's atomic heartbeat touch specifically (a plain failNextGet
+  // wouldn't exercise this path, since touchIfActive's Redis branch is a single eval, not a get).
+  public failNextEval = false
 
   public async set(key: string, value: string, ...args: unknown[]): Promise<string | null> {
     const nx = args.includes('NX')
@@ -118,15 +137,37 @@ class FakeRedisClient extends EventEmitter {
     return this.store.delete(key) ? 1 : 0
   }
 
-  // Faithful-enough model of both Lua scripts' server-side-atomic semantics — real ioredis
+  // Faithful-enough model of all three Lua scripts' server-side-atomic semantics — real ioredis
   // executes them atomically on the server; this fake just runs the equivalent JS synchronously
   // (JS itself has no concurrent access to race against here). Branches on the script text since
-  // both RECLAIM_IF_UNCHANGED_SCRIPT and RELEASE_IF_OWNED_SCRIPT go through this one method with
-  // different arg shapes.
+  // RECLAIM_IF_UNCHANGED_SCRIPT, RELEASE_IF_OWNED_SCRIPT, and TOUCH_IF_NOT_TERMINAL_SCRIPT all go
+  // through this one method with different arg shapes.
   public async eval(script: string, _numKeys: number, key: string, ...args: string[]): Promise<number> {
+    if (this.failNextEval) {
+      this.failNextEval = false
+      throw new Error('simulated transient Redis eval failure')
+    }
     if (this.forceNextEvalMiss) {
       this.forceNextEvalMiss = false
       return 0
+    }
+    if (script.includes('parsed.status')) {
+      // TOUCH_IF_NOT_TERMINAL_SCRIPT: ARGV is [status1, status2, newUpdatedAt, ttlSeconds] —
+      // checked before the generic cjson branch below, since this script also uses cjson but is
+      // not RELEASE_IF_OWNED_SCRIPT.
+      const [status1, status2, newUpdatedAt] = args
+      const current = this.store.get(key)
+      if (!current) return 0
+      let parsed: { status?: string; [field: string]: unknown }
+      try {
+        parsed = JSON.parse(current) as { status?: string; [field: string]: unknown }
+      } catch {
+        return 0
+      }
+      if (parsed.status !== status1 && parsed.status !== status2) return 0
+      parsed.updatedAt = newUpdatedAt
+      this.store.set(key, JSON.stringify(parsed))
+      return 1
     }
     if (script.includes('cjson')) {
       // RELEASE_IF_OWNED_SCRIPT: ARGV[1] is the plain jobId, not the full reservation JSON —
@@ -339,14 +380,19 @@ describe('WalletPortabilityJobStore — get() reconciliation', () => {
 // Used to give a "still active" holder a backing record, so isJobStillActive() (dead-reservation
 // reclaim) doesn't mistake "no record yet" for "definitely dead" and reclaim it out from under a
 // test that's asserting the opposite.
-function makePendingRecord(jobId: string, tenantId: string) {
+//
+// updatedAt defaults to "right now" (via Date.now(), not new Date() — jest.spyOn(Date, 'now')
+// doesn't intercept the latter) since isReservationStillActive's Pending branch now checks the
+// record's own updatedAt, same as InProgress's. A test that specifically wants a stale record
+// (see the InProgress-staleness test below) passes an explicit old updatedAt instead.
+function makePendingRecord(jobId: string, tenantId: string, updatedAt: string = new Date(Date.now()).toISOString()) {
   return {
     jobId,
     tenantId,
     type: WalletPortabilityJobType.Import,
     status: WalletPortabilityJobStatus.Pending,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
+    createdAt: updatedAt,
+    updatedAt,
   }
 }
 
@@ -479,11 +525,14 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
     nowSpy.mockRestore()
   })
 
-  it('reclaims a Pending reservation once its grace period has elapsed — a crash/restart between the Pending save and the first InProgress write', async () => {
+  it('reclaims a Pending reservation once its heartbeat lease has elapsed — a crash/restart between the Pending save and the first InProgress write', async () => {
     // #73 review: the InProgress staleness check only closed half the 24h-wedge bug -- a
     // crash/restart between exportWallet/importWallet's initial Pending save and runExport/
     // runImport's first setJobStatus(InProgress) call left a Pending record that read as "still
-    // running" unconditionally, for the whole 24h JOB_TTL_SECONDS.
+    // running" unconditionally, for the whole 24h JOB_TTL_SECONDS. A later review pass found the
+    // fix's own bound (a flat RESERVATION_GRACE_PERIOD_MS from reservedAt) was itself wall-clock,
+    // not lease-based -- Pending now shares InProgress's heartbeat-refreshed MAX_IN_PROGRESS_
+    // DURATION_MS bound instead, checked against the record's own updatedAt.
     const nowSpy = jest.spyOn(Date, 'now')
     const startedAt = 1_000_000
     nowSpy.mockReturnValue(startedAt)
@@ -492,12 +541,13 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
 
     expect(await store.tryReserveActiveJob(tenantId, 'job-A')).toBeUndefined()
     // job-A's own record reaches Pending -- the very first write -- but the process dies before
-    // ever reaching the first setJobStatus(InProgress) call.
+    // ever reaching the first setJobStatus(InProgress) call, so no heartbeat tick ever refreshes
+    // updatedAt past this point.
     await store.save(makePendingRecord('job-A', tenantId))
 
-    // Past RESERVATION_GRACE_PERIOD_MS (15s) -- comfortably past Pending's one-save()-round-trip
-    // legitimate lifetime.
-    nowSpy.mockReturnValue(startedAt + 60_000)
+    // Past MAX_IN_PROGRESS_DURATION_MS (90s: 3 missed heartbeats) -- comfortably past a real
+    // process merely being slow to reach its first InProgress write.
+    nowSpy.mockReturnValue(startedAt + 100_000)
     expect(await store.tryReserveActiveJob(tenantId, 'job-B')).toBeUndefined()
 
     nowSpy.mockRestore()
@@ -667,10 +717,13 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
     // job-1 crashed mid-run: its own record reached InProgress (the very first write
     // runExport/runImport makes) and nothing ever marked it terminal afterward — the process
     // died. Before this fix, an InProgress record was treated as live regardless of age,
-    // wedging the tenant out of both export and import for the rest of the 24h TTL.
-    // makePendingRecord's fixed 2026-01-01 updatedAt is already far older than
-    // MAX_IN_PROGRESS_DURATION_MS. See the #73 review.
-    await store.save({ ...makePendingRecord('job-1', tenantId), status: WalletPortabilityJobStatus.InProgress })
+    // wedging the tenant out of both export and import for the rest of the 24h TTL. An explicit
+    // old updatedAt (rather than makePendingRecord's now-fresh-by-default one) is already far
+    // older than MAX_IN_PROGRESS_DURATION_MS. See the #73 review.
+    await store.save({
+      ...makePendingRecord('job-1', tenantId, '2026-01-01T00:00:00.000Z'),
+      status: WalletPortabilityJobStatus.InProgress,
+    })
 
     expect(await store.tryReserveActiveJob(tenantId, 'job-2')).toBeUndefined()
   })
@@ -707,5 +760,117 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
     expect(evalSpy).toHaveBeenCalled()
     expect(delSpy).not.toHaveBeenCalled()
     expect(await store.tryReserveActiveJob(tenantId, 'job-2')).toBeUndefined()
+  })
+})
+
+// Fourth review pass: WalletPortabilityService's heartbeat previously did its own get()-then-
+// setJobStatus() (itself a second get()-then-save()) to decide whether to refresh a job's
+// updatedAt. That two-round-trip shape left a real window between the read and the write where a
+// terminal save (Completed/Failed) landing in between got silently clobbered back to non-terminal
+// by the heartbeat's own write. touchIfActive replaces that with one atomic server-side operation
+// (TOUCH_IF_NOT_TERMINAL_SCRIPT), removing the window outright rather than narrowing it.
+describe('WalletPortabilityJobStore — touchIfActive (heartbeat)', () => {
+  it('refreshes updatedAt on a Pending or InProgress record, using a single eval round trip rather than a separate get+set', async () => {
+    const { store, redis } = makeReadyStore()
+    const jobId = 'job-1'
+    await store.save({
+      jobId,
+      tenantId: 'tenant-1',
+      type: WalletPortabilityJobType.Export,
+      status: WalletPortabilityJobStatus.InProgress,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+
+    const getSpy = jest.spyOn(redis, 'get')
+    const setSpy = jest.spyOn(redis, 'set')
+    const evalSpy = jest.spyOn(redis, 'eval')
+
+    expect(await store.touchIfActive(jobId)).toBe(true)
+
+    // One atomic operation, not a get followed by a separate set -- the whole point of doing this
+    // as a Lua eval instead of this class's usual get()-then-save() shape.
+    expect(evalSpy).toHaveBeenCalledTimes(1)
+    expect(getSpy).not.toHaveBeenCalled()
+    expect(setSpy).not.toHaveBeenCalled()
+
+    const job = await store.get(jobId)
+    expect(job?.updatedAt).not.toBe('2026-01-01T00:00:00.000Z')
+    expect(job?.status).toBe(WalletPortabilityJobStatus.InProgress)
+  })
+
+  it('never overwrites a record that has already reached a terminal status, and reports it as skipped', async () => {
+    const { store } = makeReadyStore()
+    const jobId = 'job-1'
+    await store.save({
+      jobId,
+      tenantId: 'tenant-1',
+      type: WalletPortabilityJobType.Export,
+      status: WalletPortabilityJobStatus.Completed,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      s3Key: 'wallet-exports/tenant-1/job-1.db.gz',
+    })
+
+    expect(await store.touchIfActive(jobId)).toBe(false)
+
+    // Untouched -- not just "still Completed", but not even a stamp-over with a new updatedAt.
+    const job = await store.get(jobId)
+    expect(job?.updatedAt).toBe('2026-01-01T00:00:00.000Z')
+    expect(job?.s3Key).toBe('wallet-exports/tenant-1/job-1.db.gz')
+  })
+
+  it('reports no touch and logs the failure when Redis is ready but the eval itself fails, instead of silently doing nothing', async () => {
+    const logger = makeLogger()
+    const store = new WalletPortabilityJobStore(logger as never, 'redis://fake-host:6379')
+    const redis = lastRedisClient as FakeRedisClient
+    redis.emit('ready')
+    const jobId = 'job-1'
+    await store.save({
+      jobId,
+      tenantId: 'tenant-1',
+      type: WalletPortabilityJobType.Import,
+      status: WalletPortabilityJobStatus.InProgress,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+
+    // Simulates a commandTimeout on the eval itself -- the failure the #73 review found was
+    // invisible under the old get()-then-setJobStatus() shape, since get() already swallows Redis
+    // errors internally and just resolves to undefined, leaving nothing for the heartbeat's own
+    // error handling to catch or log.
+    redis.failNextEval = true
+    expect(await store.touchIfActive(jobId)).toBe(false)
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('heartbeat touch failed'))
+
+    // Genuinely nothing to fall back to here -- this job's only copy lives in Redis, which just
+    // failed -- but a *memory-only* job (or one written during an earlier outage) must still be
+    // reachable through the same call. See the next test.
+  })
+
+  it('reaches a memory-only job when Redis is configured but not ready — not just when an eval call outright fails', async () => {
+    const logger = makeLogger()
+    const store = new WalletPortabilityJobStore(logger as never, 'redis://fake-host:6379')
+    // Never emits 'ready' -- pure in-memory path, modelling a job whose Pending/InProgress
+    // record was written during a Redis outage and so only ever existed in the memory mirror.
+    const jobId = 'job-1'
+    await store.save({
+      jobId,
+      tenantId: 'tenant-1',
+      type: WalletPortabilityJobType.Export,
+      status: WalletPortabilityJobStatus.InProgress,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+
+    expect(await store.touchIfActive(jobId)).toBe(true)
+
+    const job = await store.get(jobId)
+    expect(job?.updatedAt).not.toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  it('does not touch a job that has no record at all', async () => {
+    const { store } = makeReadyStore()
+    expect(await store.touchIfActive('no-such-job')).toBe(false)
   })
 })

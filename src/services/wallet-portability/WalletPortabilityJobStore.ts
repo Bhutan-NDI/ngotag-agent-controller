@@ -94,6 +94,34 @@ redis.call('DEL', KEYS[1])
 return 1
 `
 
+// The heartbeat's job is to refresh updatedAt on a schedule, independent of any specific state
+// transition the caller already knows is correct — every other write in this class is a plain
+// get()-then-save() precisely because the caller (exportWallet/setJobStatus/etc.) already decided
+// what the record should say. A heartbeat has no such decision to make; it only wants "bump
+// updatedAt if this job is still Pending/InProgress", and a get()-then-save() shape for that has a
+// real window between the two round trips where a terminal write (Completed/Failed) landing in
+// between gets silently clobbered back to non-terminal by the heartbeat's own save(). Doing the
+// check-and-update as one atomic server-side operation (same compare-and-swap idea as the two
+// scripts above, applied to the job record instead of the reservation) removes that window
+// entirely: Redis executes one command at a time, so whichever of {this eval, a terminal SET}
+// reaches Redis first is the one that's still true when the other runs. See the #73 review.
+const TOUCH_IF_NOT_TERMINAL_SCRIPT = `
+local current = redis.call('GET', KEYS[1])
+if not current then
+  return 0
+end
+local ok, parsed = pcall(cjson.decode, current)
+if not ok then
+  return 0
+end
+if parsed.status ~= ARGV[1] and parsed.status ~= ARGV[2] then
+  return 0
+end
+parsed.updatedAt = ARGV[3]
+redis.call('SET', KEYS[1], cjson.encode(parsed), 'EX', ARGV[4])
+return 1
+`
+
 interface ActiveJobReservation {
   jobId: string
   reservedAt: number
@@ -216,6 +244,72 @@ export class WalletPortabilityJobStore {
     // looked up again either, and so would never get a chance to expire lazily.
     this.pruneExpiredMemoryEntries()
     this.memoryStore.set(job.jobId, { record: job, expiresAt: Date.now() + JOB_TTL_SECONDS * 1000 })
+  }
+
+  /**
+   * Atomically refresh a job record's updatedAt, but only while it's still Pending or InProgress
+   * — see TOUCH_IF_NOT_TERMINAL_SCRIPT above for why the check-and-update must be one operation
+   * rather than this class's usual get()-then-save(). Used exclusively by
+   * WalletPortabilityService's heartbeat, for both the Pending and InProgress phases of a job —
+   * Pending now gets the same refreshed lease InProgress already relied on, rather than a fixed
+   * wall-clock grace period from when the slot was first reserved (see the #73 review: a
+   * genuinely live job stalled on scheduling/GC before its first save() could still be reclaimed
+   * by a second caller once RESERVATION_GRACE_PERIOD_MS elapsed, however generous that constant
+   * was, since nothing about the Pending record itself was ever refreshed to prove liveness).
+   *
+   * Returns true if the touch landed, false if it was skipped (no record, or already terminal) —
+   * both "skipped" cases mean the same thing to the caller ("nothing to refresh right now"), so
+   * there's no separate error path between them.
+   *
+   * On a Redis failure this falls through to the in-memory store rather than returning false
+   * outright: "the read/eval failed" must never be indistinguishable from "confirmed terminal or
+   * missing" — collapsing the two silently starves a genuinely live job's updatedAt of any
+   * refresh for the rest of the outage with no trace of why. See the #73 review (a failed
+   * heartbeat read was previously read as "nothing to touch", with the failure itself invisible
+   * since get() already swallows Redis errors internally).
+   */
+  public async touchIfActive(jobId: string): Promise<boolean> {
+    const now = new Date().toISOString()
+    if (this.redisClient && this.isRedisReady()) {
+      try {
+        const result = await this.redisClient.eval(
+          TOUCH_IF_NOT_TERMINAL_SCRIPT,
+          1,
+          `${JOB_KEY_PREFIX}${jobId}`,
+          WalletPortabilityJobStatus.Pending,
+          WalletPortabilityJobStatus.InProgress,
+          now,
+          String(JOB_TTL_SECONDS),
+        )
+        if (result === 1) {
+          // Same reasoning as save(): once Redis has this job's latest write, a stale
+          // memory-side mirror left by an earlier outage has nothing useful left to contribute.
+          this.memoryStore.delete(jobId)
+          return true
+        }
+        // A confirmed 0 (no record, or already terminal) is a real answer, not a failure — it
+        // must not fall through to the memory branch below, which could otherwise refresh a
+        // stale memory-side mirror of a job whose authoritative state already lives in Redis and
+        // has already gone terminal.
+        return false
+      } catch (error) {
+        this.logger.error(
+          `[WalletPortabilityJobStore] Redis heartbeat touch failed, falling back to in-memory store: ${error}`,
+        )
+      }
+    }
+    this.pruneExpiredMemoryEntries()
+    const entry = this.memoryStore.get(jobId)
+    if (
+      entry &&
+      (entry.record.status === WalletPortabilityJobStatus.Pending ||
+        entry.record.status === WalletPortabilityJobStatus.InProgress)
+    ) {
+      entry.record = { ...entry.record, updatedAt: now }
+      entry.expiresAt = Date.now() + JOB_TTL_SECONDS * 1000
+      return true
+    }
+    return false
   }
 
   public async get(jobId: string): Promise<WalletPortabilityJobRecord | undefined> {
@@ -416,19 +510,19 @@ export class WalletPortabilityJobStore {
       return true
     }
     if (record) {
-      if (record.status === WalletPortabilityJobStatus.Pending) {
-        // Pending's legitimate lifetime is one save() round trip -- runExport/runImport's first
-        // act after writing it is setJobStatus(InProgress) -- so the same grace period the
-        // record-less case below uses is a generous bound here too. Without this, a crash/roll
-        // between the Pending save and the first InProgress write left a Pending record that
-        // read as "still running" for the whole 24h JOB_TTL_SECONDS, wedging the tenant out of
-        // every export AND import for a full day -- the exact failure mode the InProgress
-        // staleness check exists to close, one status earlier. See the #73 review.
-        return Date.now() - reservation.reservedAt <= RESERVATION_GRACE_PERIOD_MS
-      }
-      if (record.status === WalletPortabilityJobStatus.InProgress) {
-        // See MAX_IN_PROGRESS_DURATION_MS above — an InProgress record this old belongs to a
-        // job whose process died without ever reaching a terminal setJobStatus call.
+      if (
+        record.status === WalletPortabilityJobStatus.Pending ||
+        record.status === WalletPortabilityJobStatus.InProgress
+      ) {
+        // Pending and InProgress share one bound: WalletPortabilityService now starts the
+        // heartbeat (touchIfActive) *before* the Pending save, not only once InProgress is
+        // reached, so a Pending record's updatedAt is kept just as fresh as an InProgress one's
+        // for as long as the job is genuinely alive. Before that change, Pending used a flat
+        // wall-clock grace period measured from reservation.reservedAt -- generous for the
+        // *normal* case (this save() landing milliseconds later) but not provably long enough
+        // under real scheduling delay (a GC pause, an event-loop backlog) before runExport/
+        // runImport's own first await ever ran, which could see a live reservation reclaimed out
+        // from under it. See the #73 review.
         return Date.now() - new Date(record.updatedAt).getTime() <= MAX_IN_PROGRESS_DURATION_MS
       }
       return false

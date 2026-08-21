@@ -326,12 +326,12 @@ describe('WalletPortabilityService — exportWallet', () => {
 
       const heartbeat = (
         service as unknown as {
-          startHeartbeat: (jobId: string, tenantId: string, type: string) => NodeJS.Timeout
+          startHeartbeat: (jobId: string) => NodeJS.Timeout
         }
-      ).startHeartbeat(jobId, TENANT_ID, WalletPortabilityJobType.Export)
+      ).startHeartbeat(jobId)
 
-      // One tick -- the heartbeat's own internal jobStore.get()/setJobStatus() round trip is
-      // real async work even under fake timers, so flush microtasks after advancing.
+      // One tick -- the heartbeat's own internal jobStore.touchIfActive() call is real async work
+      // even under fake timers, so flush microtasks after advancing.
       await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
 
       const job = await service.getJobStatus(jobId)
@@ -360,9 +360,9 @@ describe('WalletPortabilityService — exportWallet', () => {
 
       const heartbeat = (
         service as unknown as {
-          startHeartbeat: (jobId: string, tenantId: string, type: string) => NodeJS.Timeout
+          startHeartbeat: (jobId: string) => NodeJS.Timeout
         }
-      ).startHeartbeat(jobId, TENANT_ID, WalletPortabilityJobType.Export)
+      ).startHeartbeat(jobId)
 
       await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
 
@@ -643,6 +643,35 @@ describe('WalletPortabilityService — importWallet', () => {
     }
   })
 
+  it('drains/destroys the response body before throwing on an HTTP-error response, instead of abandoning it unread', async () => {
+    // #73 review: an HTTP-error response (a 403/404 from S3, typically with a small XML error
+    // body) still has bytes to consume. Throwing without draining or destroying that body can
+    // leave its underlying keep-alive socket stuck open rather than freed back to node-fetch's
+    // connection pool, since the pool doesn't consider a socket free for reuse until the body is
+    // fully consumed or explicitly destroyed.
+    const errorBody = new Readable({ read() {} })
+    errorBody.push(Buffer.from('<Error><Code>AccessDenied</Code></Error>'))
+    errorBody.push(null)
+    const destroySpy = jest.spyOn(errorBody, 'destroy')
+    const resumeSpy = jest.spyOn(errorBody, 'resume')
+    fetchMock.mockImplementation(async () => ({ ok: false, status: 403, body: errorBody }))
+
+    const service = new WalletPortabilityService(makeLogger() as never)
+    const workDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'http-error-download-test-'))
+    const destPath = path.join(workDir, 'output.db.gz')
+
+    await expect(
+      (
+        service as unknown as { downloadAndChecksum(url: string, destPath: string): Promise<string> }
+      ).downloadAndChecksum('https://test-wallet-export-bucket.s3.amazonaws.com/x.db.gz', destPath),
+    ).rejects.toThrow(/HTTP 403/)
+
+    expect(destroySpy).toHaveBeenCalled()
+    expect(resumeSpy).toHaveBeenCalled()
+
+    await fsPromises.rm(workDir, { recursive: true, force: true })
+  })
+
   it('cleans up the whole workDir on success — not just the two files it used to remove individually', async () => {
     // workDir was previously a local const inside the try, out of scope for the finally, so only
     // gzipPath/importedDbPath were ever removed — leaving the mkdtemp directory itself and Askar's
@@ -803,6 +832,53 @@ describe('WalletPortabilityService — importWallet', () => {
     expect(job.error).toBe('IMPORT_FAILED')
     expect(renameProfile).toHaveBeenCalledTimes(1) // only the rename-aside attempt, no rollback
     expect(copyProfile).not.toHaveBeenCalled()
+    expect(job.backupProfile).toBeUndefined()
+  })
+
+  it('a failure after copyProfile succeeds reports no backupProfile and never attempts a rollback — the import already landed', async () => {
+    // #73 review: backupExists was set true right after the rename-aside and never cleared again
+    // until a *successful rollback*. renamedAway (which gates the rollback attempt) is correctly
+    // cleared the instant copyProfile succeeds, but backupExists previously was not -- so a later,
+    // unrelated failure in this same try (here: the job-store write for the Completed status)
+    // still reported this Failed record with a backupProfile pointer. An operator following that
+    // pointer ("the tenant's real data may still be at profile X") would rename the stale
+    // pre-import backup back over the profile that had, in fact, already been successfully
+    // imported into, destroying it.
+    // Import's copyProfile is called on the *downloaded* store (importedStoreCopyProfile), not
+    // baseStore.copyProfile -- that one is only ever used by export. See the sibling
+    // "copyProfile failure after the rename" test's identical comment.
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+
+    // Fails the *third* jobStore.save() call for this job (Pending, then InProgress via
+    // setJobStatus, then this one -- the Completed write that runs immediately after copyProfile
+    // succeeds) so the throw lands squarely in the "already imported, nothing left to roll back"
+    // window this fix targets, not before it.
+    const jobStore = (service as unknown as { jobStore: { save: (record: unknown) => Promise<void> } }).jobStore
+    const realSave = jobStore.save.bind(jobStore)
+    let saveCallCount = 0
+    jest.spyOn(jobStore, 'save').mockImplementation(async (record) => {
+      saveCallCount += 1
+      if (saveCallCount === 3) {
+        throw new Error('simulated job-store write failure right after copyProfile succeeded')
+      }
+      return realSave(record as never)
+    })
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('simulated job-store write failure right after copyProfile succeeded'),
+    )
+    expect(importedStoreCopyProfile).toHaveBeenCalledTimes(1)
+    // Only the initial rename-aside -- no rollback attempt, since renamedAway was already false
+    // by the time the failure hit.
+    expect(renameProfile).toHaveBeenCalledTimes(1)
     expect(job.backupProfile).toBeUndefined()
   })
 
