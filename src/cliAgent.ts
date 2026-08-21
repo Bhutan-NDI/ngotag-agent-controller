@@ -304,7 +304,9 @@ const getModules = (
       schemaManagerContractAddress:
         schemaManagerContractAddress || (process.env.SCHEMA_MANAGER_CONTRACT_ADDRESS as string),
       fileServerToken: fileServerToken ? fileServerToken : (process.env.FILE_SERVER_TOKEN as string),
-      rpcUrl: rpcUrl ? rpcUrl : (process.env.RPC_URL as string),
+      // Polygon RPC is deployment configuration. It must come from the environment
+      // so persisted cliConfig.json state cannot override a rotated endpoint.
+      rpcUrl: requireEnv('RPC_URL'),
       serverUrl: fileServerUrl ? fileServerUrl : (process.env.SERVER_URL as string),
     }),
 
