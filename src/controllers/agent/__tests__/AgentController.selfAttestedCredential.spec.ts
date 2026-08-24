@@ -130,7 +130,10 @@ const makeRequest = (agent: unknown) => ({ agent }) as never
 
 describe('AgentController.createW3cSelfAttestedCredential', () => {
   it('signs with the agent default DID, stores via store({ record }), and returns the stored record', async () => {
-    const didDocument = { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    // assertionMethod, not verificationMethod: the endpoint only ever signs with a key listed
+    // under assertionMethod (see AgentController's own comment on why verificationMethod alone
+    // does not authorize it) -- this fixture models a document that authorizes the key correctly.
+    const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
     // Real signCredential returns a signed W3cVerifiableCredential (a W3cCredential subclass with
     // a `proof`, driving the `.encoded` getter that W3cCredentialRecord.fromCredential relies on)
     // — echoing back the unsigned W3cCredential the mock was given would not have that shape.
@@ -188,7 +191,10 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
   })
 
   it('supports an array credentialSubject — each entry gets the agent DID as id and its own object as claims', async () => {
-    const didDocument = { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    // assertionMethod, not verificationMethod: the endpoint only ever signs with a key listed
+    // under assertionMethod (see AgentController's own comment on why verificationMethod alone
+    // does not authorize it) -- this fixture models a document that authorizes the key correctly.
+    const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
     const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
       return new W3cJsonLdVerifiableCredential({
         ...options.credential,
@@ -238,7 +244,10 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     // The #75 review's core scenario: a wallet from before the GenericRecord-based default-DID
     // tracking existed. There's no backfill step, so without this fallback every such wallet
     // 404s here forever, with re-anchoring a brand-new DID as the only workaround.
-    const didDocument = { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    // assertionMethod, not verificationMethod: the endpoint only ever signs with a key listed
+    // under assertionMethod (see AgentController's own comment on why verificationMethod alone
+    // does not authorize it) -- this fixture models a document that authorizes the key correctly.
+    const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
     const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
       return new W3cJsonLdVerifiableCredential({
         ...options.credential,
@@ -275,7 +284,10 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     // purpose is DIDComm, so a migrated wallet with one real issuer DID and several existing
     // connections is the common case, not the exception — without excluding did:peer entries
     // first, length === 1 would almost never hold for exactly the wallets this fallback targets.
-    const didDocument = { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    // assertionMethod, not verificationMethod: the endpoint only ever signs with a key listed
+    // under assertionMethod (see AgentController's own comment on why verificationMethod alone
+    // does not authorize it) -- this fixture models a document that authorizes the key correctly.
+    const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
     const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
       return new W3cJsonLdVerifiableCredential({
         ...options.credential,
@@ -333,7 +345,10 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     // pick is whatever the store happens to return first -- Askar's rowid-ordered scan returns
     // the EARLIEST-created record, which can be a long-superseded DID, not the one an operator
     // actually tagged default most recently.
-    const didDocument = { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    // assertionMethod, not verificationMethod: the endpoint only ever signs with a key listed
+    // under assertionMethod (see AgentController's own comment on why verificationMethod alone
+    // does not authorize it) -- this fixture models a document that authorizes the key correctly.
+    const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
     const RECENT_DID = 'did:indy:recent-default'
     const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
       return new W3cJsonLdVerifiableCredential({
@@ -375,14 +390,34 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     expect(signCredential).not.toHaveBeenCalled()
   })
 
-  it('throws when the default DID has no verification method', async () => {
-    const didDocument = { verificationMethod: [] }
+  it('throws when the default DID has an empty assertionMethod (verificationMethod alone does not help)', async () => {
+    const didDocument = { assertionMethod: [], verificationMethod: [{ id: VERIFICATION_METHOD_ID }] }
     const signCredential = jest.fn() as jest.Mock
     const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
     const controller = new AgentController()
 
     await expect(controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)).rejects.toThrow(
       /[Vv]erification method/,
+    )
+    expect(signCredential).not.toHaveBeenCalled()
+  })
+
+  it('rejects a verificationMethod-only document before signing -- verificationMethod alone does not authorize the assertionMethod proof purpose this endpoint signs with', async () => {
+    // The actual bug this fix closes: a verification method being listed under
+    // verificationMethod does not authorize it for credential assertions. The JSON-LD verifier
+    // checks that the proof key is referenced by the DID document's assertionMethod relationship
+    // specifically -- so the pre-fix fallback (assertionMethod ?? verificationMethod) could sign,
+    // store, and return 200 for a credential that later fails verification everywhere else with
+    // "not authorized by controller for proof purpose 'assertionMethod'". Same failure mode
+    // already correctly identified and removed for the authentication fallback; a bare
+    // verificationMethod fallback is not any safer. See the #75 review.
+    const didDocument = { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    const signCredential = jest.fn() as jest.Mock
+    const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+    const controller = new AgentController()
+
+    await expect(controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)).rejects.toThrow(
+      `Default DID '${SELF_DID}' has no assertionMethod verification method; it cannot be used to issue credentials`,
     )
     expect(signCredential).not.toHaveBeenCalled()
   })
@@ -395,7 +430,10 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     // resolveCreatedDidDocumentWithKeys mimics the real API's resolver-fallback behavior — it
     // always returns a document, proving the endpoint goes through the resolving API rather than
     // reading an (in this scenario, never-persisted) field directly off the DidRecord.
-    const didDocument = { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    // assertionMethod, not verificationMethod: the endpoint only ever signs with a key listed
+    // under assertionMethod (see AgentController's own comment on why verificationMethod alone
+    // does not authorize it) -- this fixture models a document that authorizes the key correctly.
+    const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
     const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
       return new W3cJsonLdVerifiableCredential({
         ...options.credential,
@@ -451,14 +489,12 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     expect(signedWith.verificationMethod).toBe(VERIFICATION_METHOD_ID)
   })
 
-  it('prefers assertionMethod over verificationMethod when both are present, and ignores authentication entirely', async () => {
-    // Pins the fallback order itself: assertionMethod is the purpose this endpoint actually signs
-    // with (proofPurpose is always assertionMethod, see toSubject above), so it must win over
-    // verificationMethod when a document happens to carry both. authentication is included here
-    // (pointing at yet another wrong id) specifically to prove it is no longer consulted at
-    // all -- see the #75 review: an authentication-only key is not authorized for the
-    // assertionMethod proof purpose this endpoint signs with, so authentication was dropped from
-    // the fallback chain entirely rather than merely being given lower priority.
+  it('uses assertionMethod and ignores verificationMethod/authentication entirely when a document carries all three', async () => {
+    // Pins the selection itself: assertionMethod is the only purpose this endpoint ever signs
+    // with (proofPurpose is always assertionMethod, see toSubject above), so verificationMethod
+    // and authentication (both pointing at deliberately wrong ids here) must never be consulted
+    // at all, not merely deprioritized -- neither authorizes a key for the assertionMethod proof
+    // purpose this endpoint signs with. See the #73/#75 reviews.
     const didDocument = {
       verificationMethod: [{ id: 'wrong-vm-id' }],
       authentication: ['wrong-auth-id'],
@@ -515,7 +551,10 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     // verbatim -- ErrorHandlingService's generic branch serializes error.message straight into the
     // HTTP response, which would turn this into a probing oracle (resolved URL, HTTP status,
     // redirect/network failure detail). The real error must still reach the server-side log.
-    const didDocument = { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    // assertionMethod, not verificationMethod: the endpoint only ever signs with a key listed
+    // under assertionMethod (see AgentController's own comment on why verificationMethod alone
+    // does not authorize it) -- this fixture models a document that authorizes the key correctly.
+    const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
     const signCredential = jest.fn(async () => {
       throw new Error('getaddrinfo ENOTFOUND internal-service.svc.cluster.local:8080/secrets')
     }) as jest.Mock
