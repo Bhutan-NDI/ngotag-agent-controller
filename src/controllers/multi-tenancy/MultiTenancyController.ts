@@ -4,7 +4,21 @@ import type { TenantRecord } from '@credo-ts/tenants'
 import { Agent, CacheModuleConfig, JsonTransformer, injectable, LogLevel, RecordNotFoundError } from '@credo-ts/core'
 import { Request as Req } from 'express'
 import jwt from 'jsonwebtoken'
-import { Body, Controller, Delete, Post, Route, Tags, Path, Security, Request, Res, TsoaResponse, Get } from 'tsoa'
+import {
+  Body,
+  Controller,
+  Delete,
+  Post,
+  Route,
+  Tags,
+  Path,
+  Security,
+  Request,
+  Res,
+  TsoaResponse,
+  Get,
+  Response,
+} from 'tsoa'
 
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
@@ -148,6 +162,15 @@ export class MultiTenancyController extends Controller {
    *
    * @returns { jobId, status } — status is always 'pending' on this response
    */
+  // These three were reachable in code (getTenantById/exportWallet's own catch blocks below) but
+  // undocumented in the generated OpenAPI spec — unlike @Res(), which requires a matching
+  // TsoaResponse parameter the handler actually calls, @Response() documents a status this method
+  // can throw without needing a corresponding parameter, matching every sibling endpoint in this
+  // same file (e.g. getTenantToken above) that already pairs its declared 4xx with a 500. See the
+  // #73 review.
+  @Response<{ message: string }>(404, 'Tenant not found')
+  @Response<{ message: string }>(409, 'A wallet portability job is already running for this tenant')
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Post('/export/:tenantId')
   public async exportTenantWallet(
     @Request() request: Req,
@@ -190,6 +213,10 @@ export class MultiTenancyController extends Controller {
    * Poll the status of an export job started via POST /export/:tenantId. On completion, the
    * response carries a short-lived pre-signed S3 URL and the artifact's SHA-256 checksum.
    */
+  // See exportTenantWallet's identical comment on @Response vs @Res -- getJobStatus's own catch
+  // block below can throw anything ErrorHandlingService.handle maps to, not just the 404 already
+  // declared via @Res(). See the #73 review.
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Get('/export/:tenantId/status/:jobId')
   public async getExportWalletStatus(
     @Path('tenantId') tenantId: string,
@@ -230,6 +257,10 @@ export class MultiTenancyController extends Controller {
    *
    * @returns { jobId, status } — status is always 'pending' on this response
    */
+  // See exportTenantWallet's identical comment on @Response vs @Res. See the #73 review.
+  @Response<{ message: string }>(404, 'Tenant not found')
+  @Response<{ message: string }>(409, 'A wallet portability job is already running for this tenant')
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Post('/import/:tenantId')
   public async importTenantWallet(
     @Request() request: Req,
@@ -280,6 +311,8 @@ export class MultiTenancyController extends Controller {
    * response carries the name the tenant's pre-import profile was renamed to (backupProfile) —
    * it is never deleted automatically.
    */
+  // See exportTenantWallet's identical comment on @Response vs @Res. See the #73 review.
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Get('/import/:tenantId/status/:jobId')
   public async getImportWalletStatus(
     @Path('tenantId') tenantId: string,
