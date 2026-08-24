@@ -137,11 +137,11 @@ class FakeRedisClient extends EventEmitter {
     return this.store.delete(key) ? 1 : 0
   }
 
-  // Faithful-enough model of all three Lua scripts' server-side-atomic semantics — real ioredis
+  // Faithful-enough model of all four Lua scripts' server-side-atomic semantics — real ioredis
   // executes them atomically on the server; this fake just runs the equivalent JS synchronously
   // (JS itself has no concurrent access to race against here). Branches on the script text since
-  // RECLAIM_IF_UNCHANGED_SCRIPT, RELEASE_IF_OWNED_SCRIPT, and TOUCH_IF_NOT_TERMINAL_SCRIPT all go
-  // through this one method with different arg shapes.
+  // RECLAIM_IF_UNCHANGED_SCRIPT, RELEASE_IF_OWNED_SCRIPT, TOUCH_IF_NOT_TERMINAL_SCRIPT, and
+  // TOUCH_ACTIVE_JOB_IF_OWNED_SCRIPT all go through this one method with different arg shapes.
   public async eval(script: string, _numKeys: number, key: string, ...args: string[]): Promise<number> {
     if (this.failNextEval) {
       this.failNextEval = false
@@ -167,6 +167,24 @@ class FakeRedisClient extends EventEmitter {
       if (parsed.status !== status1 && parsed.status !== status2) return 0
       parsed.updatedAt = newUpdatedAt
       this.store.set(key, JSON.stringify(parsed))
+      return 1
+    }
+    if (script.includes("SET', KEYS[1], current")) {
+      // TOUCH_ACTIVE_JOB_IF_OWNED_SCRIPT: ARGV is [jobId, ttlSeconds] — same ownership check as
+      // RELEASE_IF_OWNED_SCRIPT below (also cjson-based), but re-writes the same value instead of
+      // deleting it. Checked first since this fake's TTL-less Map can't otherwise distinguish
+      // "refresh" from "release" by outcome alone.
+      const [jobId] = args
+      const current = this.store.get(key)
+      if (!current) return 0
+      let parsed: { jobId?: string }
+      try {
+        parsed = JSON.parse(current) as { jobId?: string }
+      } catch {
+        return 0
+      }
+      if (parsed.jobId !== jobId) return 0
+      this.store.set(key, current)
       return 1
     }
     if (script.includes('cjson')) {
@@ -872,5 +890,74 @@ describe('WalletPortabilityJobStore — touchIfActive (heartbeat)', () => {
   it('does not touch a job that has no record at all', async () => {
     const { store } = makeReadyStore()
     expect(await store.touchIfActive('no-such-job')).toBe(false)
+  })
+})
+
+// Fifth review pass: the heartbeat refreshed the job record's own TTL/liveness on every tick, but
+// never touched the tenant's active-job *reservation* -- tryReserveActiveJob's 24h EX is set once,
+// at reservation time, and nothing else ever extends it. A transfer that's still genuinely alive
+// and heartbeating past that TTL (there is no absolute time cap on a transfer, only the byte cap
+// and the heartbeat itself) would have its reservation silently expire out of Redis while the job
+// record stayed alive -- a second caller's tryReserveActiveJob would then simply succeed against a
+// first job that never actually died. touchActiveJobReservation (TOUCH_ACTIVE_JOB_IF_OWNED_SCRIPT)
+// closes this the same way touchIfActive already closes the equivalent gap for the job record
+// itself: same atomic ownership-check-then-refresh shape as RELEASE_IF_OWNED_SCRIPT, refresh
+// instead of delete.
+describe('WalletPortabilityJobStore — touchActiveJobReservation (heartbeat)', () => {
+  it('refreshes the reservation TTL when the caller still owns it, using a single eval round trip rather than a separate get+set', async () => {
+    const { store, redis } = makeReadyStore()
+    const tenantId = 'tenant-1'
+    const jobId = 'job-1'
+    await store.tryReserveActiveJob(tenantId, jobId)
+
+    const getSpy = jest.spyOn(redis, 'get')
+    const setSpy = jest.spyOn(redis, 'set')
+    const evalSpy = jest.spyOn(redis, 'eval')
+
+    expect(await store.touchActiveJobReservation(tenantId, jobId)).toBe(true)
+
+    expect(evalSpy).toHaveBeenCalledTimes(1)
+    expect(getSpy).not.toHaveBeenCalled()
+    expect(setSpy).not.toHaveBeenCalled()
+
+    // Still held by job-1 afterward -- the refresh didn't accidentally clear or reassign it.
+    expect(await store.tryReserveActiveJob(tenantId, 'job-2')).toBe(jobId)
+  })
+
+  it('does not refresh (and does not clobber) a reservation currently held by a different job', async () => {
+    const { store } = makeReadyStore()
+    const tenantId = 'tenant-1'
+    await store.tryReserveActiveJob(tenantId, 'job-A')
+
+    expect(await store.touchActiveJobReservation(tenantId, 'job-B')).toBe(false)
+
+    // job-A's reservation is untouched -- still reported as the holder.
+    expect(await store.tryReserveActiveJob(tenantId, 'job-C')).toBe('job-A')
+  })
+
+  it('reports false for a reservation that no longer exists, without error', async () => {
+    const { store } = makeReadyStore()
+    expect(await store.touchActiveJobReservation('tenant-with-no-reservation', 'job-1')).toBe(false)
+  })
+
+  it('is a no-op that reports false when Redis is configured but not ready, rather than throwing', async () => {
+    const logger = makeLogger()
+    const store = new WalletPortabilityJobStore(logger as never, 'redis://fake-host:6379')
+    // Never emits 'ready' -- isRedisReady() stays false throughout.
+    await expect(store.touchActiveJobReservation('tenant-1', 'job-1')).resolves.toBe(false)
+  })
+
+  it('logs and reports false when Redis is ready but the eval itself fails, instead of throwing', async () => {
+    const logger = makeLogger()
+    const store = new WalletPortabilityJobStore(logger as never, 'redis://fake-host:6379')
+    const redis = lastRedisClient as FakeRedisClient
+    redis.emit('ready')
+    const tenantId = 'tenant-1'
+    const jobId = 'job-1'
+    await store.tryReserveActiveJob(tenantId, jobId)
+
+    redis.failNextEval = true
+    expect(await store.touchActiveJobReservation(tenantId, jobId)).toBe(false)
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('reservation touch failed'))
   })
 })

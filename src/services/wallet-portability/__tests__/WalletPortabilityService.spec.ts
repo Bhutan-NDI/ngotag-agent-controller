@@ -326,12 +326,12 @@ describe('WalletPortabilityService — exportWallet', () => {
 
       const heartbeat = (
         service as unknown as {
-          startHeartbeat: (jobId: string) => NodeJS.Timeout
+          startHeartbeat: (jobId: string, tenantId: string) => NodeJS.Timeout
         }
-      ).startHeartbeat(jobId)
+      ).startHeartbeat(jobId, TENANT_ID)
 
-      // One tick -- the heartbeat's own internal jobStore.touchIfActive() call is real async work
-      // even under fake timers, so flush microtasks after advancing.
+      // One tick -- the heartbeat's own internal jobStore.touchIfActive()/touchActiveJobReservation()
+      // calls are real async work even under fake timers, so flush microtasks after advancing.
       await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
 
       const job = await service.getJobStatus(jobId)
@@ -360,9 +360,9 @@ describe('WalletPortabilityService — exportWallet', () => {
 
       const heartbeat = (
         service as unknown as {
-          startHeartbeat: (jobId: string) => NodeJS.Timeout
+          startHeartbeat: (jobId: string, tenantId: string) => NodeJS.Timeout
         }
-      ).startHeartbeat(jobId)
+      ).startHeartbeat(jobId, TENANT_ID)
 
       await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
 

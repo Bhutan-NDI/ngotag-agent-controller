@@ -139,7 +139,7 @@ export class WalletPortabilityService {
     // before there's even a Pending record to refresh. Passed into runExport rather than started
     // there, since by the time runExport's own try block runs, this Pending window has already
     // passed. See the #73 review.
-    const heartbeat = this.startHeartbeat(jobId)
+    const heartbeat = this.startHeartbeat(jobId, tenantId)
 
     const now = new Date().toISOString()
     await this.jobStore.save({
@@ -388,11 +388,21 @@ export class WalletPortabilityService {
   // it back to non-terminal. touchIfActive does the check and the write as one atomic operation,
   // closing that window outright rather than narrowing it with an extra re-check. See the #73
   // review.
-  private startHeartbeat(jobId: string): NodeJS.Timeout {
+  //
+  // Also refreshes the tenant's active-job *reservation* (touchActiveJobReservation), not just
+  // the job record -- the reservation's own Redis TTL is set once, at tryReserveActiveJob time,
+  // and was never refreshed by anything. A transfer that's still genuinely alive and heartbeating
+  // past that TTL (there is no absolute time cap on a transfer, only the byte cap and the
+  // heartbeat itself) would otherwise have its reservation silently expire out of Redis while the
+  // job record stays alive, letting a second caller's tryReserveActiveJob succeed against a first
+  // job that never actually died. See the #73 review.
+  private startHeartbeat(jobId: string, tenantId: string): NodeJS.Timeout {
     return setInterval(() => {
-      this.jobStore.touchIfActive(jobId).catch((error) => {
-        this.logger.error(`[WalletPortabilityService] heartbeat failed for job ${jobId}: ${error}`)
-      })
+      Promise.all([this.jobStore.touchIfActive(jobId), this.jobStore.touchActiveJobReservation(tenantId, jobId)]).catch(
+        (error) => {
+          this.logger.error(`[WalletPortabilityService] heartbeat failed for job ${jobId}: ${error}`)
+        },
+      )
     }, HEARTBEAT_INTERVAL_MS)
   }
 
@@ -431,7 +441,7 @@ export class WalletPortabilityService {
     // InProgress is reached, so Pending gets the same refreshed lease InProgress already relies
     // on. Passed into runImport rather than started there, since by the time runImport's own try
     // block runs, this Pending window has already passed.
-    const heartbeat = this.startHeartbeat(jobId)
+    const heartbeat = this.startHeartbeat(jobId, tenantId)
 
     const now = new Date().toISOString()
     await this.jobStore.save({

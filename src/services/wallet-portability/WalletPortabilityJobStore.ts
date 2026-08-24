@@ -94,6 +94,35 @@ redis.call('DEL', KEYS[1])
 return 1
 `
 
+// Same ownership check as RELEASE_IF_OWNED_SCRIPT, but refreshes the reservation's TTL instead of
+// deleting it -- the heartbeat calls this on the same interval it already refreshes the job
+// record's own TTL. Without this, tryReserveActiveJob's 24h EX (set once, at reservation time,
+// never refreshed) is the *only* thing bounding how long a reservation survives, completely
+// independent of the heartbeat/lease mechanism that already makes the job record itself track
+// real liveness rather than a fixed duration. A transfer that's still genuinely alive and
+// heartbeating past 24h (there is no absolute time cap, only the byte cap and the heartbeat
+// itself) would have its reservation silently expire out of Redis while the job record stays
+// alive -- tryReserveActiveJob's SET...NX would then simply succeed for a second caller on the
+// same tenant, admitting a second concurrent job against a first one that never actually died.
+// Re-writes the exact same value just read back (not a freshly-constructed one), rather than
+// reconstructing {jobId, reservedAt} client-side -- the caller only has jobId at heartbeat time,
+// not the original reservedAt. Safe against a concurrent reclaim taking over the slot in between
+// for the same reason every other script in this file is: Redis executes the whole eval as one
+// atomic operation, so there is no "in between" for another client's write to land in. See the
+// #73 review.
+const TOUCH_ACTIVE_JOB_IF_OWNED_SCRIPT = `
+local current = redis.call('GET', KEYS[1])
+if not current then
+  return 0
+end
+local ok, parsed = pcall(cjson.decode, current)
+if not ok or parsed.jobId ~= ARGV[1] then
+  return 0
+end
+redis.call('SET', KEYS[1], current, 'EX', ARGV[2])
+return 1
+`
+
 // The heartbeat's job is to refresh updatedAt on a schedule, independent of any specific state
 // transition the caller already knows is correct — every other write in this class is a plain
 // get()-then-save() precisely because the caller (exportWallet/setJobStatus/etc.) already decided
@@ -565,6 +594,36 @@ export class WalletPortabilityJobStore {
     }
     if (this.activeJobMemoryStore.get(tenantId)?.jobId === jobId) {
       this.activeJobMemoryStore.delete(tenantId)
+    }
+  }
+
+  /**
+   * Refresh the active-job reservation's own TTL, called by the heartbeat on the same interval as
+   * touchIfActive -- see TOUCH_ACTIVE_JOB_IF_OWNED_SCRIPT above for why this exists: the
+   * reservation's 24h Redis TTL is otherwise set once, at tryReserveActiveJob time, and never
+   * refreshed, completely independent of whether the job it belongs to is still genuinely alive.
+   *
+   * No-op for the in-memory fallback: activeJobMemoryStore entries have no TTL of their own (see
+   * its own field comment), so there is nothing there that needs periodic refreshing -- the
+   * expiry problem this method closes is specific to Redis's `EX`. Returns whether the refresh
+   * landed (matching touchIfActive's own boolean convention) -- the heartbeat itself doesn't act
+   * on the result, but a caller that wants to know (or a test) can.
+   */
+  public async touchActiveJobReservation(tenantId: string, jobId: string): Promise<boolean> {
+    if (!this.redisClient || !this.isRedisReady()) return false
+    const key = `${ACTIVE_JOB_KEY_PREFIX}${tenantId}`
+    try {
+      const result = await this.redisClient.eval(
+        TOUCH_ACTIVE_JOB_IF_OWNED_SCRIPT,
+        1,
+        key,
+        jobId,
+        String(JOB_TTL_SECONDS),
+      )
+      return result === 1
+    } catch (error) {
+      this.logger.error(`[WalletPortabilityJobStore] Redis active-job reservation touch failed: ${error}`)
+      return false
     }
   }
 
