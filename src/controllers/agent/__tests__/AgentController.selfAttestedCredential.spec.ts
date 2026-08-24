@@ -175,7 +175,11 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     // and restores a top-level `credential` field for back-compat with 0.5.x consumers (platform
     // -> agent-service -> mobile wallet) that read response.credential: 0.6.2's W3cCredentialRecord
     // only exposes `credentialInstances`, dropping that field from JsonTransformer.toJSON entirely.
-    const response = result as { credential: { credentialSubject: unknown }; credentialInstances: unknown }
+    // SelfAttestedW3cCredentialResponse types `credential`/`credentialInstances` as JsonObject/
+    // JsonObject[] (accurate to what JsonTransformer.toJSON actually returns), which doesn't
+    // structurally overlap with this narrower test-only shape -- route through `unknown` first,
+    // same as TS's own suggestion for an intentional narrowing cast.
+    const response = result as unknown as { credential: { credentialSubject: unknown }; credentialInstances: unknown }
     expect(response.credentialInstances).toBeDefined() // the record's own current-shape fields are still present
     expect(response.credential).toBeDefined()
     // Pinned end-to-end: the claims survive all the way through to the returned response too — at
@@ -268,7 +272,9 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     })
     const controller = new AgentController()
 
-    const result = (await controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)) as {
+    // See the cast above: SelfAttestedW3cCredentialResponse's JsonObject-typed fields don't
+    // structurally overlap with this narrower test-only shape, so route through `unknown` first.
+    const result = (await controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)) as unknown as {
       credential: { credentialSubject: unknown }
     }
 
@@ -313,7 +319,9 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     })
     const controller = new AgentController()
 
-    const result = (await controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)) as {
+    // See the cast above: SelfAttestedW3cCredentialResponse's JsonObject-typed fields don't
+    // structurally overlap with this narrower test-only shape, so route through `unknown` first.
+    const result = (await controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)) as unknown as {
       credential: { credentialSubject: unknown }
     }
 
