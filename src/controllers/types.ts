@@ -461,6 +461,26 @@ export interface jsonLdCredentialOptions {
   proofType: string
 }
 
+// The actual runtime shape of AgentController.createW3cSelfAttestedCredential's response:
+// JsonTransformer.toJSON() of the stored W3cCredentialRecord (id, createdAt, credentialInstances,
+// plus Credo's own dynamic tag fields -- issuerId, subjectIds, etc. -- not individually modeled
+// here since JsonTransformer.toJSON<T>()'s own declared return type is just Record<string, any>,
+// there's nothing more specific upstream to model against), plus a `credential` field added for
+// back-compat with consumers that read response.credential directly (0.6.2's W3cCredentialRecord
+// only exposes credentialInstances via JsonTransformer.toJSON). Declared as this endpoint's return
+// type so tsoa's generated OpenAPI schema actually reflects the record id/credentialInstances a
+// caller relies on, instead of documenting only `credential` -- all the previous no-return-type
+// schema could tell client-generation tooling to expect. The index signature is deliberate, not a
+// cop-out: it documents that Credo's own dynamic tag fields are real and present, just not
+// individually enumerable from this endpoint's own code. See the #75 review.
+export interface SelfAttestedW3cCredentialResponse {
+  id: string
+  createdAt: string
+  credentialInstances: JsonObject[]
+  credential: JsonObject
+  [key: string]: unknown
+}
+
 export interface credentialPayloadToSign {
   issuerDID: string
   method: string

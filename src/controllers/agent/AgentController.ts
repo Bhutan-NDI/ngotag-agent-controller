@@ -3,6 +3,7 @@ import type {
   AgentToken,
   jsonLdCredentialOptions,
   SafeW3cJsonLdVerifyCredentialOptions,
+  SelfAttestedW3cCredentialResponse,
   VerifyDataOptions,
 } from '../types'
 import type {
@@ -258,7 +259,7 @@ export class AgentController extends Controller {
   public async createW3cSelfAttestedCredential(
     @Request() request: Req,
     @Body() selfAttestedCredentialOptions: jsonLdCredentialOptions,
-  ) {
+  ): Promise<SelfAttestedW3cCredentialResponse> {
     try {
       // Default DID is tracked as a tag on the DID's own DidRecord (see DidController.writeDid),
       // not a separate pointer record. Verified directly against this repo's installed
@@ -396,7 +397,13 @@ export class AgentController extends Controller {
       return {
         ...JsonTransformer.toJSON(selfAttestedStoredCredential),
         credential: JsonTransformer.toJSON(selfAttestedStoredCredential.firstCredential),
-      }
+        // JsonTransformer.toJSON<T>() is declared Record<string, any> regardless of T, so the
+        // compiler can't verify the spread above actually carries id/createdAt/credentialInstances
+        // -- it does; they're BaseRecord/W3cCredentialRecord's own real, always-present fields.
+        // The cast exists only so this method's return type can be declared explicitly for tsoa
+        // (see SelfAttestedW3cCredentialResponse's own comment); it isn't asserting anything the
+        // runtime object doesn't already guarantee.
+      } as SelfAttestedW3cCredentialResponse
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }
