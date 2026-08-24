@@ -1,4 +1,9 @@
 import type { RestMultiTenantAgentModules } from '../../cliAgent'
+import type {
+  ExportWalletResult,
+  ImportWalletResult,
+  WalletPortabilityJobRecord,
+} from '../../services/wallet-portability/WalletPortabilityTypes'
 import type { TenantRecord } from '@credo-ts/tenants'
 
 import { Agent, CacheModuleConfig, JsonTransformer, injectable, LogLevel, RecordNotFoundError } from '@credo-ts/core'
@@ -39,6 +44,18 @@ import { CreateTenantOptions } from '../types'
 // contract) into a server-generated-key one, which would be a bigger, separate change. See the
 // #72 review.
 const MIN_PASSKEY_LENGTH = 16
+
+// A SHA-256 digest, hex-encoded: exactly 64 hex characters. Without this, a malformed checksum
+// (too short, too long, non-hex, or just a typo) still passed the earlier `!checksum` truthiness
+// check, reserved the tenant's active-job slot, and downloaded up to MAX_DOWNLOAD_BYTES (2 GiB)
+// before runImport's own comparison inevitably failed -- wasted work and a wedged reservation for
+// something a cheap upfront regex already rules out. Case-insensitive: SHA-256 hex is conceptually
+// case-insensitive, but WalletPortabilityService's own comparison (`hash.digest('hex')`, always
+// lowercase, compared with `!==`) is case-sensitive, so an uppercase-but-arithmetically-correct
+// checksum would otherwise still fail downstream -- matches the platform-side DTO's own fix for
+// the identical gap (lowercase, don't just narrow the regex to reject uppercase). See the #73
+// review.
+const CHECKSUM_PATTERN = /^[a-f0-9]{64}$/i
 
 @Tags('MultiTenancy')
 @Security('jwt', [SCOPES.MULTITENANT_BASE_AGENT])
@@ -160,9 +177,17 @@ export class MultiTenancyController extends Controller {
    * artifact — the caller must retain it to import the artifact later; it is never generated
    * or persisted server-side.
    *
-   * @returns { jobId, status } — status is always 'pending' on this response
+   * Returns jobId/status; status is always 'pending' on this response.
    */
-  // These three were reachable in code (getTenantById/exportWallet's own catch blocks below) but
+  // Deliberately not `@returns { jobId, status }` in the docblock above -- tsoa's JSDoc parser
+  // reads the `{` right after `@returns` as an attempt at a JSDoc type annotation, truncates on
+  // the first `}` it finds inside the object literal, and mangles the rest into the generated
+  // OpenAPI description (this used to render as `", status } — status is always 'pending'..."`).
+  // The explicit Promise<ExportWalletResult> return type below already documents the real shape
+  // in the generated schema; the docblock's own line above only needs to say what the schema
+  // doesn't: that status is always 'pending' here specifically. See the #73 review.
+  //
+  // The next three @Response lines were reachable in code (getTenantById/exportWallet's own catch blocks below) but
   // undocumented in the generated OpenAPI spec — unlike @Res(), which requires a matching
   // TsoaResponse parameter the handler actually calls, @Response() documents a status this method
   // can throw without needing a corresponding parameter, matching every sibling endpoint in this
@@ -177,7 +202,7 @@ export class MultiTenancyController extends Controller {
     @Path('tenantId') tenantId: string,
     @Body() exportWalletRequest: { passKey: string },
     @Res() badRequestError: TsoaResponse<400, { reason: string }>,
-  ) {
+  ): Promise<ExportWalletResult> {
     const { passKey } = exportWalletRequest
     if (!passKey || passKey.length < MIN_PASSKEY_LENGTH) {
       return badRequestError(400, { reason: `passKey must be at least ${MIN_PASSKEY_LENGTH} characters.` })
@@ -222,7 +247,7 @@ export class MultiTenancyController extends Controller {
     @Path('tenantId') tenantId: string,
     @Path('jobId') jobId: string,
     @Res() notFoundError: TsoaResponse<404, { reason: string }>,
-  ) {
+  ): Promise<WalletPortabilityJobRecord> {
     try {
       const job = await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).getJobStatus(
         jobId,
@@ -255,9 +280,10 @@ export class MultiTenancyController extends Controller {
    * request landing in that window fails outright rather than queuing or waiting. See
    * WalletPortabilityService.runImport's docblock; not yet resolved.
    *
-   * @returns { jobId, status } — status is always 'pending' on this response
+   * Returns jobId/status; status is always 'pending' on this response.
    */
-  // See exportTenantWallet's identical comment on @Response vs @Res. See the #73 review.
+  // See exportTenantWallet's identical comments on @Response vs @Res, and on why this docblock's
+  // own return-shape line above isn't written as a literal `@returns {...}` tag. See the #73 review.
   @Response<{ message: string }>(404, 'Tenant not found')
   @Response<{ message: string }>(409, 'A wallet portability job is already running for this tenant')
   @Response<{ message: string }>(500, 'Internal Server Error')
@@ -267,7 +293,7 @@ export class MultiTenancyController extends Controller {
     @Path('tenantId') tenantId: string,
     @Body() importWalletRequest: { exportUrl: string; passKey: string; checksum: string },
     @Res() badRequestError: TsoaResponse<400, { reason: string }>,
-  ) {
+  ): Promise<ImportWalletResult> {
     const { exportUrl, passKey, checksum } = importWalletRequest
     if (!exportUrl || !passKey || !checksum) {
       return badRequestError(400, { reason: 'exportUrl, passKey and checksum are all required.' })
@@ -277,6 +303,9 @@ export class MultiTenancyController extends Controller {
     // was bypassable via import's own endpoint. See the #73 review.
     if (passKey.length < MIN_PASSKEY_LENGTH) {
       return badRequestError(400, { reason: `passKey must be at least ${MIN_PASSKEY_LENGTH} characters.` })
+    }
+    if (!CHECKSUM_PATTERN.test(checksum)) {
+      return badRequestError(400, { reason: 'checksum must be a 64-character hexadecimal SHA-256 digest.' })
     }
     const agent = request.agent as Agent<RestMultiTenantAgentModules>
     try {
@@ -294,7 +323,10 @@ export class MultiTenancyController extends Controller {
         tenantId,
         exportUrl,
         passKey,
-        checksum,
+        // Normalized to lowercase here, not just validated -- see CHECKSUM_PATTERN's own comment
+        // on why an uppercase-but-correct digest must not reach runImport's case-sensitive `!==`
+        // comparison against hash.digest('hex') unnormalized.
+        checksum.toLowerCase(),
       )
     } catch (error) {
       // Export and import share the tenant's profile namespace and can't safely run
@@ -318,7 +350,7 @@ export class MultiTenancyController extends Controller {
     @Path('tenantId') tenantId: string,
     @Path('jobId') jobId: string,
     @Res() notFoundError: TsoaResponse<404, { reason: string }>,
-  ) {
+  ): Promise<WalletPortabilityJobRecord> {
     try {
       const job = await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).getJobStatus(
         jobId,
