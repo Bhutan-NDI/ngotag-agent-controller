@@ -40,6 +40,7 @@ jest.unstable_mockModule('../../../cliAgent', () => ({}))
 
 const { DidController } = await import('../DidController')
 const { BadRequestError, InternalServerError } = await import('../../../errors')
+const { RecordNotFoundError } = await import('@credo-ts/core')
 
 const VALID_PRIVATE_KEY = 'a'.repeat(64)
 
@@ -177,6 +178,24 @@ describe('DidController.handleEthereum', () => {
     // Only the newer (just-created) duplicate is rolled back -- the original record is preserved.
     expect(agent._didRepository.delete).toHaveBeenCalledTimes(1)
     expect(agent._didRepository.delete).toHaveBeenCalledWith(agent.context, justCreatedRecord)
+  })
+
+  // Two genuinely concurrent duplicate-creation calls can both see the same duplicate set and
+  // both try to delete the same record -- whichever loses the race hits Askar's own
+  // RecordNotFoundError, not a real failure. That must not leak past the intended 400.
+  it('still rejects with BadRequestError, not the underlying error, when a concurrent call already deleted the duplicate', async () => {
+    const did = 'did:ethr:sepolia:0xabc'
+    const existingRecord = { did, createdAt: new Date('2026-01-01') }
+    const justCreatedRecord = { did, createdAt: new Date('2026-06-01') }
+    const agent = makeAgent({ didState: { state: 'finished', did, didDocument: {} } }, [
+      existingRecord,
+      justCreatedRecord,
+    ])
+    ;(agent._didRepository.delete as jest.Mock<() => Promise<never>>).mockRejectedValueOnce(
+      new RecordNotFoundError('already deleted', { recordType: 'DidRecord' }),
+    )
+
+    await expect(controller.handleEthereum(agent as never, ethereumOptions())).rejects.toBeInstanceOf(BadRequestError)
   })
 
   it('does not roll back or reject when the create call is the only record for this did (the common case)', async () => {

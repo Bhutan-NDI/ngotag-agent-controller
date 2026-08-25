@@ -17,6 +17,7 @@ import {
   DidKey,
   DidRepository,
   DidDocumentRole,
+  RecordNotFoundError,
 } from '@credo-ts/core'
 import { Key, KeyAlgorithm, askar } from '@openwallet-foundation/askar-nodejs'
 import axios from 'axios'
@@ -670,9 +671,17 @@ export class DidController extends Controller {
       role: DidDocumentRole.Created,
     })
     if (1 < matchingRecords.length) {
-      const [, ...duplicates] = [...matchingRecords].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      const duplicates = [...matchingRecords].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()).slice(1)
       for (const duplicate of duplicates) {
-        await didRepository.delete(agent.context, duplicate)
+        try {
+          await didRepository.delete(agent.context, duplicate)
+        } catch (error) {
+          // Two genuinely concurrent calls for the same private key can both land here and both
+          // pick the same duplicate to delete -- whichever loses that race hits "record not found",
+          // not a real failure. Swallow only that case so the loser still gets the intended 400
+          // below instead of an unrelated 404 from ErrorHandlingService mapping RecordNotFoundError.
+          if (!(error instanceof RecordNotFoundError)) throw error
+        }
       }
       throw new BadRequestError(
         `This ethereum DID already exists in this wallet: ${createdDid}. The supplied private key was already used to create a did:ethr DID here.`,
