@@ -43,11 +43,30 @@ const { BadRequestError, InternalServerError } = await import('../../../errors')
 
 const VALID_PRIVATE_KEY = 'a'.repeat(64)
 
-type MockAgent = { dids: { create: jest.Mock } }
+type MockAgent = {
+  dids: { create: jest.Mock }
+  dependencyManager: { resolve: jest.Mock }
+  context: unknown
+  _didRepository: { findByQuery: jest.Mock; delete: jest.Mock }
+}
 
-const makeAgent = (createResult: unknown): MockAgent => ({
-  dids: { create: jest.fn(async () => createResult) as unknown as jest.Mock },
-})
+// By default, findByQuery reports exactly the one record the create() call itself just made --
+// the "no duplicate" case every pre-existing test in this file implicitly relies on now that
+// handleEthereum always checks after a successful create. Pass existingRecords to model a
+// wallet that already had a DidRecord for this exact derived did:ethr identity before this call.
+const makeAgent = (createResult: unknown, existingRecords?: { did: string; createdAt: Date }[]): MockAgent => {
+  const createdDid = (createResult as { didState?: { did?: string } })?.didState?.did
+  const findByQuery = jest.fn(
+    async () => existingRecords ?? (createdDid ? [{ did: createdDid, createdAt: new Date() }] : []),
+  ) as jest.Mock
+  const deleteRecord = jest.fn(async () => undefined) as jest.Mock
+  return {
+    dids: { create: jest.fn(async () => createResult) as unknown as jest.Mock },
+    dependencyManager: { resolve: jest.fn(() => ({ findByQuery, delete: deleteRecord })) as jest.Mock },
+    context: {},
+    _didRepository: { findByQuery, delete: deleteRecord },
+  }
+}
 
 const ethereumOptions = (overrides: Record<string, unknown> = {}) =>
   ({
@@ -136,5 +155,37 @@ describe('DidController.handleEthereum', () => {
 
     expect(agentA.dids.create).toHaveBeenCalledTimes(1)
     expect(agentB.dids.create).toHaveBeenCalledTimes(1)
+  })
+
+  // EthrDidRegistrar.create() unconditionally saves a new DidRecord regardless of whether one
+  // already exists for the same derived identity (the same private key always derives the same
+  // did:ethr address) -- confirmed in production: this silently left two "created" DidRecord rows
+  // for the identical did, invisible until something else looked the DID up later (e.g. schema
+  // creation's getPublicKeyFromDid -> Credo's own findCreatedDid), which throws "Multiple records
+  // found" since it expects exactly one match.
+  it('rolls back and rejects when the wallet already had a DidRecord for this exact derived identity', async () => {
+    const did = 'did:ethr:sepolia:0xabc'
+    const existingRecord = { did, createdAt: new Date('2026-01-01') }
+    const justCreatedRecord = { did, createdAt: new Date('2026-06-01') }
+    const agent = makeAgent({ didState: { state: 'finished', did, didDocument: {} } }, [
+      existingRecord,
+      justCreatedRecord,
+    ])
+
+    await expect(controller.handleEthereum(agent as never, ethereumOptions())).rejects.toBeInstanceOf(BadRequestError)
+
+    // Only the newer (just-created) duplicate is rolled back -- the original record is preserved.
+    expect(agent._didRepository.delete).toHaveBeenCalledTimes(1)
+    expect(agent._didRepository.delete).toHaveBeenCalledWith(agent.context, justCreatedRecord)
+  })
+
+  it('does not roll back or reject when the create call is the only record for this did (the common case)', async () => {
+    const did = 'did:ethr:sepolia:0xdef'
+    const agent = makeAgent({ didState: { state: 'finished', did, didDocument: {} } })
+
+    const result = await controller.handleEthereum(agent as never, ethereumOptions())
+
+    expect(agent._didRepository.delete).not.toHaveBeenCalled()
+    expect(result).toEqual({ did, didDocument: {} })
   })
 })

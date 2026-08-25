@@ -15,6 +15,8 @@ import {
   LogLevel,
   Agent,
   DidKey,
+  DidRepository,
+  DidDocumentRole,
 } from '@credo-ts/core'
 import { Key, KeyAlgorithm, askar } from '@openwallet-foundation/askar-nodejs'
 import axios from 'axios'
@@ -650,6 +652,31 @@ export class DidController extends Controller {
     if (createDidResponse?.didState?.state !== 'finished') {
       const reason = (createDidResponse?.didState as { reason?: string })?.reason ?? 'Unknown error'
       throw new InternalServerError(`Failed to create did:ethr: ${reason}`)
+    }
+
+    // EthrDidRegistrar.create() unconditionally saves a new DidRecord -- it never checks whether
+    // one already exists for the same derived identity (the same private key always derives the
+    // same did:ethr address). Calling this twice for the same tenant with the same private key
+    // silently leaves two "created" DidRecord rows for the identical did. That's invisible here --
+    // create() itself never fails -- but Credo's own findCreatedDid (findSingleByQuery) throws
+    // "Multiple records found" the next time anything looks the DID up, e.g. the Ethereum module's
+    // getPublicKeyFromDid during schema creation/migration. Confirmed in production. Detect it
+    // immediately, roll back the row this call just added, and fail loudly here instead of days
+    // later on an unrelated schema call.
+    const createdDid = createDidResponse.didState.did as string
+    const didRepository = agent.dependencyManager.resolve(DidRepository)
+    const matchingRecords = await didRepository.findByQuery(agent.context, {
+      $or: [{ alternativeDids: [createdDid] }, { did: createdDid }],
+      role: DidDocumentRole.Created,
+    })
+    if (1 < matchingRecords.length) {
+      const [, ...duplicates] = [...matchingRecords].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      for (const duplicate of duplicates) {
+        await didRepository.delete(agent.context, duplicate)
+      }
+      throw new BadRequestError(
+        `This ethereum DID already exists in this wallet: ${createdDid}. The supplied private key was already used to create a did:ethr DID here.`,
+      )
     }
 
     const didResponse = {
