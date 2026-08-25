@@ -1,13 +1,17 @@
 import type { ILogObject } from 'tslog'
 
 import { LogLevel, BaseLogger } from '@credo-ts/core'
-import { appendFileSync } from 'fs'
+import { appendFile } from 'fs'
 import { Logger } from 'tslog'
 
 import { otelLogger } from '../tracer'
 
+// Opt-in: unset means no file sink. ECS ships stdout only, so the file is never collected there.
+const logFilePath = process.env.LOG_FILE_PATH
+
 function logToTransport(logObject: ILogObject) {
-  appendFileSync('logs.txt', JSON.stringify(logObject) + '\n')
+  // Async and best-effort: a blocking or throwing write must never stall or kill the agent.
+  appendFile(logFilePath as string, `${JSON.stringify(logObject)}\n`, () => undefined)
 }
 
 export class TsLogger extends BaseLogger {
@@ -29,23 +33,26 @@ export class TsLogger extends BaseLogger {
 
     this.logger = new Logger({
       name,
+      // JSON in deployed envs so CloudWatch Logs Insights can query fields; pretty locally.
+      type: 'json' === process.env.LOG_FORMAT ? 'json' : 'pretty',
       minLevel: this.logLevel == LogLevel.off ? undefined : this.tsLogLevelMap[this.logLevel],
       ignoreStackLevels: 5,
-      attachedTransports: [
-        {
-          transportLogger: {
-            silly: logToTransport,
-            debug: logToTransport,
-            trace: logToTransport,
-            info: logToTransport,
-            warn: logToTransport,
-            error: logToTransport,
-            fatal: logToTransport,
-          },
-          // always log to file
-          minLevel: 'silly',
-        },
-      ],
+      attachedTransports: logFilePath
+        ? [
+            {
+              transportLogger: {
+                silly: logToTransport,
+                debug: logToTransport,
+                trace: logToTransport,
+                info: logToTransport,
+                warn: logToTransport,
+                error: logToTransport,
+                fatal: logToTransport,
+              },
+              minLevel: 'silly',
+            },
+          ]
+        : [],
     })
   }
 
