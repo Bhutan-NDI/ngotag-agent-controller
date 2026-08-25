@@ -459,6 +459,11 @@ export interface jsonLdCredentialOptions {
   type: Array<string>
   credentialSubject: SingleOrArray<JsonObject>
   proofType: string
+  // ISO 8601. Optional in the VC data model, but W3cCredential's constructor always sets its own
+  // expirationDate field (even to undefined), and @digitalcredentials/vc's issuer checks
+  // 'expirationDate' in credential rather than its truthiness -- so signing throws unless a real
+  // date reaches it. Defaulted server-side when omitted; see AgentController.
+  expirationDate?: string
 }
 
 // The actual runtime shape of AgentController.createW3cSelfAttestedCredential's response:

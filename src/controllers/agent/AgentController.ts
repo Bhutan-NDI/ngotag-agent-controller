@@ -24,13 +24,19 @@ import {
 } from '@credo-ts/core'
 import { Request as Req } from 'express'
 import jwt from 'jsonwebtoken'
+import { randomUUID } from 'node:crypto'
 import { Controller, Get, Route, Tags, Security, Request, Post, Body } from 'tsoa'
 import { injectable } from 'tsyringe'
 
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
-import { NotFoundError } from '../../errors'
+import { NotFoundError, BadRequestError } from '../../errors'
 import { verifyDidBoundSignature } from '../../utils/didSignatureVerification'
+
+// 100 years: effectively non-expiring default for a self-attested credential whose caller didn't
+// request a real expiry. See createW3cSelfAttestedCredential's own comment for why some value is
+// unavoidable here regardless of caller intent.
+const SELF_ATTESTED_DEFAULT_EXPIRATION_MS = 100 * 365.25 * 24 * 60 * 60 * 1000
 
 @Tags('Agent')
 @Route('/agent')
@@ -352,7 +358,23 @@ export class AgentController extends Controller {
         type: selfAttestedType,
         credentialSubject: selfAttestedSubjectOptions,
         proofType: selfAttestedProofType,
+        expirationDate: selfAttestedExpirationDate,
       } = selfAttestedCredentialOptions
+
+      // A caller-supplied date must actually parse -- Date accepts near-anything and silently
+      // yields Invalid Date otherwise, which would reach the signer as a broken expirationDate
+      // string instead of a clear 400 here.
+      if (selfAttestedExpirationDate && Number.isNaN(Date.parse(selfAttestedExpirationDate))) {
+        throw new BadRequestError(`expirationDate '${selfAttestedExpirationDate}' is not a valid date`)
+      }
+      // W3cCredential's constructor always assigns its own expirationDate field, even to
+      // undefined, and @digitalcredentials/vc's issuer checks `'expirationDate' in credential`
+      // rather than its truthiness -- so signing throws "must be a valid date: undefined" unless
+      // a real date reaches it, regardless of whether the caller wanted one. There is no way to
+      // omit the field entirely given that class's behavior, so default far enough out to be
+      // effectively non-expiring for a caller who didn't ask for a real expiry. See the #75 review.
+      const selfAttestedExpiration =
+        selfAttestedExpirationDate ?? new Date(Date.now() + SELF_ATTESTED_DEFAULT_EXPIRATION_MS).toISOString()
 
       const toSubject = (subject: JsonObject): W3cCredentialSubjectOptions => ({
         id: selfDid,
@@ -362,10 +384,19 @@ export class AgentController extends Controller {
         ? selfAttestedSubjectOptions.map(toSubject)
         : toSubject(selfAttestedSubjectOptions)
       const selfAttestedW3cCredential: W3cCredentialOptions = {
+        // Same unconditional-class-field issue as expirationDate above: W3cCredential's
+        // constructor always assigns its own `id`, and the vc/v1 @context aliases the JSON key
+        // "id" to "@id" -- an undefined id reaches jsonld-signatures as a literal `@id: undefined`
+        // and fails canonicalization with "'@id' value must a string" before signing even gets to
+        // check the proof purpose. A caller-supplied id isn't part of this endpoint's contract
+        // (self-attested credentials aren't tracked by an external id), so this is always
+        // generated, not defaulted-when-absent like expirationDate. See the #75 review.
+        id: `urn:uuid:${randomUUID()}`,
         context: selfAttestedContext,
         type: selfAttestedType,
         issuer: selfDid,
         issuanceDate: new Date().toISOString(),
+        expirationDate: selfAttestedExpiration,
         credentialSubject: selfAttestedSubject,
       }
       const selfAttestedJsonLdCredential: W3cJsonLdSignCredentialOptions = {

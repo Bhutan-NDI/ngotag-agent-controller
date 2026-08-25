@@ -194,6 +194,85 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     expect(agent.dids.resolveCreatedDidDocumentWithKeys).toHaveBeenCalledWith(SELF_DID)
   })
 
+  // W3cCredential's constructor always assigns its own `id`/`expirationDate` fields, even to
+  // undefined -- and Credo's JsonTransformer.toJSON (exposeDefaultValues: true) carries that
+  // undefined value through to the plain object @digitalcredentials/vc's issuer actually checks,
+  // which looks at key presence (`'expirationDate' in credential`), not truthiness. A real
+  // (non-mocked) signCredential call throws "must be a valid date: undefined" for id/expirationDate
+  // alike -- confirmed directly against a real in-memory Credo agent, not just inferred from
+  // reading the library. Neither field was ever set here before this fix. See the #75 review.
+  it('always supplies a real id and a far-future default expirationDate, since W3cCredential/vc-js require both present', async () => {
+    const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
+      return new W3cJsonLdVerifiableCredential({
+        ...options.credential,
+        proof: {
+          type: 'Ed25519Signature2018',
+          proofPurpose: 'assertionMethod',
+          verificationMethod: VERIFICATION_METHOD_ID,
+          created: new Date().toISOString(),
+          jws: 'fake-jws',
+        },
+      })
+    }) as jest.Mock
+    const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+    const controller = new AgentController()
+    const before = Date.now()
+
+    await controller.createW3cSelfAttestedCredential(makeRequest(agent), REQUEST_BODY)
+
+    const signedWith = signCredential.mock.calls[0][0] as {
+      credential: InstanceType<typeof W3cCredential>
+    }
+    expect(signedWith.credential.id).toMatch(/^urn:uuid:[0-9a-f-]{36}$/)
+    const expiresAt = Date.parse(signedWith.credential.expirationDate as string)
+    expect(expiresAt).toBeGreaterThan(before + 99 * 365 * 24 * 60 * 60 * 1000) // ~99+ years out
+  })
+
+  it('uses a caller-supplied expirationDate instead of the default, when one is provided', async () => {
+    const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
+      return new W3cJsonLdVerifiableCredential({
+        ...options.credential,
+        proof: {
+          type: 'Ed25519Signature2018',
+          proofPurpose: 'assertionMethod',
+          verificationMethod: VERIFICATION_METHOD_ID,
+          created: new Date().toISOString(),
+          jws: 'fake-jws',
+        },
+      })
+    }) as jest.Mock
+    const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+    const controller = new AgentController()
+    const explicitExpiration = '2030-01-01T00:00:00.000Z'
+
+    await controller.createW3cSelfAttestedCredential(makeRequest(agent), {
+      ...(REQUEST_BODY as Record<string, unknown>),
+      expirationDate: explicitExpiration,
+    } as never)
+
+    const signedWith = signCredential.mock.calls[0][0] as {
+      credential: InstanceType<typeof W3cCredential>
+    }
+    expect(signedWith.credential.expirationDate).toBe(explicitExpiration)
+  })
+
+  it('rejects a caller-supplied expirationDate that does not parse as a date, before ever signing', async () => {
+    const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    const signCredential = jest.fn() as jest.Mock
+    const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+    const controller = new AgentController()
+
+    await expect(
+      controller.createW3cSelfAttestedCredential(makeRequest(agent), {
+        ...(REQUEST_BODY as Record<string, unknown>),
+        expirationDate: 'not-a-date',
+      } as never),
+    ).rejects.toThrow('not-a-date')
+    expect(signCredential).not.toHaveBeenCalled()
+  })
+
   it('supports an array credentialSubject — each entry gets the agent DID as id and its own object as claims', async () => {
     // assertionMethod, not verificationMethod: the endpoint only ever signs with a key listed
     // under assertionMethod (see AgentController's own comment on why verificationMethod alone
