@@ -22,7 +22,11 @@
       "environment": [
         {
           "name": "AFJ_REST_LOG_LEVEL",
-          "value": "1"
+          "value": "3"
+        },
+        {
+          "name": "LOG_FORMAT",
+          "value": "json"
         }
       ],
       "environmentFiles": [
