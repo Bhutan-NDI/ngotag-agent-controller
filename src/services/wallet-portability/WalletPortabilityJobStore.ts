@@ -74,14 +74,11 @@ else
 end
 `
 
-// Same TOCTOU class as the reclaim script above, on the release path instead: a plain GET-then-DEL
-// lets a newer reservation get created in the gap and then deleted by a release that believed it
-// still owned the (now stale) value it read. Compares only jobId, not the full {jobId, reservedAt}
-// value tryReserveActiveJob wrote — releaseActiveJob only ever receives (tenantId, jobId), and
-// re-reading the value first to compare it in full would reintroduce the exact TOCTOU this script
-// exists to remove. cjson is a standard part of Redis's Lua scripting environment, not an
-// application dependency.
-const RELEASE_IF_OWNED_SCRIPT = `
+// Shared by RELEASE_IF_OWNED_SCRIPT and TOUCH_ACTIVE_JOB_IF_OWNED_SCRIPT below — both only ever
+// act on a reservation if the caller's jobId matches the one holding it. Factored out so a third
+// owned-script doesn't have to hand-copy this again. cjson is a standard part of Redis's Lua
+// scripting environment, not an application dependency. See the #73 review.
+const OWNERSHIP_CHECK_PREAMBLE = `
 local current = redis.call('GET', KEYS[1])
 if not current then
   return 0
@@ -90,6 +87,16 @@ local ok, parsed = pcall(cjson.decode, current)
 if not ok or parsed.jobId ~= ARGV[1] then
   return 0
 end
+`
+
+// Same TOCTOU class as the reclaim script above, on the release path instead: a plain GET-then-DEL
+// lets a newer reservation get created in the gap and then deleted by a release that believed it
+// still owned the (now stale) value it read. Compares only jobId, not the full {jobId, reservedAt}
+// value tryReserveActiveJob wrote — releaseActiveJob only ever receives (tenantId, jobId), and
+// re-reading the value first to compare it in full would reintroduce the exact TOCTOU this script
+// exists to remove.
+const RELEASE_IF_OWNED_SCRIPT = `
+${OWNERSHIP_CHECK_PREAMBLE}
 redis.call('DEL', KEYS[1])
 return 1
 `
@@ -111,14 +118,7 @@ return 1
 // atomic operation, so there is no "in between" for another client's write to land in. See the
 // #73 review.
 const TOUCH_ACTIVE_JOB_IF_OWNED_SCRIPT = `
-local current = redis.call('GET', KEYS[1])
-if not current then
-  return 0
-end
-local ok, parsed = pcall(cjson.decode, current)
-if not ok or parsed.jobId ~= ARGV[1] then
-  return 0
-end
+${OWNERSHIP_CHECK_PREAMBLE}
 redis.call('SET', KEYS[1], current, 'EX', ARGV[2])
 return 1
 `

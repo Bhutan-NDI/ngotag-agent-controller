@@ -25,8 +25,10 @@
  *      already partially created the target profile before failing (the rollback clears it first).
  *   9. A downloaded artifact with zero or more than one profile fails clearly, before any rename.
  *      An artifact with exactly one profile imports even when that profile's name differs from
- *      the target tenant's own — restoring onto a rebuilt agent / a freshly created tenant, or a
- *      legacy Python-exported artifact, are not required to match by name.
+ *      the target tenant's own — restoring onto a rebuilt agent / a freshly created tenant is not
+ *      required to match by name. This is verified only for artifacts produced by this service's
+ *      own export; a legacy Python `askar-wallet-tools` artifact is explicitly NOT covered here —
+ *      see the source comment at the fromProfile assertion in runImport for why.
  *   10. A second export/import for a tenant that already has one in flight is rejected with a
  *       conflict rather than racing it — released once the first job reaches a terminal state.
  *

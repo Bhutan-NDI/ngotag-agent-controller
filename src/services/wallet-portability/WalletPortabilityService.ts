@@ -50,9 +50,11 @@ const MAX_DECOMPRESSED_BYTES = MAX_DOWNLOAD_BYTES
 // never called, and the job record stays Pending/InProgress, which is exactly the state
 // isReservationStillActive treats as "still running" -- every subsequent export AND import for the
 // tenant 409s until the process restarts (activeJobMemoryStore has no TTL) or, at best, the 24h
-// Redis TTL expires. `timeout` covers the whole request/response cycle, not just connect, so a
-// stalled body (not just a refused connection) still rejects this fetch and reaches runImport's
-// catch -> Failed -> finally -> reservation released.
+// Redis TTL expires. `timeout` only covers time-to-first-byte though -- it's cleared the instant
+// headers arrive, so a stalled *body* (headers received, then the socket goes half-open) is not
+// caught by this option at all. That's what the inactivity timer further down (see its own comment,
+// around downloadArtifact) actually guards against; this timeout only rejects a connect/response
+// stall, not a body stall.
 const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000
 
 // Deliberately NOT typed as the real `AWS.S3` class (only the 2 methods actually used here) —
@@ -672,6 +674,13 @@ export class WalletPortabilityService {
               }
               await baseStore.renameProfile({ fromProfile: backupProfile as string, toProfile: profile })
               backupExists = false
+            } else {
+              // Same "tenant left without a working profile, manual intervention required" outcome
+              // as the catch block below -- just reached without renameProfile ever throwing. Must
+              // log loudly here too, or an operator has no trail pointing at backupProfile at all.
+              this.logger.error(
+                `[WalletPortabilityService] import job ${jobId} rollback skipped — tenant '${tenantId}' has no active profile to roll back into, manual intervention required. Tenant's real data may still be at profile '${backupProfile}'.`,
+              )
             }
           })
         } catch (rollbackError) {
