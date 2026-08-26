@@ -84,11 +84,18 @@ function isPrivateOrLoopbackIPv6(ip: string): boolean {
   if (
     '::1' === lower || // loopback
     '::' === lower || // unspecified address -- loops back to the host on most stacks
-    lower.startsWith('fe80:') ||
-    lower.startsWith('fc') ||
-    lower.startsWith('fd')
+    lower.startsWith('fc') || // fc00::/7 unique-local -- 'fc'/'fd' as hex-nibble prefixes exactly
+    lower.startsWith('fd') // cover this /7 range, unlike the fe80::/10 case below
   ) {
-    return true // loopback, unspecified, link-local, or unique-local (fc00::/7)
+    return true
+  }
+  // fe80::/10 link-local spans first-hextet 0xfe80-0xfebf (fe80::, fe90::, ..., febf:: are all
+  // equally link-local) -- a literal 'fe80:' prefix match only catches the first of those and
+  // misses the rest. Range-check the first hextet instead, same pattern as the IPv4 octet range
+  // checks above. See the #75 review.
+  const firstHextet = parseInt(lower.split(':')[0], 16)
+  if (!Number.isNaN(firstHextet) && 0xfe80 <= firstHextet && 0xfebf >= firstHextet) {
+    return true
   }
   const mappedIPv4 = ipv4MappedToIPv4(lower)
   if (mappedIPv4) {

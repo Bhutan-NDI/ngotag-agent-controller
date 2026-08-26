@@ -358,6 +358,11 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
       ['https://192.168.1.1/context.jsonld', 'IPv4 private (192.168.0.0/16)'],
       ['https://[::1]/context.jsonld', 'IPv6 loopback'],
       ['https://[fe80::1]/context.jsonld', 'IPv6 link-local'],
+      // fe80::/10 spans first-hextet 0xfe80-0xfebf, not just the literal "fe80" prefix -- these
+      // three are equally link-local and were missed by a naive prefix match. See the #75 review.
+      ['https://[fe90::1]/context.jsonld', 'IPv6 link-local (fe90::/10 subrange)'],
+      ['https://[fea0::1]/context.jsonld', 'IPv6 link-local (fea0::/10 subrange)'],
+      ['https://[febf::1]/context.jsonld', 'IPv6 link-local (febf::/10 subrange, upper boundary)'],
       ['https://[fc00::1]/context.jsonld', 'IPv6 unique-local'],
       ['https://[::ffff:127.0.0.1]/context.jsonld', 'IPv4-mapped IPv6 loopback (filter-bypass form)'],
       ['https://[::ffff:0:127.0.0.1]/context.jsonld', 'NAT64/IPv4-translated IPv6 loopback (filter-bypass form)'],
@@ -388,6 +393,34 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
       await controller.createW3cSelfAttestedCredential(makeRequest(agent), {
         ...(REQUEST_BODY as Record<string, unknown>),
         '@context': ['https://www.w3.org/2018/credentials/v1', { '@version': 1.1 }],
+      } as never)
+
+      expect(signCredential).toHaveBeenCalled()
+    })
+
+    it('does not block an address just past the fe80::/10 link-local boundary', async () => {
+      // fec0:: is one hextet past febf::, the upper edge of fe80::/10 -- locks in the exact
+      // boundary so a future "fix" doesn't silently widen the range. (fec0::/10 is itself a
+      // separate, deprecated site-local block, out of scope for this guard.)
+      const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
+      const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
+        return new W3cJsonLdVerifiableCredential({
+          ...options.credential,
+          proof: {
+            type: 'Ed25519Signature2018',
+            proofPurpose: 'assertionMethod',
+            verificationMethod: VERIFICATION_METHOD_ID,
+            created: new Date().toISOString(),
+            jws: 'fake-jws',
+          },
+        })
+      }) as jest.Mock
+      const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+      const controller = new AgentController()
+
+      await controller.createW3cSelfAttestedCredential(makeRequest(agent), {
+        ...(REQUEST_BODY as Record<string, unknown>),
+        '@context': ['https://www.w3.org/2018/credentials/v1', 'https://[fec0::1]/context.jsonld'],
       } as never)
 
       expect(signCredential).toHaveBeenCalled()
