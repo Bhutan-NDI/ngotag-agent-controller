@@ -5337,6 +5337,23 @@
 				},
 				"type": "object"
 			},
+			"DidCommProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_": {
+				"properties": {},
+				"type": "object",
+				"description": "Get the input or output for the getCredentialsForRequest and selectCredentialsForRequest method with specific format data"
+			},
+			"GetCredentialsForProofRequestReturn__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_": {
+				"properties": {
+					"proofFormats": {
+						"$ref": "#/components/schemas/DidCommProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_"
+					}
+				},
+				"required": [
+					"proofFormats"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"OpenId4VcVerifierRecord": {
 				"$ref": "#/components/schemas/Record_string.unknown_",
 				"description": "For OID4VC you need to expos metadata files. Each issuer needs to host this metadata. This is not the case for DIDComm where we can just have one /didcomm endpoint.\nSo we create a record per openid issuer/verifier that you want, and each tenant can create multiple issuers/verifiers which have different endpoints\nand metadata files"
@@ -11232,6 +11249,114 @@
 					}
 				},
 				"description": "Return proofRecord",
+				"tags": [
+					"DIDComm - Proofs"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "proofRecordId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"/didcomm/proofs/{proofRecordId}/decline-request": {
+			"post": {
+				"operationId": "DeclineRequest",
+				"responses": {
+					"200": {
+						"description": "ProofRecord",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/Record_string.unknown_"
+								},
+								"examples": {
+									"Example 1": {
+										"value": {
+											"metadata": {},
+											"id": "821f9b26-ad04-4f56-89b6-e2ef9c72b36e",
+											"createdAt": "2022-01-01T00:00:00.000Z",
+											"connectionId": "2aecf74c-3073-4f98-9acb-92415d096834",
+											"threadId": "0019d466-5eea-4269-8c40-031b4896c5b7",
+											"protocolVersion": "v1"
+										}
+									}
+								}
+							}
+						}
+					}
+				},
+				"description": "Decline a received presentation request as prover, optionally sending a problem-report\nmessage to the verifier associated with the proof record.",
+				"tags": [
+					"DIDComm - Proofs"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "proofRecordId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"problemReportDescription": {
+										"type": "string"
+									},
+									"sendProblemReport": {
+										"type": "boolean"
+									}
+								},
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/didcomm/proofs/{proofRecordId}/credentials-for-request": {
+			"get": {
+				"operationId": "GetCredentialsForRequest",
+				"responses": {
+					"200": {
+						"description": "the credentials satisfying each requested attribute/predicate",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/GetCredentialsForProofRequestReturn__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_"
+								}
+							}
+						}
+					}
+				},
+				"description": "Retrieve the credentials that satisfy a received presentation request, without selecting or\naccepting any of them — lets the holder choose among multiple matching credentials before\naccepting. acceptRequest (above) already auto-selects via selectCredentialsForRequest; this is\nthe corresponding \"let the caller choose first\" read path.",
 				"tags": [
 					"DIDComm - Proofs"
 				],
