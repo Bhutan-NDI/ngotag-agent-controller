@@ -1,17 +1,40 @@
 import type { ILogObject } from 'tslog'
 
 import { LogLevel, BaseLogger } from '@credo-ts/core'
-import { appendFile } from 'fs'
+import { promises as fsPromises } from 'fs'
 import { Logger } from 'tslog'
 
 import { otelLogger } from '../tracer'
 
 // Opt-in: unset means no file sink. ECS ships stdout only, so the file is never collected there.
 const logFilePath = process.env.LOG_FILE_PATH
+// Bounds the sink so an opt-in debug flag can't fill the disk: one rotation, `${path}.1`, kept as backup.
+const maxLogFileBytes = Number(process.env.LOG_FILE_MAX_BYTES) || 10 * 1024 * 1024
+
+// Serializes writes so rotation (stat -> rename -> append) can't race across overlapping log calls.
+let writeQueue: Promise<void> = Promise.resolve()
+
+async function writeLogLine(path: string, line: string) {
+  try {
+    const stats = await fsPromises.stat(path)
+    if (stats.size >= maxLogFileBytes) {
+      await fsPromises.rename(path, `${path}.1`)
+    }
+  } catch {
+    // No existing file to rotate yet — fall through to the initial append.
+  }
+  await fsPromises.appendFile(path, line)
+}
 
 function logToTransport(logObject: ILogObject) {
-  // Async and best-effort: a blocking or throwing write must never stall or kill the agent.
-  appendFile(logFilePath as string, `${JSON.stringify(logObject)}\n`, () => undefined)
+  const line = `${JSON.stringify(logObject)}\n`
+  // Chained via .catch (not a separate call) so a failed write can't leave writeQueue permanently
+  // rejected — that would silently skip every write queued after it.
+  writeQueue = writeQueue
+    .then(() => writeLogLine(logFilePath as string, line))
+    .catch((error) => {
+      process.stderr.write(`[logger] failed to write to LOG_FILE_PATH: ${String(error)}\n`)
+    })
 }
 
 export class TsLogger extends BaseLogger {
@@ -31,28 +54,34 @@ export class TsLogger extends BaseLogger {
   public constructor(logLevel: LogLevel, name: string = 'credo-controller-service' as string) {
     super(logLevel)
 
+    const minLevel = this.logLevel == LogLevel.off ? undefined : this.tsLogLevelMap[this.logLevel]
+
     this.logger = new Logger({
       name,
       // JSON in deployed envs so CloudWatch Logs Insights can query fields; pretty locally.
       type: 'json' === process.env.LOG_FORMAT ? 'json' : 'pretty',
-      minLevel: this.logLevel == LogLevel.off ? undefined : this.tsLogLevelMap[this.logLevel],
+      minLevel,
       ignoreStackLevels: 5,
-      attachedTransports: logFilePath
-        ? [
-            {
-              transportLogger: {
-                silly: logToTransport,
-                debug: logToTransport,
-                trace: logToTransport,
-                info: logToTransport,
-                warn: logToTransport,
-                error: logToTransport,
-                fatal: logToTransport,
+      // minLevel is undefined only when LogLevel.off, in which case no transport should fire anyway.
+      attachedTransports:
+        logFilePath && minLevel
+          ? [
+              {
+                transportLogger: {
+                  silly: logToTransport,
+                  debug: logToTransport,
+                  trace: logToTransport,
+                  info: logToTransport,
+                  warn: logToTransport,
+                  error: logToTransport,
+                  fatal: logToTransport,
+                },
+                // tslog filters attached transports independently of the logger's own minLevel,
+                // so this must be set explicitly to match — otherwise the file sink gets everything.
+                minLevel,
               },
-              minLevel: 'silly',
-            },
-          ]
-        : [],
+            ]
+          : [],
     })
   }
 
