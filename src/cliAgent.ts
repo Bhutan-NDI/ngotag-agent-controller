@@ -76,6 +76,7 @@ import {
 } from './purge/PurgeSchedulerFactory'
 import { buildPurgeConfig } from './purge/PurgeTypes'
 import { setupServer } from './server'
+import { shutdownWalletPortabilityService } from './services/wallet-portability/WalletPortabilityService'
 import { CachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
 import { AuthTypes, getAuthType } from './utils/auth'
@@ -675,6 +676,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     if (cache instanceof RedisCache) {
       await cache.disconnect()
     }
+    await shutdownWalletPortabilityService()
     await agent.shutdown()
     process.exit(0)
   }
