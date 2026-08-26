@@ -207,6 +207,22 @@ async function waitForJobStatus(
   }
 }
 
+// runImport/runExport set the job's terminal status *inside* their try block, and only remove
+// workDir afterward, in the finally block below that -- so there's a real window, between those
+// two awaits, where waitForJobStatus's independent poll of the job record can already observe the
+// terminal status while workDir still exists on disk. Flaky under CI's heavier scheduling load.
+// Poll the filesystem too, rather than asserting it synchronously right after the status flips.
+async function waitForPathRemoved(path: string, timeoutMs = 5000) {
+  const start = Date.now()
+
+  while (existsSync(path)) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`Timed out waiting for '${path}' to be removed`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
 beforeEach(() => {
   jest.clearAllMocks()
   process.env.AWS_WALLET_EXPORT_BUCKET = 'test-wallet-export-bucket'
@@ -690,7 +706,7 @@ describe('WalletPortabilityService — importWallet', () => {
 
     expect(mkdtempSpy.mock.results).toHaveLength(1)
     const workDir = (await mkdtempSpy.mock.results[0].value) as string
-    expect(existsSync(workDir)).toBe(false)
+    await waitForPathRemoved(workDir)
     mkdtempSpy.mockRestore()
   })
 
@@ -712,7 +728,7 @@ describe('WalletPortabilityService — importWallet', () => {
 
     expect(mkdtempSpy.mock.results).toHaveLength(1)
     const workDir = (await mkdtempSpy.mock.results[0].value) as string
-    expect(existsSync(workDir)).toBe(false)
+    await waitForPathRemoved(workDir)
     mkdtempSpy.mockRestore()
   })
 
