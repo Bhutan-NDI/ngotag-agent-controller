@@ -32,6 +32,7 @@ import { injectable } from 'tsyringe'
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { NotFoundError, BadRequestError } from '../../errors'
+import { findDefaultDidRecords } from '../../utils/defaultDid'
 import { verifyDidBoundSignature } from '../../utils/didSignatureVerification'
 
 // 100 years: effectively non-expiring default for a self-attested credential whose caller didn't
@@ -354,18 +355,12 @@ export class AgentController extends Controller {
       // tagged record rather than throwing RecordDuplicateError, since a wallet migrated from the
       // legacy stack may already carry more than one isDefault-tagged DID from before
       // DidController.writeDid started clearing the previous default on every write.
-      // findByQuery applies no ordering of its own (a plain Askar scan, no createdAt sort) — for
-      // a wallet carrying more than one isDefault-tagged record (the legacy-migration case the
-      // comment above describes), an unordered [0] pick is whatever the store happens to return
-      // first, which for Askar's rowid-ordered scan is the EARLIEST tagged record, not the one
-      // DidController.writeDid's clearing loop most recently (re-)tagged. Sorting by createdAt
-      // descending makes the pick deterministic and favors the DID an operator actually tagged
-      // most recently over a stale, long-superseded one. See the #73 review.
-      const [defaultDidRecord] = (
-        await request.agent.dependencyManager.resolve(DidRepository).findByQuery(request.agent.context, {
-          isDefault: true,
-        })
-      ).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      // findDefaultDidRecords (shared with DidController.getDids, see the #75 review) sorts by
+      // createdAt descending so both endpoints agree on which of several tagged DIDs is current.
+      const [defaultDidRecord] = await findDefaultDidRecords(
+        request.agent.dependencyManager.resolve(DidRepository),
+        request.agent.context,
+      )
       let selfDid = defaultDidRecord?.did
 
       // Fallback for wallets that have never explicitly marked a DID as default at all (no client

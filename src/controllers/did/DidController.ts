@@ -32,6 +32,7 @@ import ErrorHandlingService from '../../errorHandlingService'
 import { BadRequestError, InternalServerError } from '../../errors'
 import { AgentType } from '../../types'
 import { keyAlgorithmToCurve, p521, verkey } from '../../utils/constant'
+import { findDefaultDidRecords } from '../../utils/defaultDid'
 import { getTypeFromCurve } from '../../utils/helpers'
 import { CreateDidResponse, Did, DidRecordExample } from '../examples'
 import { DidCreate, supportedKeyTypesDID } from '../types'
@@ -824,16 +825,12 @@ export class DidController extends Controller {
   public async getDids(@Request() request: Req, @Query('isDefault') isDefault?: boolean) {
     try {
       if (isDefault) {
-        const didRepository = request.agent.dependencyManager.resolve(DidRepository)
-        // Sorted the same way AgentController.createW3cSelfAttestedCredential already sorts this
-        // identical query -- findByQuery applies no ordering of its own (a plain Askar scan), so
-        // an unordered result let this read path disagree with what issuance actually uses for a
-        // wallet migrated with more than one isDefault-tagged DID: issuance picks the most
-        // recently tagged (sorted), while this endpoint returned the whole unsorted list with the
-        // superseded, earliest-tagged DID at [0] -- the obvious way to consume a "which DID is
-        // default" endpoint. See the #75 review.
-        return (await didRepository.findByQuery(request.agent.context, { isDefault: true })).sort(
-          (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+        // findDefaultDidRecords (shared with AgentController.createW3cSelfAttestedCredential, see
+        // the #75 review) sorts by createdAt descending so this read path can't disagree with what
+        // issuance actually uses for a wallet migrated with more than one isDefault-tagged DID.
+        return await findDefaultDidRecords(
+          request.agent.dependencyManager.resolve(DidRepository),
+          request.agent.context,
         )
       }
       const createdDids = await request.agent.dids.getCreatedDids()
