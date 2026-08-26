@@ -273,6 +273,56 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     expect(signCredential).not.toHaveBeenCalled()
   })
 
+  it('rejects an empty-string expirationDate instead of silently forwarding it to the signer', async () => {
+    // '' is falsy, so a truthiness-gated check would skip validation entirely, and '' ?? default
+    // would also skip the default substitution (?? only coalesces null/undefined) -- reaching the
+    // signer as a literal empty string. See the #75 review.
+    const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    const signCredential = jest.fn() as jest.Mock
+    const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+    const controller = new AgentController()
+
+    await expect(
+      controller.createW3cSelfAttestedCredential(makeRequest(agent), {
+        ...(REQUEST_BODY as Record<string, unknown>),
+        expirationDate: '',
+      } as never),
+    ).rejects.toThrow('is not a valid date')
+    expect(signCredential).not.toHaveBeenCalled()
+  })
+
+  it('normalizes a caller-supplied expirationDate to ISO 8601, even when the input parses but is not itself ISO', async () => {
+    // Date.parse accepts far more formats than ISO 8601 (e.g. "08/26/2026") -- every issued
+    // credential should carry a spec-compliant date regardless of what format the caller sent.
+    // See the #75 review.
+    const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
+    const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
+      return new W3cJsonLdVerifiableCredential({
+        ...options.credential,
+        proof: {
+          type: 'Ed25519Signature2018',
+          proofPurpose: 'assertionMethod',
+          verificationMethod: VERIFICATION_METHOD_ID,
+          created: new Date().toISOString(),
+          jws: 'fake-jws',
+        },
+      })
+    }) as jest.Mock
+    const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+    const controller = new AgentController()
+
+    await controller.createW3cSelfAttestedCredential(makeRequest(agent), {
+      ...(REQUEST_BODY as Record<string, unknown>),
+      expirationDate: '08/26/2026',
+    } as never)
+
+    const signedWith = signCredential.mock.calls[0][0] as {
+      credential: InstanceType<typeof W3cCredential>
+    }
+    expect(signedWith.credential.expirationDate).toBe(new Date('08/26/2026').toISOString())
+    expect(signedWith.credential.expirationDate).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+  })
+
   // SSRF guard: @context is caller-controlled and unvalidated URLs reach Credo's document loader.
   // Scope-limited to literal-address/scheme filtering -- see AgentController's own comment on
   // assertSafeContextUrl for what this does and does not cover.
@@ -310,6 +360,10 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
       ['https://[fe80::1]/context.jsonld', 'IPv6 link-local'],
       ['https://[fc00::1]/context.jsonld', 'IPv6 unique-local'],
       ['https://[::ffff:127.0.0.1]/context.jsonld', 'IPv4-mapped IPv6 loopback (filter-bypass form)'],
+      ['https://[::ffff:0:127.0.0.1]/context.jsonld', 'NAT64/IPv4-translated IPv6 loopback (filter-bypass form)'],
+      ['https://[::127.0.0.1]/context.jsonld', 'deprecated IPv4-compatible IPv6 loopback (filter-bypass form)'],
+      ['https://[::10.0.0.5]/context.jsonld', 'deprecated IPv4-compatible IPv6 private address (filter-bypass form)'],
+      ['https://[::]/context.jsonld', 'IPv6 unspecified address'],
     ])('rejects a context URL with a literal %s address (%s)', async (url) => {
       await rejectsContext([url], 'disallowed host')
     })

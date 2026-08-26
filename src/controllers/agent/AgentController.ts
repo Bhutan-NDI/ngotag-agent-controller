@@ -58,16 +58,19 @@ function isPrivateOrLoopbackIPv4(ip: string): boolean {
   )
 }
 
-// Node's URL parser canonicalizes an IPv4-mapped IPv6 address to hex-group form (e.g.
-// ::ffff:127.0.0.1 -> ::ffff:7f00:1, since 0x7f00 0x0001 = 127.0.0.1), not the dotted-quad form
-// -- so a naive string-suffix check for "127.0.0.1" never matches what actually reaches this
-// function. Extract the address either way.
+// Node's URL parser canonicalizes any IPv6 address that embeds an IPv4 address to hex-group
+// form, not the dotted-quad form (e.g. ::ffff:127.0.0.1 -> ::ffff:7f00:1, since 0x7f00 0x0001 =
+// 127.0.0.1) -- so a naive dotted-quad string check never matches what actually reaches this
+// function. Three real notations embed an IPv4 address this way, all real SSRF filter-bypass
+// forms if not unwrapped: IPv4-mapped (::ffff:a.b.c.d), the deprecated IPv4-compatible form
+// (::a.b.c.d, no ffff marker -- e.g. ::127.0.0.1 canonicalizes to ::7f00:1), and the NAT64/
+// IPv4-translated form (::ffff:0:a.b.c.d). See the #75 review.
 function ipv4MappedToIPv4(ip: string): string | undefined {
-  const dotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(ip)
+  const dotted = /^::(?:ffff:)?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(ip)
   if (dotted) {
     return dotted[1]
   }
-  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(ip)
+  const hex = /^::(?:ffff:0:|ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(ip)
   if (!hex) {
     return undefined
   }
@@ -78,10 +81,15 @@ function ipv4MappedToIPv4(ip: string): string | undefined {
 
 function isPrivateOrLoopbackIPv6(ip: string): boolean {
   const lower = ip.toLowerCase()
-  if ('::1' === lower || lower.startsWith('fe80:') || lower.startsWith('fc') || lower.startsWith('fd')) {
-    return true // loopback, link-local, or unique-local (fc00::/7)
+  if (
+    '::1' === lower || // loopback
+    '::' === lower || // unspecified address -- loops back to the host on most stacks
+    lower.startsWith('fe80:') ||
+    lower.startsWith('fc') ||
+    lower.startsWith('fd')
+  ) {
+    return true // loopback, unspecified, link-local, or unique-local (fc00::/7)
   }
-  // IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) -- a known SSRF filter bypass if not unwrapped.
   const mappedIPv4 = ipv4MappedToIPv4(lower)
   if (mappedIPv4) {
     return isPrivateOrLoopbackIPv4(mappedIPv4)
@@ -452,8 +460,13 @@ export class AgentController extends Controller {
 
       // A caller-supplied date must actually parse -- Date accepts near-anything and silently
       // yields Invalid Date otherwise, which would reach the signer as a broken expirationDate
-      // string instead of a clear 400 here.
-      if (selfAttestedExpirationDate && Number.isNaN(Date.parse(selfAttestedExpirationDate))) {
+      // string instead of a clear 400 here. Checked against `undefined` specifically, not
+      // truthiness: `selfAttestedExpirationDate && ...` would let an empty string skip this
+      // check entirely (`'' &&` short-circuits), then also skip the `??` default below (which
+      // only coalesces null/undefined, not ''), reaching the signer as a literal empty string.
+      // Date.parse('') is itself NaN, so this same check catches it once the truthiness gate is
+      // gone. See the #75 review.
+      if (undefined !== selfAttestedExpirationDate && Number.isNaN(Date.parse(selfAttestedExpirationDate))) {
         throw new BadRequestError(`expirationDate '${selfAttestedExpirationDate}' is not a valid date`)
       }
       // W3cCredential's constructor always assigns its own expirationDate field, even to
@@ -462,8 +475,15 @@ export class AgentController extends Controller {
       // a real date reaches it, regardless of whether the caller wanted one. There is no way to
       // omit the field entirely given that class's behavior, so default far enough out to be
       // effectively non-expiring for a caller who didn't ask for a real expiry. See the #75 review.
+      //
+      // A caller-supplied date is normalized to ISO 8601 via `new Date(...).toISOString()`,
+      // not embedded verbatim: it's already confirmed parseable above, but Date.parse accepts
+      // far more formats than ISO 8601 (e.g. "08/26/2026"), and every issued credential should
+      // carry a spec-compliant date regardless of what format the caller sent. See the #75 review.
       const selfAttestedExpiration =
-        selfAttestedExpirationDate ?? new Date(Date.now() + SELF_ATTESTED_DEFAULT_EXPIRATION_MS).toISOString()
+        undefined !== selfAttestedExpirationDate
+          ? new Date(selfAttestedExpirationDate).toISOString()
+          : new Date(Date.now() + SELF_ATTESTED_DEFAULT_EXPIRATION_MS).toISOString()
 
       const toSubject = (subject: JsonObject): W3cCredentialSubjectOptions => ({
         id: selfDid,
