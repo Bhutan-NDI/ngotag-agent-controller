@@ -671,7 +671,14 @@ export class DidController extends Controller {
       role: DidDocumentRole.Created,
     })
     if (1 < matchingRecords.length) {
-      const duplicates = [...matchingRecords].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()).slice(1)
+      // createdAt alone isn't a reliable ordering key -- concurrent DidRecords can share the same
+      // millisecond-resolution timestamp, and Askar's underlying scan gives no ordering guarantee.
+      // Without a tie-breaker, two racing calls seeing the same records in opposite orders could
+      // each pick a *different* record to delete, deleting both and leaving none. `id` is unique
+      // and stable regardless of query order, so it's a safe deterministic tie-breaker.
+      const duplicates = [...matchingRecords]
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))
+        .slice(1)
       for (const duplicate of duplicates) {
         try {
           await didRepository.delete(agent.context, duplicate)

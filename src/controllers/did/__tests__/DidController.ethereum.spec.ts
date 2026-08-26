@@ -55,7 +55,10 @@ type MockAgent = {
 // the "no duplicate" case every pre-existing test in this file implicitly relies on now that
 // handleEthereum always checks after a successful create. Pass existingRecords to model a
 // wallet that already had a DidRecord for this exact derived did:ethr identity before this call.
-const makeAgent = (createResult: unknown, existingRecords?: { did: string; createdAt: Date }[]): MockAgent => {
+const makeAgent = (
+  createResult: unknown,
+  existingRecords?: { did: string; createdAt: Date; id?: string }[],
+): MockAgent => {
   const createdDid = (createResult as { didState?: { did?: string } })?.didState?.did
   const findByQuery = jest.fn(
     async () => existingRecords ?? (createdDid ? [{ did: createdDid, createdAt: new Date() }] : []),
@@ -196,6 +199,31 @@ describe('DidController.handleEthereum', () => {
     )
 
     await expect(controller.handleEthereum(agent as never, ethereumOptions())).rejects.toBeInstanceOf(BadRequestError)
+  })
+
+  // createdAt has millisecond resolution -- two records created within the same millisecond
+  // compare equal, and Askar's scan gives no ordering guarantee, so the same two records can come
+  // back as [A, B] from one query and [B, A] from another. Without a deterministic tie-breaker,
+  // each racing caller would delete a *different* record, deleting both and leaving the wallet
+  // with no created record for this DID at all -- worse than the original bug. `id` must break
+  // the tie the same way regardless of the order findByQuery returns records in.
+  it('picks the same record to delete regardless of query order, when two records share the exact same createdAt', async () => {
+    const did = 'did:ethr:sepolia:0xabc'
+    const sameInstant = new Date('2026-06-01T00:00:00.000Z')
+    const recordA = { did, createdAt: sameInstant, id: 'aaaa' }
+    const recordB = { did, createdAt: sameInstant, id: 'bbbb' }
+
+    const agentQueryOrderAB = makeAgent({ didState: { state: 'finished', did, didDocument: {} } }, [recordA, recordB])
+    await expect(controller.handleEthereum(agentQueryOrderAB as never, ethereumOptions())).rejects.toBeInstanceOf(
+      BadRequestError,
+    )
+    expect(agentQueryOrderAB._didRepository.delete).toHaveBeenCalledWith(agentQueryOrderAB.context, recordB)
+
+    const agentQueryOrderBA = makeAgent({ didState: { state: 'finished', did, didDocument: {} } }, [recordB, recordA])
+    await expect(controller.handleEthereum(agentQueryOrderBA as never, ethereumOptions())).rejects.toBeInstanceOf(
+      BadRequestError,
+    )
+    expect(agentQueryOrderBA._didRepository.delete).toHaveBeenCalledWith(agentQueryOrderBA.context, recordB)
   })
 
   it('does not roll back or reject when the create call is the only record for this did (the common case)', async () => {
