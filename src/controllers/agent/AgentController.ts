@@ -25,6 +25,7 @@ import {
 import { Request as Req } from 'express'
 import jwt from 'jsonwebtoken'
 import { randomUUID } from 'node:crypto'
+import { isIP } from 'node:net'
 import { Controller, Get, Route, Tags, Security, Request, Post, Body } from 'tsoa'
 import { injectable } from 'tsyringe'
 
@@ -37,6 +38,83 @@ import { verifyDidBoundSignature } from '../../utils/didSignatureVerification'
 // request a real expiry. See createW3cSelfAttestedCredential's own comment for why some value is
 // unavoidable here regardless of caller intent.
 const SELF_ATTESTED_DEFAULT_EXPIRATION_MS = 100 * 365.25 * 24 * 60 * 60 * 1000
+
+const BLOCKED_CONTEXT_HOSTNAMES = new Set(['localhost'])
+
+function isPrivateOrLoopbackIPv4(ip: string): boolean {
+  const octets = ip.split('.').map(Number)
+  if (4 !== octets.length || octets.some((n) => Number.isNaN(n))) {
+    return false
+  }
+  const [a, b] = octets
+  return (
+    0 === a || // 0.0.0.0/8
+    10 === a || // 10.0.0.0/8 (private)
+    127 === a || // 127.0.0.0/8 (loopback)
+    (169 === a && 254 === b) || // 169.254.0.0/16 (link-local, incl. cloud metadata endpoints)
+    (172 === a && 16 <= b && 31 >= b) || // 172.16.0.0/12 (private)
+    (192 === a && 168 === b) // 192.168.0.0/16 (private)
+  )
+}
+
+// Node's URL parser canonicalizes an IPv4-mapped IPv6 address to hex-group form (e.g.
+// ::ffff:127.0.0.1 -> ::ffff:7f00:1, since 0x7f00 0x0001 = 127.0.0.1), not the dotted-quad form
+// -- so a naive string-suffix check for "127.0.0.1" never matches what actually reaches this
+// function. Extract the address either way.
+function ipv4MappedToIPv4(ip: string): string | undefined {
+  const dotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(ip)
+  if (dotted) {
+    return dotted[1]
+  }
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(ip)
+  if (!hex) {
+    return undefined
+  }
+  const high = parseInt(hex[1], 16)
+  const low = parseInt(hex[2], 16)
+  return [(high >> 8) & 0xff, 0xff & high, (low >> 8) & 0xff, 0xff & low].join('.')
+}
+
+function isPrivateOrLoopbackIPv6(ip: string): boolean {
+  const lower = ip.toLowerCase()
+  if ('::1' === lower || lower.startsWith('fe80:') || lower.startsWith('fc') || lower.startsWith('fd')) {
+    return true // loopback, link-local, or unique-local (fc00::/7)
+  }
+  // IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) -- a known SSRF filter bypass if not unwrapped.
+  const mappedIPv4 = ipv4MappedToIPv4(lower)
+  if (mappedIPv4) {
+    return isPrivateOrLoopbackIPv4(mappedIPv4)
+  }
+  return false
+}
+
+// See createW3cSelfAttestedCredential's SSRF-guard comment for scope. Only checks literal
+// addresses/hostnames -- deliberately not a full constrained loader.
+function assertSafeContextUrl(context: string): void {
+  let parsed: URL
+  try {
+    parsed = new URL(context)
+  } catch {
+    // Not a URL (e.g. a bare JSON-LD term/prefix) -- nothing gets fetched, nothing to guard.
+    return
+  }
+  if ('https:' !== parsed.protocol) {
+    throw new BadRequestError(`@context entry '${context}' must use https`)
+  }
+  // URL.hostname keeps the brackets around an IPv6 literal (e.g. "[::1]") -- isIP() and the
+  // range checks below both expect the bare address.
+  const rawHostname = parsed.hostname.toLowerCase()
+  const hostname = rawHostname.startsWith('[') ? rawHostname.slice(1, -1) : rawHostname
+  if (BLOCKED_CONTEXT_HOSTNAMES.has(hostname)) {
+    throw new BadRequestError(`@context entry '${context}' points at a disallowed host`)
+  }
+  const ipVersion = isIP(hostname)
+  const isBlockedIp =
+    (4 === ipVersion && isPrivateOrLoopbackIPv4(hostname)) || (6 === ipVersion && isPrivateOrLoopbackIPv6(hostname))
+  if (isBlockedIp) {
+    throw new BadRequestError(`@context entry '${context}' points at a disallowed host`)
+  }
+}
 
 @Tags('Agent')
 @Route('/agent')
@@ -360,6 +438,22 @@ export class AgentController extends Controller {
         proofType: selfAttestedProofType,
         expirationDate: selfAttestedExpirationDate,
       } = selfAttestedCredentialOptions
+
+      // Scope-limited SSRF guard, per the #75 review: @context is caller-controlled, and any URL
+      // outside CachedDocumentLoader's small static map falls through to Credo's native JSON-LD
+      // loader with no egress restrictions -- an authenticated tenant could otherwise reach
+      // internal/loopback/link-local services. This blocks non-https schemes and literal
+      // loopback/private/link-local IP addresses before the credential is ever built. It does
+      // NOT resolve hostnames via DNS, so a public-looking hostname that resolves to an internal
+      // address (DNS rebinding) is not covered -- that needs a constrained loader (allowlist +
+      // DNS-time resolution + redirect revalidation + timeout/size limits), tracked separately as
+      // item 16/26 in cloud-wallet-security-escalations.md. This closes the immediate,
+      // trivially-exploitable hole without that larger design.
+      for (const contextEntry of selfAttestedContext) {
+        if ('string' === typeof contextEntry) {
+          assertSafeContextUrl(contextEntry)
+        }
+      }
 
       // A caller-supplied date must actually parse -- Date accepts near-anything and silently
       // yields Invalid Date otherwise, which would reach the signer as a broken expirationDate

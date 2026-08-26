@@ -273,6 +273,73 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     expect(signCredential).not.toHaveBeenCalled()
   })
 
+  // SSRF guard: @context is caller-controlled and unvalidated URLs reach Credo's document loader.
+  // Scope-limited to literal-address/scheme filtering -- see AgentController's own comment on
+  // assertSafeContextUrl for what this does and does not cover.
+  describe('@context SSRF guard', () => {
+    const rejectsContext = async (context: unknown, expectedMessageFragment: string) => {
+      const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
+      const signCredential = jest.fn() as jest.Mock
+      const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+      const controller = new AgentController()
+
+      await expect(
+        controller.createW3cSelfAttestedCredential(makeRequest(agent), {
+          ...(REQUEST_BODY as Record<string, unknown>),
+          '@context': context,
+        } as never),
+      ).rejects.toThrow(expectedMessageFragment)
+      expect(signCredential).not.toHaveBeenCalled()
+    }
+
+    it('rejects a non-https context URL, before ever signing', async () => {
+      await rejectsContext(['http://example.com/context.jsonld'], 'must use https')
+    })
+
+    it('rejects a context URL targeting localhost', async () => {
+      await rejectsContext(['https://localhost/context.jsonld'], 'disallowed host')
+    })
+
+    it.each([
+      ['https://127.0.0.1/context.jsonld', 'IPv4 loopback'],
+      ['https://169.254.169.254/latest/meta-data/', 'IPv4 link-local (cloud metadata endpoint)'],
+      ['https://10.0.0.5/context.jsonld', 'IPv4 private (10.0.0.0/8)'],
+      ['https://172.16.0.1/context.jsonld', 'IPv4 private (172.16.0.0/12)'],
+      ['https://192.168.1.1/context.jsonld', 'IPv4 private (192.168.0.0/16)'],
+      ['https://[::1]/context.jsonld', 'IPv6 loopback'],
+      ['https://[fe80::1]/context.jsonld', 'IPv6 link-local'],
+      ['https://[fc00::1]/context.jsonld', 'IPv6 unique-local'],
+      ['https://[::ffff:127.0.0.1]/context.jsonld', 'IPv4-mapped IPv6 loopback (filter-bypass form)'],
+    ])('rejects a context URL with a literal %s address (%s)', async (url) => {
+      await rejectsContext([url], 'disallowed host')
+    })
+
+    it('accepts a normal https context URL alongside an inline JsonObject context entry', async () => {
+      const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
+      const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
+        return new W3cJsonLdVerifiableCredential({
+          ...options.credential,
+          proof: {
+            type: 'Ed25519Signature2018',
+            proofPurpose: 'assertionMethod',
+            verificationMethod: VERIFICATION_METHOD_ID,
+            created: new Date().toISOString(),
+            jws: 'fake-jws',
+          },
+        })
+      }) as jest.Mock
+      const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+      const controller = new AgentController()
+
+      await controller.createW3cSelfAttestedCredential(makeRequest(agent), {
+        ...(REQUEST_BODY as Record<string, unknown>),
+        '@context': ['https://www.w3.org/2018/credentials/v1', { '@version': 1.1 }],
+      } as never)
+
+      expect(signCredential).toHaveBeenCalled()
+    })
+  })
+
   it('supports an array credentialSubject — each entry gets the agent DID as id and its own object as claims', async () => {
     // assertionMethod, not verificationMethod: the endpoint only ever signs with a key listed
     // under assertionMethod (see AgentController's own comment on why verificationMethod alone
