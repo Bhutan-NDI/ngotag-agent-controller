@@ -1,5 +1,5 @@
 /**
- * Regression tests for WalletPortabilityService's export flow. Locks in:
+ * Regression tests for WalletPortabilityService's export and import flows. Export locks in:
  *
  *   1. Async job contract — exportWallet() returns immediately with a Pending job id; the actual
  *      Askar/S3 work happens in the background and is observed only via getJobStatus().
@@ -14,21 +14,45 @@
  *      would have made every exported artifact permanently undecryptable. See the export
  *      endpoint's docblock for the legacy-contract rationale.
  *
+ * Import locks in the reversible-rename design (see project_phase_c_cloud_wallet memory):
+ *   6. Checksum is verified BEFORE anything live is touched — a mismatch never reaches
+ *      renameProfile/copyProfile.
+ *   7. The tenant's current profile is renamed aside (never removed) before the imported profile
+ *      takes its place, and the backup name is reported on the completed job — and survives onto
+ *      a Failed record too, not just Completed.
+ *   8. If copyProfile fails after the rename, the rollback renames the backup profile back to the
+ *      real name — the tenant is never left without a working profile — even if copyProfile had
+ *      already partially created the target profile before failing (the rollback clears it first).
+ *   9. A downloaded artifact with zero or more than one profile fails clearly, before any rename.
+ *      An artifact with exactly one profile imports even when that profile's name differs from
+ *      the target tenant's own — restoring onto a rebuilt agent / a freshly created tenant is not
+ *      required to match by name. This is verified only for artifacts produced by this service's
+ *      own export; a legacy Python `askar-wallet-tools` artifact is explicitly NOT covered here —
+ *      see the source comment at the fromProfile assertion in runImport for why.
+ *   10. A second export/import for a tenant that already has one in flight is rejected with a
+ *       conflict rather than racing it — released once the first job reaches a terminal state.
+ *
  * Everything Askar-native is mocked here — that lets these tests focus on this service's own
  * control flow (job lifecycle, cleanup, session scoping) without depending on real file/native
- * I/O. The S3 client is mocked too. Because it's mocked, though, these tests can only assert
- * that a value was *forwarded* to Askar (e.g. `passKey`, `keyMethod`) — not that Askar actually
- * accepts it. See WalletPortabilityAskarRoundTrip.spec.ts (same directory) for the un-mocked
- * counterpart that exercises the real native binding directly (bypassing @credo-ts/askar, which
- * is what provokes the OOM under Jest's experimental VM-modules mode — the lower-level
- * askar-nodejs/askar-shared packages don't).
+ * I/O. The S3 client and node-fetch (used for downloading the export artifact) are mocked too.
+ * Because it's mocked, though, these tests can only assert that a value was *forwarded* to Askar
+ * (e.g. `passKey`, `keyMethod`) — not that Askar actually accepts it. See
+ * WalletPortabilityAskarRoundTrip.spec.ts (same directory) for the un-mocked counterpart that
+ * exercises the real native binding directly (bypassing @credo-ts/askar, which is what provokes
+ * the OOM under Jest's experimental VM-modules mode — the lower-level askar-nodejs/askar-shared
+ * packages don't).
  *
  * Runs under Jest ESM mode (see jest.config.base.ts).
  */
 import { jest } from '@jest/globals'
 import { createHash } from 'crypto'
-import { readFileSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { promises as fsPromises } from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 import 'reflect-metadata'
+import { Readable } from 'stream'
+import { gzipSync } from 'zlib'
 
 // AskarStoreManager is only ever used as a DI *token* (dependencyManager.resolve(AskarStoreManager))
 // in the code under test — the mocked resolve() below ignores it entirely. Mocking it here avoids
@@ -39,7 +63,7 @@ jest.unstable_mockModule('@credo-ts/askar', () => ({
 }))
 
 const s3UploadPromise = jest.fn(async () => ({})) as jest.Mock
-const getSignedUrl = jest.fn(() => 'https://example-bucket.s3.amazonaws.com/signed-url') as jest.Mock
+const getSignedUrl = jest.fn(() => 'https://test-wallet-export-bucket.s3.amazonaws.com/signed-url') as jest.Mock
 // Body is a real fs.ReadStream (uploadToS3 streams the artifact rather than buffering it into
 // memory — see the review that caught the OOM risk). Capture its bytes synchronously via its own
 // .path at call time, since the underlying temp file is deleted by the time assertions run.
@@ -67,14 +91,34 @@ const storeProvision = jest.fn(async (options: { uri: string }) => {
   return { close: storeClose }
 }) as jest.Mock
 
+// Import-side Store mock. importedStoreClose/importedStoreListProfiles/importedStoreCopyProfile
+// are reassigned per-test (via a mutable holder) so different tests can simulate different
+// artifact contents without redeclaring the whole askar-shared mock.
+const importedStoreClose = jest.fn(async () => undefined) as jest.Mock
+// Default is a placeholder — every test that uses it overwrites `.impl` in beforeEach, since
+// PROFILE isn't declared until further down this file.
+const importedStoreListProfilesHolder = { impl: jest.fn(async () => [] as string[]) as jest.Mock }
+const importedStoreCopyProfile = jest.fn(async () => undefined) as jest.Mock
+const storeOpen = jest.fn(async () => ({
+  close: importedStoreClose,
+  listProfiles: importedStoreListProfilesHolder.impl,
+  copyProfile: importedStoreCopyProfile,
+})) as jest.Mock
+
 jest.unstable_mockModule('@openwallet-foundation/askar-shared', () => ({
-  Store: { provision: storeProvision },
+  Store: { provision: storeProvision, open: storeOpen },
   StoreKeyMethod: jest.fn(),
   KdfMethod: { Raw: 'raw', Argon2IMod: 'argon2i-mod' },
 }))
 
+const fetchMock = jest.fn() as jest.Mock
+jest.unstable_mockModule('node-fetch', () => ({
+  default: fetchMock,
+}))
+
 const { WalletPortabilityService } = await import('../WalletPortabilityService')
-const { WalletPortabilityJobStatus } = await import('../WalletPortabilityTypes')
+const { HEARTBEAT_INTERVAL_MS } = await import('../WalletPortabilityJobStore')
+const { WalletPortabilityJobStatus, WalletPortabilityJobType } = await import('../WalletPortabilityTypes')
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -92,28 +136,55 @@ const makeLogger = () => ({
 })
 
 // copyProfileImpl lets each test control success/failure without re-declaring the whole agent mock.
-function makeAgent(copyProfileImpl: jest.Mock) {
-  const baseStore = { copyProfile: copyProfileImpl }
+// listProfilesImpl/removeProfileImpl default to "nothing there yet" — override to simulate
+// copy_profile having already created the target profile before failing (see the rollback tests).
+function makeAgent(
+  copyProfileImpl: jest.Mock,
+  renameProfileImpl?: jest.Mock,
+  storeOverrides: { listProfilesImpl?: jest.Mock; removeProfileImpl?: jest.Mock } = {},
+) {
+  const baseStore = {
+    copyProfile: copyProfileImpl,
+    renameProfile: renameProfileImpl ?? (jest.fn(async () => undefined) as jest.Mock),
+    listProfiles: storeOverrides.listProfilesImpl ?? (jest.fn(async () => [] as string[]) as jest.Mock),
+    removeProfile: storeOverrides.removeProfileImpl ?? (jest.fn(async () => undefined) as jest.Mock),
+  }
   const askarStoreManager = {
     getInitializedStoreWithProfile: jest.fn(async () => ({ store: baseStore, profile: PROFILE })),
   }
 
   return {
-    modules: {
-      tenants: {
-        withTenantAgent: jest.fn(async (_options: { tenantId: string }, cb: (a: unknown) => Promise<void>) => {
-          const tenantAgent = {
-            context: {
-              dependencyManager: {
-                resolve: jest.fn(() => askarStoreManager),
+    baseStore,
+    agent: {
+      modules: {
+        tenants: {
+          withTenantAgent: jest.fn(async (_options: { tenantId: string }, cb: (a: unknown) => Promise<void>) => {
+            const tenantAgent = {
+              context: {
+                dependencyManager: {
+                  resolve: jest.fn(() => askarStoreManager),
+                },
               },
-            },
-          }
-          await cb(tenantAgent)
-        }),
+            }
+            await cb(tenantAgent)
+          }),
+        },
       },
     },
   }
+}
+
+// Builds a fake node-fetch Response carrying `content` as a real Node stream, for downloadAndChecksum.
+function makeFetchResponse(content: Buffer, options: { ok?: boolean; status?: number } = {}) {
+  return {
+    ok: options.ok ?? true,
+    status: options.status ?? 200,
+    body: Readable.from(content),
+  }
+}
+
+function sha256(buffer: Buffer): string {
+  return createHash('sha256').update(buffer).digest('hex')
 }
 
 async function waitForJobStatus(
@@ -136,6 +207,22 @@ async function waitForJobStatus(
   }
 }
 
+// runImport/runExport set the job's terminal status *inside* their try block, and only remove
+// workDir afterward, in the finally block below that -- so there's a real window, between those
+// two awaits, where waitForJobStatus's independent poll of the job record can already observe the
+// terminal status while workDir still exists on disk. Flaky under CI's heavier scheduling load.
+// Poll the filesystem too, rather than asserting it synchronously right after the status flips.
+async function waitForPathRemoved(path: string, timeoutMs = 5000) {
+  const start = Date.now()
+
+  while (existsSync(path)) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`Timed out waiting for '${path}' to be removed`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
 beforeEach(() => {
   jest.clearAllMocks()
   process.env.AWS_WALLET_EXPORT_BUCKET = 'test-wallet-export-bucket'
@@ -145,7 +232,7 @@ beforeEach(() => {
 describe('WalletPortabilityService — exportWallet', () => {
   it('returns a Pending job id immediately, without waiting for the export to finish', async () => {
     const copyProfile = jest.fn(async () => undefined)
-    const agent = makeAgent(copyProfile)
+    const { agent } = makeAgent(copyProfile)
     const service = new WalletPortabilityService(makeLogger() as never)
 
     const result = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY)
@@ -160,7 +247,7 @@ describe('WalletPortabilityService — exportWallet', () => {
 
   it('on success: reaches Completed with a downloadUrl + checksum, uploads to S3, and closes the temp store', async () => {
     const copyProfile = jest.fn(async () => undefined)
-    const agent = makeAgent(copyProfile)
+    const { agent } = makeAgent(copyProfile)
     const service = new WalletPortabilityService(makeLogger() as never)
 
     const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY)
@@ -170,7 +257,7 @@ describe('WalletPortabilityService — exportWallet', () => {
     // Locks in the passKey fix: the temp store must be provisioned with the caller's passKey,
     // not an internally generated one that would never be exposed back to the caller.
     expect(storeProvision).toHaveBeenCalledWith(expect.objectContaining({ passKey: PASS_KEY }))
-    expect(job.downloadUrl).toBe('https://example-bucket.s3.amazonaws.com/signed-url')
+    expect(job.downloadUrl).toBe('https://test-wallet-export-bucket.s3.amazonaws.com/signed-url')
     expect(job.checksum).toMatch(/^[0-9a-f]{64}$/) // sha256 hex digest
     expect(s3Upload).toHaveBeenCalledTimes(1)
     expect(s3UploadPromise).toHaveBeenCalledTimes(1)
@@ -193,7 +280,7 @@ describe('WalletPortabilityService — exportWallet', () => {
 
   it('preserves s3Key/checksum when setJobStatus re-saves an already-Completed job from a different call site', async () => {
     const copyProfile = jest.fn(async () => undefined)
-    const agent = makeAgent(copyProfile)
+    const { agent } = makeAgent(copyProfile)
     const service = new WalletPortabilityService(makeLogger() as never)
 
     const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY)
@@ -207,13 +294,103 @@ describe('WalletPortabilityService — exportWallet', () => {
     // re-save.
     await (
       service as unknown as {
-        setJobStatus: (jobId: string, tenantId: string, status: string, error?: string) => Promise<void>
+        setJobStatus: (
+          jobId: string,
+          tenantId: string,
+          type: string,
+          status: string,
+          error?: string,
+          backupProfile?: string,
+        ) => Promise<void>
       }
-    ).setJobStatus(jobId, TENANT_ID, WalletPortabilityJobStatus.Completed)
+    ).setJobStatus(jobId, TENANT_ID, WalletPortabilityJobType.Export, WalletPortabilityJobStatus.Completed)
 
     const job = await service.getJobStatus(jobId)
-    expect(job?.downloadUrl).toBe('https://example-bucket.s3.amazonaws.com/signed-url')
+    expect(job?.downloadUrl).toBe('https://test-wallet-export-bucket.s3.amazonaws.com/signed-url')
     expect(job?.checksum).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('startHeartbeat touches an InProgress job record on HEARTBEAT_INTERVAL_MS — this is what makes the reclaim staleness bound a real lease, not just "job started more than N ago"', async () => {
+    // #73 review: a bare "InProgress record older than N" check bounds total job duration, not
+    // liveness -- a genuinely long-running transfer (up to MAX_DOWNLOAD_BYTES/MAX_DECOMPRESSED_BYTES,
+    // 2 GiB, no time cap of its own) could get falsely reclaimed mid-run, admitting a second
+    // concurrent job on the same tenant profile. The heartbeat re-saves the record on an interval
+    // so the reclaim bound tracks "stopped heartbeating", not "has been running a while".
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask'] })
+    try {
+      const service = new WalletPortabilityService(makeLogger() as never)
+      const jobId = 'heartbeat-test-job'
+      const initialUpdatedAt = new Date(0).toISOString()
+
+      // Seed an InProgress record directly, the same shape setJobStatus(..., InProgress) itself
+      // produces -- avoids entangling this test with the rest of runExport's async flow (mkdtemp,
+      // withTenantAgent, S3) under fake timers.
+      const jobStore = (
+        service as unknown as {
+          jobStore: {
+            get: (id: string) => Promise<Record<string, unknown> | undefined>
+            save: (record: unknown) => Promise<void>
+          }
+        }
+      ).jobStore
+      await (
+        service as unknown as {
+          setJobStatus: (jobId: string, tenantId: string, type: string, status: string) => Promise<void>
+        }
+      ).setJobStatus(jobId, TENANT_ID, WalletPortabilityJobType.Export, WalletPortabilityJobStatus.InProgress)
+      // Force updatedAt back to a known-old value -- setJobStatus above always stamps "now".
+      const existing = await jobStore.get(jobId)
+      await jobStore.save({ ...existing, updatedAt: initialUpdatedAt })
+
+      const heartbeat = (
+        service as unknown as {
+          startHeartbeat: (jobId: string, tenantId: string) => NodeJS.Timeout
+        }
+      ).startHeartbeat(jobId, TENANT_ID)
+
+      // One tick -- the heartbeat's own internal jobStore.touchIfActive()/touchActiveJobReservation()
+      // calls are real async work even under fake timers, so flush microtasks after advancing.
+      await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
+
+      const job = await service.getJobStatus(jobId)
+      expect(job?.updatedAt).not.toBe(initialUpdatedAt)
+      expect(new Date(job?.updatedAt as string).getTime()).toBeGreaterThan(new Date(initialUpdatedAt).getTime())
+
+      clearInterval(heartbeat)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('startHeartbeat does not resurrect a stale status once the job has already reached a terminal state', async () => {
+    // Guards the narrow race the implementation's own comment calls out: a tick already in
+    // flight when the main flow's terminal write (Completed/Failed) lands must not overwrite it.
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask'] })
+    try {
+      const service = new WalletPortabilityService(makeLogger() as never)
+      const jobId = 'heartbeat-terminal-test-job'
+
+      await (
+        service as unknown as {
+          setJobStatus: (jobId: string, tenantId: string, type: string, status: string) => Promise<void>
+        }
+      ).setJobStatus(jobId, TENANT_ID, WalletPortabilityJobType.Export, WalletPortabilityJobStatus.Completed)
+
+      const heartbeat = (
+        service as unknown as {
+          startHeartbeat: (jobId: string, tenantId: string) => NodeJS.Timeout
+        }
+      ).startHeartbeat(jobId, TENANT_ID)
+
+      await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
+
+      const job = await service.getJobStatus(jobId)
+      expect(job?.status).toBe(WalletPortabilityJobStatus.Completed)
+
+      clearInterval(heartbeat)
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it('on failure: reaches Failed with a sanitized error code (not the raw exception), logs the real error server-side, and never uploads a partial artifact', async () => {
@@ -223,7 +400,7 @@ describe('WalletPortabilityService — exportWallet', () => {
     const copyProfile = jest.fn(async () => {
       throw new Error('simulated Askar failure')
     })
-    const agent = makeAgent(copyProfile)
+    const { agent } = makeAgent(copyProfile)
     const logger = makeLogger()
     const service = new WalletPortabilityService(logger as never)
 
@@ -242,7 +419,7 @@ describe('WalletPortabilityService — exportWallet', () => {
     const copyProfile = jest.fn(async () => {
       callOrder.push('copyProfile')
     })
-    const agent = makeAgent(copyProfile)
+    const { agent } = makeAgent(copyProfile)
     const originalWithTenantAgent = agent.modules.tenants.withTenantAgent
     agent.modules.tenants.withTenantAgent = jest.fn(async (options, cb) => {
       callOrder.push('withTenantAgent:start')
@@ -259,5 +436,560 @@ describe('WalletPortabilityService — exportWallet', () => {
     await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
 
     expect(callOrder).toEqual(['withTenantAgent:start', 'copyProfile', 'withTenantAgent:end'])
+  })
+})
+
+describe('WalletPortabilityService — importWallet', () => {
+  const artifact = Buffer.from('fake-wallet-import-content')
+  const gzippedArtifact = gzipSync(artifact)
+  const CHECKSUM = sha256(gzippedArtifact)
+  const EXPORT_URL = 'https://test-wallet-export-bucket.s3.amazonaws.com/some-export.db.gz'
+
+  beforeEach(() => {
+    importedStoreListProfilesHolder.impl = jest.fn(async () => [PROFILE]) as jest.Mock
+    fetchMock.mockImplementation(async () => makeFetchResponse(gzippedArtifact))
+    // jest.clearAllMocks() (global beforeEach) clears call history but not a mockImplementation
+    // set with .mockImplementation() — reset this back to its default success behaviour so a
+    // failure-simulating test earlier in file order can't leak into a later, unrelated one.
+    importedStoreCopyProfile.mockImplementation(async () => undefined)
+  })
+
+  it('returns a Pending job id immediately, without waiting for the import to finish', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const result = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+
+    expect(result.status).toBe(WalletPortabilityJobStatus.Pending)
+    expect(typeof result.jobId).toBe('string')
+    await waitForJobStatus(service, result.jobId, WalletPortabilityJobStatus.Completed)
+  })
+
+  it('on success: renames the current profile aside, copies the imported profile in, and reports backupProfile', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(fetchMock).toHaveBeenCalledWith(EXPORT_URL, { redirect: 'error', timeout: expect.any(Number) })
+    expect(storeOpen).toHaveBeenCalledWith(expect.objectContaining({ passKey: PASS_KEY }))
+    expect(renameProfile).toHaveBeenCalledWith({ fromProfile: PROFILE, toProfile: job.backupProfile })
+    expect(importedStoreCopyProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ fromProfile: PROFILE, toProfile: PROFILE }),
+    )
+    expect(job.backupProfile).toContain(PROFILE)
+    expect(job.backupProfile).toContain(jobId)
+    expect(importedStoreClose).toHaveBeenCalledTimes(1) // downloaded store closed, never left open
+  })
+
+  it('checksum mismatch: fails before touching the base store at all (no rename, no copy)', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+
+    const { jobId } = await service.importWallet(
+      agent as never,
+      TENANT_ID,
+      EXPORT_URL,
+      PASS_KEY,
+      'deliberately-wrong-checksum',
+    )
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    // #72 review: the job record is externally readable, so it carries a sanitized code, not the
+    // raw error text — the real error still reaches the server-side log.
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('Checksum mismatch'))
+    expect(renameProfile).not.toHaveBeenCalled()
+    expect(importedStoreCopyProfile).not.toHaveBeenCalled()
+    expect(storeOpen).not.toHaveBeenCalled()
+  })
+
+  it('SSRF guard: refuses a URL on a different S3 bucket, not just a non-S3 host', async () => {
+    // The bucket in this URL is real S3, just not *this deployment's own* (AWS_WALLET_EXPORT_BUCKET
+    // is 'test-wallet-export-bucket', set in the outer beforeEach) — an attacker-controlled bucket
+    // must not be trusted just because the host is generically "an S3 host".
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+
+    const { jobId } = await service.importWallet(
+      agent as never,
+      TENANT_ID,
+      'https://some-other-attacker-bucket.s3.amazonaws.com/some-export.db.gz',
+      PASS_KEY,
+      CHECKSUM,
+    )
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('untrusted host'))
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'https://test-wallet-export-bucket.s3.us-west-2.amazonaws.com/x.db.gz',
+    'https://test-wallet-export-bucket.s3-us-west-2.amazonaws.com/x.db.gz',
+    'https://test-wallet-export-bucket.s3-fips.us-west-2.amazonaws.com/x.db.gz',
+    'https://test-wallet-export-bucket.s3.dualstack.us-west-2.amazonaws.com/x.db.gz',
+    'https://test-wallet-export-bucket.s3.cn-north-1.amazonaws.com.cn/x.db.gz',
+  ])("SSRF guard: still accepts this deployment's own bucket on a legitimate AWS endpoint variant %s", async (url) => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, url, PASS_KEY, CHECKSUM)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(job.error).toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledWith(url, { redirect: 'error', timeout: expect.any(Number) })
+  })
+
+  it('SSRF guard: accepts a path-style URL for a dotted bucket name (aws-sdk emits this shape, not virtual-hosted, when the bucket name is not DNS-compatible over TLS)', async () => {
+    // A bucket name containing a dot (common when a bucket mirrors a domain) makes real aws-sdk's
+    // getSignedUrl mint a path-style URL — s3.<region>.amazonaws.com/<bucket>/<key>, no bucket in
+    // the hostname at all — not the virtual-hosted form every other test in this file uses.
+    process.env.AWS_WALLET_EXPORT_BUCKET = 'wallet.exports.ngotag.bt'
+    try {
+      const url = 'https://s3.ap-south-1.amazonaws.com/wallet.exports.ngotag.bt/some-export.db.gz'
+      const copyProfile = jest.fn(async () => undefined)
+      const { agent } = makeAgent(copyProfile)
+      const service = new WalletPortabilityService(makeLogger() as never)
+
+      const { jobId } = await service.importWallet(agent as never, TENANT_ID, url, PASS_KEY, CHECKSUM)
+      const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+      expect(job.error).toBeUndefined()
+      expect(fetchMock).toHaveBeenCalledWith(url, { redirect: 'error', timeout: expect.any(Number) })
+    } finally {
+      process.env.AWS_WALLET_EXPORT_BUCKET = 'test-wallet-export-bucket'
+    }
+  })
+
+  it('SSRF guard: refuses a path-style URL whose first path segment is a different bucket', async () => {
+    // Same generic S3 host as a legitimate path-style URL for this deployment's own bucket, but
+    // the bucket in the path itself belongs to someone else — must not be trusted just because
+    // the hostname alone looks like a real S3 endpoint.
+    process.env.AWS_WALLET_EXPORT_BUCKET = 'wallet.exports.ngotag.bt'
+    try {
+      const url = 'https://s3.ap-south-1.amazonaws.com/some-other-attacker-bucket/some-export.db.gz'
+      const copyProfile = jest.fn(async () => undefined)
+      const { agent } = makeAgent(copyProfile)
+      const logger = makeLogger()
+      const service = new WalletPortabilityService(logger as never)
+
+      const { jobId } = await service.importWallet(agent as never, TENANT_ID, url, PASS_KEY, CHECKSUM)
+      const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+      expect(job.error).toBe('IMPORT_FAILED')
+      expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('untrusted host'))
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      process.env.AWS_WALLET_EXPORT_BUCKET = 'test-wallet-export-bucket'
+    }
+  })
+
+  it('decompression bomb: gunzip aborts once decompressed output crosses its byte cap', async () => {
+    // A real decompression bomb relies on an extreme compression ratio (tiny compressed input,
+    // huge decompressed output) — proving that ratio at unit-test speed would mean allocating a
+    // multi-gigabyte fixture to cross the real MAX_DECOMPRESSED_BYTES ceiling. Instead, call the
+    // private gunzip() directly with its (test-only) maxBytes override — same byte-counting logic
+    // runImport's real call exercises, just against a cap small enough to hit with an ordinary
+    // fixture. See gunzip's own comment for why that parameter exists.
+    const workDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'gunzip-cap-test-'))
+    const gzipPath = path.join(workDir, 'input.db.gz')
+    const outputPath = path.join(workDir, 'output.db')
+    await fsPromises.writeFile(gzipPath, gzipSync(Buffer.alloc(1000, 'a')))
+
+    const service = new WalletPortabilityService(makeLogger() as never)
+    await expect(
+      (service as unknown as { gunzip(src: string, dest: string, maxBytes: number): Promise<void> }).gunzip(
+        gzipPath,
+        outputPath,
+        100,
+      ),
+    ).rejects.toThrow('Decompressed export artifact exceeds the 100-byte cap')
+
+    await fsPromises.rm(workDir, { recursive: true, force: true })
+  })
+
+  it("a stalled download body eventually rejects instead of hanging forever — node-fetch@2's own timeout only covers time-to-first-byte", async () => {
+    // #73 review, verified against the installed node-fetch@2.7.0 source: the `timeout` option
+    // passed to fetch() is armed on the request's 'socket' event and cleared the instant response
+    // headers arrive -- it does not cover a stall in the response *body* (an S3/LB connection
+    // that delivers headers, then goes half-open). downloadAndChecksum streams the body directly
+    // rather than using node-fetch's own buffered .text()/.json() (the only path with a body-level
+    // timer), so without its own inactivity timer, a stalled body left runImport hanging forever:
+    // no catch, no finally, no released reservation, and now (see the heartbeat fix above) a
+    // second job admitted on the same tenant once the lease expired while this one still held its
+    // handles.
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask'] })
+    try {
+      // Delivers one chunk, then never pushes more and never ends -- models the socket going
+      // half-open after some bytes, not a connection that never responds at all (that case is
+      // already covered by node-fetch's own time-to-first-byte timeout).
+      const stalledBody = new Readable({ read() {} })
+      stalledBody.push(Buffer.from('partial-bytes-then-the-socket-goes-half-open'))
+      fetchMock.mockImplementation(async () => ({ ok: true, status: 200, body: stalledBody }))
+
+      const service = new WalletPortabilityService(makeLogger() as never)
+      const workDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'stalled-download-test-'))
+      const destPath = path.join(workDir, 'output.db.gz')
+
+      const downloadPromise = (
+        service as unknown as { downloadAndChecksum(url: string, destPath: string): Promise<string> }
+      ).downloadAndChecksum('https://test-wallet-export-bucket.s3.amazonaws.com/x.db.gz', destPath)
+      // Attached defensively so an unhandled-rejection warning can't fire regardless of exactly
+      // when the fake-timer advance below settles this promise relative to the assertion.
+      downloadPromise.catch(() => undefined)
+
+      // DOWNLOAD_TIMEOUT_MS (5 minutes) -- the inactivity timer's own bound.
+      await jest.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+      await expect(downloadPromise).rejects.toThrow(/stalled/)
+
+      await fsPromises.rm(workDir, { recursive: true, force: true })
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('drains/destroys the response body before throwing on an HTTP-error response, instead of abandoning it unread', async () => {
+    // #73 review: an HTTP-error response (a 403/404 from S3, typically with a small XML error
+    // body) still has bytes to consume. Throwing without draining or destroying that body can
+    // leave its underlying keep-alive socket stuck open rather than freed back to node-fetch's
+    // connection pool, since the pool doesn't consider a socket free for reuse until the body is
+    // fully consumed or explicitly destroyed.
+    const errorBody = new Readable({ read() {} })
+    errorBody.push(Buffer.from('<Error><Code>AccessDenied</Code></Error>'))
+    errorBody.push(null)
+    const destroySpy = jest.spyOn(errorBody, 'destroy')
+    const resumeSpy = jest.spyOn(errorBody, 'resume')
+    fetchMock.mockImplementation(async () => ({ ok: false, status: 403, body: errorBody }))
+
+    const service = new WalletPortabilityService(makeLogger() as never)
+    const workDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'http-error-download-test-'))
+    const destPath = path.join(workDir, 'output.db.gz')
+
+    await expect(
+      (
+        service as unknown as { downloadAndChecksum(url: string, destPath: string): Promise<string> }
+      ).downloadAndChecksum('https://test-wallet-export-bucket.s3.amazonaws.com/x.db.gz', destPath),
+    ).rejects.toThrow(/HTTP 403/)
+
+    expect(destroySpy).toHaveBeenCalled()
+    expect(resumeSpy).toHaveBeenCalled()
+
+    await fsPromises.rm(workDir, { recursive: true, force: true })
+  })
+
+  it('cleans up the whole workDir on success — not just the two files it used to remove individually', async () => {
+    // workDir was previously a local const inside the try, out of scope for the finally, so only
+    // gzipPath/importedDbPath were ever removed — leaving the mkdtemp directory itself and Askar's
+    // -shm/-wal sidecars behind on every import. Spy on the real mkdtemp (not mocked in this file)
+    // to capture the actual path runImport created, then assert the whole thing is gone.
+    const mkdtempSpy = jest.spyOn(fsPromises, 'mkdtemp')
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(mkdtempSpy.mock.results).toHaveLength(1)
+    const workDir = (await mkdtempSpy.mock.results[0].value) as string
+    await waitForPathRemoved(workDir)
+    mkdtempSpy.mockRestore()
+  })
+
+  it('cleans up the whole workDir on failure too, not just on the success path', async () => {
+    const mkdtempSpy = jest.spyOn(fsPromises, 'mkdtemp')
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.importWallet(
+      agent as never,
+      TENANT_ID,
+      EXPORT_URL,
+      PASS_KEY,
+      'deliberately-wrong-checksum',
+    )
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(mkdtempSpy.mock.results).toHaveLength(1)
+    const workDir = (await mkdtempSpy.mock.results[0].value) as string
+    await waitForPathRemoved(workDir)
+    mkdtempSpy.mockRestore()
+  })
+
+  it('artifact with zero or multiple profiles: fails clearly, before any rename', async () => {
+    importedStoreListProfilesHolder.impl = jest.fn(async () => []) as jest.Mock
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('must contain exactly one profile'))
+    expect(renameProfile).not.toHaveBeenCalled()
+    expect(importedStoreCopyProfile).not.toHaveBeenCalled()
+  })
+
+  it("restore scenario: an artifact exported from a different tenant (or a freshly recreated one) still imports — the artifact's own profile is used as fromProfile, not required to equal the target", async () => {
+    // The old guard required the artifact's profile to already equal the *target* tenant's
+    // profile — which would reject exactly this scenario (restoring onto a rebuilt agent or a
+    // freshly created tenant with a new uuid) and every legacy Python-exported artifact.
+    importedStoreListProfilesHolder.impl = jest.fn(async () => ['tenant-some-other-original-tenant']) as jest.Mock
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(job.status).toBe(WalletPortabilityJobStatus.Completed)
+    expect(importedStoreCopyProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ fromProfile: 'tenant-some-other-original-tenant', toProfile: PROFILE }),
+    )
+  })
+
+  it('copyProfile failure after the rename: rolls back — renames the backup profile back to the real name', async () => {
+    // Import's copyProfile is called on the *downloaded* store (importedStoreCopyProfile),
+    // not baseStore.copyProfile — that one is only ever used by export.
+    importedStoreCopyProfile.mockImplementation(async () => {
+      throw new Error('simulated copy failure')
+    })
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('simulated copy failure'))
+    // Two renameProfile calls: the initial rename-aside, then the rollback renaming it back.
+    expect(renameProfile).toHaveBeenCalledTimes(2)
+    const [firstCall, secondCall] = renameProfile.mock.calls as unknown as {
+      fromProfile: string
+      toProfile: string
+    }[][]
+    expect(firstCall[0]).toEqual({ fromProfile: PROFILE, toProfile: expect.stringContaining(PROFILE) })
+    // The rollback call reverses the first: the backup name becomes fromProfile, the real
+    // profile name becomes toProfile again.
+    expect(secondCall[0]).toEqual({ fromProfile: firstCall[0].toProfile, toProfile: PROFILE })
+    // The rollback here succeeded — the backup profile was renamed back to the live name, so it
+    // no longer exists. Reporting it on the Failed record would point an operator at a profile
+    // that isn't there and hide the fact that the tenant is actually already fully restored.
+    expect(job.backupProfile).toBeUndefined()
+  })
+
+  it("rollback FAILS: backupProfile is still reported on the Failed record, since the tenant's real data is genuinely still there", async () => {
+    importedStoreCopyProfile.mockImplementation(async () => {
+      throw new Error('simulated copy failure')
+    })
+    const copyProfile = jest.fn(async () => undefined)
+    // First call (rename-aside) succeeds; second call (the rollback's rename-back) fails.
+    const renameProfile = jest
+      .fn()
+      .mockImplementationOnce(async () => undefined)
+      .mockImplementationOnce(async () => {
+        throw new Error('simulated rollback failure')
+      })
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('simulated copy failure'))
+    expect(renameProfile).toHaveBeenCalledTimes(2)
+    // The rollback itself failed, so the tenant's real data is genuinely still sitting at
+    // backupProfile — an operator needs this to find it, unlike the successful-rollback case
+    // above where the profile no longer exists.
+    expect(job.backupProfile).toBeDefined()
+  })
+
+  it('renameProfile itself fails (the rename-aside never lands): no backupProfile is reported, since no profile was ever created', async () => {
+    // #73 review: the earlier reporting logic only checked "did rollback succeed", which
+    // correctly covered the case above (rollback attempted and failed, real data still at
+    // backupProfile) but missed this mirror -- when the very first renameProfile call throws,
+    // no backup profile is ever created at all, no rollback is attempted (renamedAway never
+    // becomes true), and reporting backupProfile here would hand an operator a recovery pointer
+    // to a profile that was never created.
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => {
+      throw new Error('simulated rename-aside failure')
+    })
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(renameProfile).toHaveBeenCalledTimes(1) // only the rename-aside attempt, no rollback
+    expect(copyProfile).not.toHaveBeenCalled()
+    expect(job.backupProfile).toBeUndefined()
+  })
+
+  it('a failure after copyProfile succeeds reports no backupProfile and never attempts a rollback — the import already landed', async () => {
+    // #73 review: backupExists was set true right after the rename-aside and never cleared again
+    // until a *successful rollback*. renamedAway (which gates the rollback attempt) is correctly
+    // cleared the instant copyProfile succeeds, but backupExists previously was not -- so a later,
+    // unrelated failure in this same try (here: the job-store write for the Completed status)
+    // still reported this Failed record with a backupProfile pointer. An operator following that
+    // pointer ("the tenant's real data may still be at profile X") would rename the stale
+    // pre-import backup back over the profile that had, in fact, already been successfully
+    // imported into, destroying it.
+    // Import's copyProfile is called on the *downloaded* store (importedStoreCopyProfile), not
+    // baseStore.copyProfile -- that one is only ever used by export. See the sibling
+    // "copyProfile failure after the rename" test's identical comment.
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile, renameProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+
+    // Fails the *third* jobStore.save() call for this job (Pending, then InProgress via
+    // setJobStatus, then this one -- the Completed write that runs immediately after copyProfile
+    // succeeds) so the throw lands squarely in the "already imported, nothing left to roll back"
+    // window this fix targets, not before it.
+    const jobStore = (service as unknown as { jobStore: { save: (record: unknown) => Promise<void> } }).jobStore
+    const realSave = jobStore.save.bind(jobStore)
+    let saveCallCount = 0
+    jest.spyOn(jobStore, 'save').mockImplementation(async (record) => {
+      saveCallCount += 1
+      if (saveCallCount === 3) {
+        throw new Error('simulated job-store write failure right after copyProfile succeeded')
+      }
+      return realSave(record as never)
+    })
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('simulated job-store write failure right after copyProfile succeeded'),
+    )
+    expect(importedStoreCopyProfile).toHaveBeenCalledTimes(1)
+    // Only the initial rename-aside -- no rollback attempt, since renamedAway was already false
+    // by the time the failure hit.
+    expect(renameProfile).toHaveBeenCalledTimes(1)
+    expect(job.backupProfile).toBeUndefined()
+  })
+
+  it('rollback recovers even when copyProfile left the target profile partially created before failing', async () => {
+    // Askar's real copy_profile creates the destination profile before it starts copying
+    // entries, so a mid-copy failure can leave `profile` present-but-partial in the base store.
+    // Simulate that here: listProfiles reports it's already there.
+    importedStoreCopyProfile.mockImplementation(async () => {
+      throw new Error('simulated partial copy failure')
+    })
+    const copyProfile = jest.fn(async () => undefined)
+    const renameProfile = jest.fn(async () => undefined)
+    const removeProfile = jest.fn(async () => undefined)
+    const listProfiles = jest.fn(async () => [PROFILE])
+    const { agent } = makeAgent(copyProfile, renameProfile, {
+      listProfilesImpl: listProfiles,
+      removeProfileImpl: removeProfile,
+    })
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+
+    const { jobId } = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(job.error).toBe('IMPORT_FAILED')
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('simulated partial copy failure'))
+    // The partial profile is removed before the rename-back is attempted — without this, the
+    // rename would hit a Duplicate/UNIQUE error and the rollback would itself fail.
+    expect(removeProfile).toHaveBeenCalledWith(PROFILE)
+    expect(renameProfile).toHaveBeenCalledTimes(2)
+  })
+
+  it('a concurrent export/import for the same tenant is rejected with a conflict, not a second job', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const first = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    await expect(service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)).rejects.toThrow(
+      /already in progress/,
+    )
+    await expect(service.exportWallet(agent as never, TENANT_ID, PASS_KEY)).rejects.toThrow(/already in progress/)
+
+    // The original job is unaffected and still runs to completion.
+    await waitForJobStatus(service, first.jobId, WalletPortabilityJobStatus.Completed)
+
+    // Once the tenant's job has finished, the slot is released and a new one can start.
+    const after = await service.importWallet(agent as never, TENANT_ID, EXPORT_URL, PASS_KEY, CHECKSUM)
+    expect(after.jobId).not.toBe(first.jobId)
+    await waitForJobStatus(service, after.jobId, WalletPortabilityJobStatus.Completed)
+  })
+})
+
+describe('WalletPortabilityService — export → import round trip', () => {
+  // The bug this closes: export's gzipAndChecksum and import's downloadAndChecksum each hashed
+  // different bytes (plaintext vs. gzip) before the #72/#73 review fixes, so any real export's
+  // checksum could never match what a real import verified — 100% failure, undetected by either
+  // side's own unit tests because each minted its *own* expected checksum locally instead of
+  // consuming the other's actual output. This test never computes an expected checksum itself:
+  // it takes whatever exportWallet() actually returns and feeds it straight into importWallet(),
+  // through the real (unmocked) gzip/hash code in both gzipAndChecksum and downloadAndChecksum —
+  // only Askar, S3, and node-fetch are mocked, exactly as in the suites above.
+  beforeEach(() => {
+    importedStoreListProfilesHolder.impl = jest.fn(async () => [PROFILE]) as jest.Mock
+    importedStoreCopyProfile.mockImplementation(async () => undefined)
+  })
+
+  it('the checksum a real export produces is exactly what a real import verifies against the same downloaded bytes', async () => {
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const exportCopyProfile = jest.fn(async () => undefined)
+    const { agent: exportAgent } = makeAgent(exportCopyProfile)
+    const { jobId: exportJobId } = await service.exportWallet(exportAgent as never, TENANT_ID, PASS_KEY)
+    const exportJob = await waitForJobStatus(service, exportJobId, WalletPortabilityJobStatus.Completed)
+
+    // The exact bytes S3 received for this export — i.e. exactly what a real download would return.
+    // s3Upload's own mock implementation (above) already reads these bytes off disk into the
+    // module-level uploadedBytes at call time, since uploadToS3 streams via s3.upload() with a
+    // fs.ReadStream Body rather than a Buffer.
+    fetchMock.mockImplementation(async () => makeFetchResponse(uploadedBytes as Buffer))
+
+    const importCopyProfile = jest.fn(async () => undefined)
+    const { agent: importAgent } = makeAgent(importCopyProfile)
+    const { jobId: importJobId } = await service.importWallet(
+      importAgent as never,
+      TENANT_ID,
+      exportJob.downloadUrl as string,
+      PASS_KEY,
+      exportJob.checksum as string,
+    )
+    const importJob = await waitForJobStatus(service, importJobId, WalletPortabilityJobStatus.Completed)
+
+    expect(importJob.status).toBe(WalletPortabilityJobStatus.Completed)
+    expect(importJob.error).toBeUndefined()
   })
 })

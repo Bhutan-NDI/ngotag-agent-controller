@@ -87,4 +87,84 @@ describe('Askar native binding — export/import key-derivation and copyProfile'
 
     expect(fetched?.value).toBe('hello-world')
   })
+
+  // The test above copies into a `toProfile` that already exists in destStore -- that's the
+  // *export* shape (temp store provisioned with the tenant's own profile up front). runImport's
+  // copyProfile call is the opposite shape: by the time it runs, the tenant's real profile has
+  // already been renamed aside, so `toProfile: profile` does NOT yet exist in baseStore. Never
+  // pinned down against the real binding before -- only checked manually via the CLI per an
+  // earlier review pass. See the #73 review.
+  it('copyProfile also carries records over when toProfile does not yet exist in the destination store', async () => {
+    const sourcePath = path.join(workDir, 'import-source.db')
+    const destPath = path.join(workDir, 'import-dest.db')
+    const keyMethod = new StoreKeyMethod(KdfMethod.Argon2IMod)
+    const NEW_PROFILE = 'freshly-created-profile'
+
+    const sourceStore = await Store.provision({
+      uri: `sqlite://${sourcePath}`,
+      keyMethod,
+      passKey: PASSPHRASE,
+      recreate: true,
+      profile: NEW_PROFILE,
+    })
+    const session = await sourceStore.openSession()
+    await session.insert({ category: 'test-category', name: 'test-record', value: 'hello-import' })
+    await session.close()
+
+    // Provisioned with an unrelated profile only -- NEW_PROFILE does not exist here yet, matching
+    // the state of a tenant's baseStore right after its own profile was renamed aside.
+    const destStore = await Store.provision({
+      uri: `sqlite://${destPath}`,
+      keyMethod,
+      passKey: PASSPHRASE,
+      recreate: true,
+      profile: 'unrelated-existing-profile',
+    })
+
+    await sourceStore.copyProfile({ toStore: destStore, fromProfile: NEW_PROFILE, toProfile: NEW_PROFILE })
+
+    await sourceStore.close()
+    await destStore.close()
+
+    const reopened = await Store.open({
+      uri: `sqlite://${destPath}`,
+      keyMethod,
+      passKey: PASSPHRASE,
+      profile: NEW_PROFILE,
+    })
+    const reopenedSession = await reopened.openSession()
+    const fetched = await reopenedSession.fetch({ category: 'test-category', name: 'test-record' })
+    await reopenedSession.close()
+    await reopened.close()
+
+    expect(fetched?.value).toBe('hello-import')
+  })
+
+  it('regression guard: Store.open rejects a KdfMethod that does not match how the file was provisioned', async () => {
+    // A real bug found during the #73 rebase, not caught by any mocked spec: runImport's
+    // Store.open call was still using KdfMethod.Raw after export switched to provisioning with
+    // Argon2IMod. Askar rejects the mismatch outright — every real import would have failed here
+    // before ever reaching a wrong-passphrase check.
+    const dbPath = path.join(workDir, 'kdf-mismatch.db')
+    const store = await Store.provision({
+      uri: `sqlite://${dbPath}`,
+      keyMethod: new StoreKeyMethod(KdfMethod.Argon2IMod),
+      passKey: PASSPHRASE,
+      recreate: true,
+      profile: PROFILE,
+    })
+    await store.close()
+
+    await expect(
+      Store.open({ uri: `sqlite://${dbPath}`, keyMethod: new StoreKeyMethod(KdfMethod.Raw), passKey: PASSPHRASE }),
+    ).rejects.toThrow()
+
+    // The fix: open with the matching method.
+    const reopened = await Store.open({
+      uri: `sqlite://${dbPath}`,
+      keyMethod: new StoreKeyMethod(KdfMethod.Argon2IMod),
+      passKey: PASSPHRASE,
+    })
+    await reopened.close()
+  })
 })

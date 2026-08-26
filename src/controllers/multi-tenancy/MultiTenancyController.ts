@@ -1,14 +1,38 @@
 import type { RestMultiTenantAgentModules } from '../../cliAgent'
+import type {
+  ExportWalletResult,
+  ImportWalletResult,
+  WalletPortabilityJobRecord,
+} from '../../services/wallet-portability/WalletPortabilityTypes'
 import type { TenantRecord } from '@credo-ts/tenants'
 
 import { Agent, CacheModuleConfig, JsonTransformer, injectable, LogLevel, RecordNotFoundError } from '@credo-ts/core'
 import { Request as Req } from 'express'
 import jwt from 'jsonwebtoken'
-import { Body, Controller, Delete, Post, Route, Tags, Path, Security, Request, Res, TsoaResponse, Get } from 'tsoa'
+import {
+  Body,
+  Controller,
+  Delete,
+  Post,
+  Route,
+  Tags,
+  Path,
+  Security,
+  Request,
+  Res,
+  TsoaResponse,
+  Get,
+  Response,
+} from 'tsoa'
 
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
+import { ConflictError } from '../../errors/errors'
 import { getWalletPortabilityService } from '../../services/wallet-portability/WalletPortabilityService'
+import {
+  WalletPortabilityJobConflictError,
+  WalletPortabilityJobType,
+} from '../../services/wallet-portability/WalletPortabilityTypes'
 import { TsLogger } from '../../utils/logger'
 import { CreateTenantOptions } from '../types'
 
@@ -20,6 +44,18 @@ import { CreateTenantOptions } from '../types'
 // contract) into a server-generated-key one, which would be a bigger, separate change. See the
 // #72 review.
 const MIN_PASSKEY_LENGTH = 16
+
+// A SHA-256 digest, hex-encoded: exactly 64 hex characters. Without this, a malformed checksum
+// (too short, too long, non-hex, or just a typo) still passed the earlier `!checksum` truthiness
+// check, reserved the tenant's active-job slot, and downloaded up to MAX_DOWNLOAD_BYTES (2 GiB)
+// before runImport's own comparison inevitably failed -- wasted work and a wedged reservation for
+// something a cheap upfront regex already rules out. Case-insensitive: SHA-256 hex is conceptually
+// case-insensitive, but WalletPortabilityService's own comparison (`hash.digest('hex')`, always
+// lowercase, compared with `!==`) is case-sensitive, so an uppercase-but-arithmetically-correct
+// checksum would otherwise still fail downstream -- matches the platform-side DTO's own fix for
+// the identical gap (lowercase, don't just narrow the regex to reject uppercase). See the #73
+// review.
+const CHECKSUM_PATTERN = /^[a-f0-9]{64}$/i
 
 @Tags('MultiTenancy')
 @Security('jwt', [SCOPES.MULTITENANT_BASE_AGENT])
@@ -141,15 +177,32 @@ export class MultiTenancyController extends Controller {
    * artifact — the caller must retain it to import the artifact later; it is never generated
    * or persisted server-side.
    *
-   * @returns { jobId, status } — status is always 'pending' on this response
+   * Returns jobId/status; status is always 'pending' on this response.
    */
+  // Deliberately not `@returns { jobId, status }` in the docblock above -- tsoa's JSDoc parser
+  // reads the `{` right after `@returns` as an attempt at a JSDoc type annotation, truncates on
+  // the first `}` it finds inside the object literal, and mangles the rest into the generated
+  // OpenAPI description (this used to render as `", status } — status is always 'pending'..."`).
+  // The explicit Promise<ExportWalletResult> return type below already documents the real shape
+  // in the generated schema; the docblock's own line above only needs to say what the schema
+  // doesn't: that status is always 'pending' here specifically. See the #73 review.
+  //
+  // The next three @Response lines were reachable in code (getTenantById/exportWallet's own catch blocks below) but
+  // undocumented in the generated OpenAPI spec — unlike @Res(), which requires a matching
+  // TsoaResponse parameter the handler actually calls, @Response() documents a status this method
+  // can throw without needing a corresponding parameter, matching every sibling endpoint in this
+  // same file (e.g. getTenantToken above) that already pairs its declared 4xx with a 500. See the
+  // #73 review.
+  @Response<{ message: string }>(404, 'Tenant not found')
+  @Response<{ message: string }>(409, 'A wallet portability job is already running for this tenant')
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Post('/export/:tenantId')
   public async exportTenantWallet(
     @Request() request: Req,
     @Path('tenantId') tenantId: string,
     @Body() exportWalletRequest: { passKey: string },
     @Res() badRequestError: TsoaResponse<400, { reason: string }>,
-  ) {
+  ): Promise<ExportWalletResult> {
     const { passKey } = exportWalletRequest
     if (!passKey || passKey.length < MIN_PASSKEY_LENGTH) {
       return badRequestError(400, { reason: `passKey must be at least ${MIN_PASSKEY_LENGTH} characters.` })
@@ -172,6 +225,11 @@ export class MultiTenancyController extends Controller {
         passKey,
       )
     } catch (error) {
+      // Export and import share the tenant's profile namespace and can't safely run
+      // concurrently — see WalletPortabilityJobConflictError's docblock.
+      if (error instanceof WalletPortabilityJobConflictError) {
+        throw new ConflictError(error.message)
+      }
       throw ErrorHandlingService.handle(error)
     }
   }
@@ -180,23 +238,130 @@ export class MultiTenancyController extends Controller {
    * Poll the status of an export job started via POST /export/:tenantId. On completion, the
    * response carries a short-lived pre-signed S3 URL and the artifact's SHA-256 checksum.
    */
+  // See exportTenantWallet's identical comment on @Response vs @Res -- getJobStatus's own catch
+  // block below can throw anything ErrorHandlingService.handle maps to, not just the 404 already
+  // declared via @Res(). See the #73 review.
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Get('/export/:tenantId/status/:jobId')
   public async getExportWalletStatus(
     @Path('tenantId') tenantId: string,
     @Path('jobId') jobId: string,
     @Res() notFoundError: TsoaResponse<404, { reason: string }>,
-    @Res() internalServerError: TsoaResponse<500, { message: string }>,
-  ) {
+  ): Promise<WalletPortabilityJobRecord> {
     try {
       const job = await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).getJobStatus(
         jobId,
       )
-      if (!job || job.tenantId !== tenantId) {
+      // job.type checked too, not just tenantId: getJobStatus is type-agnostic, so an export
+      // jobId polled through this route (or an import jobId polled through the mirrored
+      // getImportWalletStatus below) would otherwise resolve successfully with a shape that
+      // doesn't match what this route promises (no downloadUrl on an import job masquerading as
+      // an export one, and vice versa) instead of a clean 404. See the #73 review.
+      if (!job || job.tenantId !== tenantId || job.type !== WalletPortabilityJobType.Export) {
         return notFoundError(404, { reason: `Export job '${jobId}' not found for tenant '${tenantId}'.` })
       }
       return job
     } catch (error) {
-      return internalServerError(500, { message: `something went wrong: ${error}` })
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  /**
+   * Import a tenant's (cloud) wallet from a prior export. Async job: returns a job id
+   * immediately — poll via the status endpoint below.
+   *
+   * The tenant's current profile is never deleted outright: it's renamed aside (see
+   * `backupProfile` on the completed job) before the imported profile takes its place, so a bad
+   * import always leaves a recovery path. checksum is verified before anything live is touched.
+   *
+   * A second export/import already running for the same tenant is rejected with 409 — but that
+   * guards only against a second portability job, not ordinary tenant traffic: the tenant's
+   * profile does not exist between the rename and the copy completing, so a normal REST/DIDComm
+   * request landing in that window fails outright rather than queuing or waiting. See
+   * WalletPortabilityService.runImport's docblock; not yet resolved.
+   *
+   * Returns jobId/status; status is always 'pending' on this response.
+   */
+  // See exportTenantWallet's identical comments on @Response vs @Res, and on why this docblock's
+  // own return-shape line above isn't written as a literal `@returns {...}` tag. See the #73 review.
+  @Response<{ message: string }>(404, 'Tenant not found')
+  @Response<{ message: string }>(409, 'A wallet portability job is already running for this tenant')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Post('/import/:tenantId')
+  public async importTenantWallet(
+    @Request() request: Req,
+    @Path('tenantId') tenantId: string,
+    @Body() importWalletRequest: { exportUrl: string; passKey: string; checksum: string },
+    @Res() badRequestError: TsoaResponse<400, { reason: string }>,
+  ): Promise<ImportWalletResult> {
+    const { exportUrl, passKey, checksum } = importWalletRequest
+    if (!exportUrl || !passKey || !checksum) {
+      return badRequestError(400, { reason: 'exportUrl, passKey and checksum are all required.' })
+    }
+    // Same MIN_PASSKEY_LENGTH floor as exportTenantWallet -- this passKey is the same one the
+    // caller supplied at export time, so a weak one accepted here just means the earlier check
+    // was bypassable via import's own endpoint. See the #73 review.
+    if (passKey.length < MIN_PASSKEY_LENGTH) {
+      return badRequestError(400, { reason: `passKey must be at least ${MIN_PASSKEY_LENGTH} characters.` })
+    }
+    if (!CHECKSUM_PATTERN.test(checksum)) {
+      return badRequestError(400, { reason: 'checksum must be a 64-character hexadecimal SHA-256 digest.' })
+    }
+    const agent = request.agent as Agent<RestMultiTenantAgentModules>
+    try {
+      // Same upfront guard as exportTenantWallet, for the same reason — and doubly so here:
+      // importWallet's very first step is tryReserveActiveJob(tenantId, jobId), so a bogus
+      // tenantId would otherwise take out the tenant's active-job reservation before anything is
+      // validated, not just enqueue a job doomed to fail later.
+      await agent.modules.tenants.getTenantById(tenantId)
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+    try {
+      return await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).importWallet(
+        agent,
+        tenantId,
+        exportUrl,
+        passKey,
+        // Normalized to lowercase here, not just validated -- see CHECKSUM_PATTERN's own comment
+        // on why an uppercase-but-correct digest must not reach runImport's case-sensitive `!==`
+        // comparison against hash.digest('hex') unnormalized.
+        checksum.toLowerCase(),
+      )
+    } catch (error) {
+      // Export and import share the tenant's profile namespace and can't safely run
+      // concurrently — see WalletPortabilityJobConflictError's docblock.
+      if (error instanceof WalletPortabilityJobConflictError) {
+        throw new ConflictError(error.message)
+      }
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  /**
+   * Poll the status of an import job started via POST /import/:tenantId. On completion, the
+   * response carries the name the tenant's pre-import profile was renamed to (backupProfile) —
+   * it is never deleted automatically.
+   */
+  // See exportTenantWallet's identical comment on @Response vs @Res. See the #73 review.
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Get('/import/:tenantId/status/:jobId')
+  public async getImportWalletStatus(
+    @Path('tenantId') tenantId: string,
+    @Path('jobId') jobId: string,
+    @Res() notFoundError: TsoaResponse<404, { reason: string }>,
+  ): Promise<WalletPortabilityJobRecord> {
+    try {
+      const job = await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).getJobStatus(
+        jobId,
+      )
+      // job.type checked too — see getExportWalletStatus's identical comment above.
+      if (!job || job.tenantId !== tenantId || job.type !== WalletPortabilityJobType.Import) {
+        return notFoundError(404, { reason: `Import job '${jobId}' not found for tenant '${tenantId}'.` })
+      }
+      return job
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
     }
   }
 

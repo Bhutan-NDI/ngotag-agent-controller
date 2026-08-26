@@ -2451,6 +2451,101 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"WalletPortabilityJobStatus": {
+				"enum": [
+					"pending",
+					"in-progress",
+					"completed",
+					"failed"
+				],
+				"type": "string"
+			},
+			"ExportWalletResult": {
+				"properties": {
+					"jobId": {
+						"type": "string"
+					},
+					"status": {
+						"$ref": "#/components/schemas/WalletPortabilityJobStatus"
+					}
+				},
+				"required": [
+					"jobId",
+					"status"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"WalletPortabilityJobType": {
+				"enum": [
+					"export",
+					"import"
+				],
+				"type": "string"
+			},
+			"WalletPortabilityJobRecord": {
+				"properties": {
+					"jobId": {
+						"type": "string"
+					},
+					"tenantId": {
+						"type": "string"
+					},
+					"type": {
+						"$ref": "#/components/schemas/WalletPortabilityJobType"
+					},
+					"status": {
+						"$ref": "#/components/schemas/WalletPortabilityJobStatus"
+					},
+					"createdAt": {
+						"type": "string"
+					},
+					"updatedAt": {
+						"type": "string"
+					},
+					"s3Key": {
+						"type": "string"
+					},
+					"checksum": {
+						"type": "string"
+					},
+					"downloadUrl": {
+						"type": "string"
+					},
+					"backupProfile": {
+						"type": "string"
+					},
+					"error": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"jobId",
+					"tenantId",
+					"type",
+					"status",
+					"createdAt",
+					"updatedAt"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"ImportWalletResult": {
+				"properties": {
+					"jobId": {
+						"type": "string"
+					},
+					"status": {
+						"$ref": "#/components/schemas/WalletPortabilityJobStatus"
+					}
+				},
+				"required": [
+					"jobId",
+					"status"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"QuestionAnswerRole": {
 				"enum": [
 					"questioner",
@@ -7461,10 +7556,12 @@
 				"operationId": "ExportTenantWallet",
 				"responses": {
 					"200": {
-						"description": ", status } — status is always 'pending' on this response",
+						"description": "Ok",
 						"content": {
 							"application/json": {
-								"schema": {}
+								"schema": {
+									"$ref": "#/components/schemas/ExportWalletResult"
+								}
 							}
 						}
 					},
@@ -7485,9 +7582,63 @@
 								}
 							}
 						}
+					},
+					"404": {
+						"description": "Tenant not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "A wallet portability job is already running for this tenant",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
 					}
 				},
-				"description": "Export a tenant's (cloud) wallet — native replacement for the legacy per-request raw-NATS\ncall to the separate askar-wallet-tools Python service. Async job: returns a job id\nimmediately, the actual export runs in the background — poll via the status endpoint below.\n\n`passKey` is caller-supplied (matches the legacy contract) and protects the exported\nartifact — the caller must retain it to import the artifact later; it is never generated\nor persisted server-side.",
+				"description": "Export a tenant's (cloud) wallet — native replacement for the legacy per-request raw-NATS\ncall to the separate askar-wallet-tools Python service. Async job: returns a job id\nimmediately, the actual export runs in the background — poll via the status endpoint below.\n\n`passKey` is caller-supplied (matches the legacy contract) and protects the exported\nartifact — the caller must retain it to import the artifact later; it is never generated\nor persisted server-side.\n\nReturns jobId/status; status is always 'pending' on this response.",
 				"tags": [
 					"MultiTenancy"
 				],
@@ -7536,7 +7687,9 @@
 						"description": "Ok",
 						"content": {
 							"application/json": {
-								"schema": {}
+								"schema": {
+									"$ref": "#/components/schemas/WalletPortabilityJobRecord"
+								}
 							}
 						}
 					},
@@ -7559,7 +7712,7 @@
 						}
 					},
 					"500": {
-						"description": "",
+						"description": "Internal Server Error",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -7578,6 +7731,224 @@
 					}
 				},
 				"description": "Poll the status of an export job started via POST /export/:tenantId. On completion, the\nresponse carries a short-lived pre-signed S3 URL and the artifact's SHA-256 checksum.",
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "jobId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"/multi-tenancy/import/{tenantId}": {
+			"post": {
+				"operationId": "ImportTenantWallet",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ImportWalletResult"
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Tenant not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "A wallet portability job is already running for this tenant",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Import a tenant's (cloud) wallet from a prior export. Async job: returns a job id\nimmediately — poll via the status endpoint below.\n\nThe tenant's current profile is never deleted outright: it's renamed aside (see\n`backupProfile` on the completed job) before the imported profile takes its place, so a bad\nimport always leaves a recovery path. checksum is verified before anything live is touched.\n\nA second export/import already running for the same tenant is rejected with 409 — but that\nguards only against a second portability job, not ordinary tenant traffic: the tenant's\nprofile does not exist between the rename and the copy completing, so a normal REST/DIDComm\nrequest landing in that window fails outright rather than queuing or waiting. See\nWalletPortabilityService.runImport's docblock; not yet resolved.\n\nReturns jobId/status; status is always 'pending' on this response.",
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"checksum": {
+										"type": "string"
+									},
+									"passKey": {
+										"type": "string"
+									},
+									"exportUrl": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"checksum",
+									"passKey",
+									"exportUrl"
+								],
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/multi-tenancy/import/{tenantId}/status/{jobId}": {
+			"get": {
+				"operationId": "GetImportWalletStatus",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/WalletPortabilityJobRecord"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Poll the status of an import job started via POST /import/:tenantId. On completion, the\nresponse carries the name the tenant's pre-import profile was renamed to (backupProfile) —\nit is never deleted automatically.",
 				"tags": [
 					"MultiTenancy"
 				],

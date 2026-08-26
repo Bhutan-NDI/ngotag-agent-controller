@@ -1082,6 +1082,52 @@ const models: TsoaRoute.Models = {
         "additionalProperties": false,
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "WalletPortabilityJobStatus": {
+        "dataType": "refEnum",
+        "enums": ["pending","in-progress","completed","failed"],
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "ExportWalletResult": {
+        "dataType": "refObject",
+        "properties": {
+            "jobId": {"dataType":"string","required":true},
+            "status": {"ref":"WalletPortabilityJobStatus","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "WalletPortabilityJobType": {
+        "dataType": "refEnum",
+        "enums": ["export","import"],
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "WalletPortabilityJobRecord": {
+        "dataType": "refObject",
+        "properties": {
+            "jobId": {"dataType":"string","required":true},
+            "tenantId": {"dataType":"string","required":true},
+            "type": {"ref":"WalletPortabilityJobType","required":true},
+            "status": {"ref":"WalletPortabilityJobStatus","required":true},
+            "createdAt": {"dataType":"string","required":true},
+            "updatedAt": {"dataType":"string","required":true},
+            "s3Key": {"dataType":"string"},
+            "checksum": {"dataType":"string"},
+            "downloadUrl": {"dataType":"string"},
+            "backupProfile": {"dataType":"string"},
+            "error": {"dataType":"string"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "ImportWalletResult": {
+        "dataType": "refObject",
+        "properties": {
+            "jobId": {"dataType":"string","required":true},
+            "status": {"ref":"WalletPortabilityJobStatus","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "QuestionAnswerRole": {
         "dataType": "refEnum",
         "enums": ["questioner","responder"],
@@ -3859,7 +3905,6 @@ export function RegisterRoutes(app: Router) {
                 tenantId: {"in":"path","name":"tenantId","required":true,"dataType":"string"},
                 jobId: {"in":"path","name":"jobId","required":true,"dataType":"string"},
                 notFoundError: {"in":"res","name":"404","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true}}},
-                internalServerError: {"in":"res","name":"500","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"message":{"dataType":"string","required":true}}},
         };
         app.get('/multi-tenancy/export/:tenantId/status/:jobId',
             authenticateMiddleware([{"jwt":["Basewallet"]}]),
@@ -3883,6 +3928,83 @@ export function RegisterRoutes(app: Router) {
 
               await templateService.apiHandler({
                 methodName: 'getExportWalletStatus',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsMultiTenancyController_importTenantWallet: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                tenantId: {"in":"path","name":"tenantId","required":true,"dataType":"string"},
+                importWalletRequest: {"in":"body","name":"importWalletRequest","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"checksum":{"dataType":"string","required":true},"passKey":{"dataType":"string","required":true},"exportUrl":{"dataType":"string","required":true}}},
+                badRequestError: {"in":"res","name":"400","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true}}},
+        };
+        app.post('/multi-tenancy/import/:tenantId',
+            authenticateMiddleware([{"jwt":["Basewallet"]}]),
+            ...(fetchMiddlewares<RequestHandler>(MultiTenancyController)),
+            ...(fetchMiddlewares<RequestHandler>(MultiTenancyController.prototype.importTenantWallet)),
+
+            async function MultiTenancyController_importTenantWallet(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsMultiTenancyController_importTenantWallet, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<MultiTenancyController>(MultiTenancyController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'importTenantWallet',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsMultiTenancyController_getImportWalletStatus: Record<string, TsoaRoute.ParameterSchema> = {
+                tenantId: {"in":"path","name":"tenantId","required":true,"dataType":"string"},
+                jobId: {"in":"path","name":"jobId","required":true,"dataType":"string"},
+                notFoundError: {"in":"res","name":"404","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true}}},
+        };
+        app.get('/multi-tenancy/import/:tenantId/status/:jobId',
+            authenticateMiddleware([{"jwt":["Basewallet"]}]),
+            ...(fetchMiddlewares<RequestHandler>(MultiTenancyController)),
+            ...(fetchMiddlewares<RequestHandler>(MultiTenancyController.prototype.getImportWalletStatus)),
+
+            async function MultiTenancyController_getImportWalletStatus(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsMultiTenancyController_getImportWalletStatus, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<MultiTenancyController>(MultiTenancyController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'getImportWalletStatus',
                 controller,
                 response,
                 next,
