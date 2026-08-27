@@ -119,13 +119,14 @@ function assertSafeContextUrl(context: string): void {
     throw new BadRequestError(`@context entry '${context}' must use https`)
   }
   // URL.hostname keeps the brackets around an IPv6 literal (e.g. "[::1]") -- isIP() and the
-  // range checks below both expect the bare address. It also preserves a trailing root dot on an
-  // FQDN (e.g. "localhost." -> hostname "localhost."), which any real DNS resolver/HTTP client
-  // treats identically to the same name without one -- an unstripped dot is a one-character
-  // bypass of the exact-match check below. Stripped before both checks. See the #75 review.
+  // range checks below both expect the bare address. It also preserves trailing root dots on an
+  // FQDN (e.g. "localhost." or even "localhost.." -- new URL() accepts any number of them
+  // unmodified), which real DNS resolvers/HTTP clients treat identically to the same name
+  // without one -- an unstripped dot is a bypass of the exact-match check below. Strips *all*
+  // trailing dots, not just one. See the #75 review.
   const rawHostname = parsed.hostname.toLowerCase()
   const bracketless = rawHostname.startsWith('[') ? rawHostname.slice(1, -1) : rawHostname
-  const hostname = bracketless.endsWith('.') ? bracketless.slice(0, -1) : bracketless
+  const hostname = bracketless.replace(/\.+$/, '')
   if (BLOCKED_CONTEXT_HOSTNAMES.has(hostname)) {
     throw new BadRequestError(`@context entry '${context}' points at a disallowed host`)
   }
@@ -464,9 +465,19 @@ export class AgentController extends Controller {
       // DNS-time resolution + redirect revalidation + timeout/size limits), tracked separately as
       // item 16/26 in cloud-wallet-security-escalations.md. This closes the immediate,
       // trivially-exploitable hole without that larger design.
+      //
+      // The string-only type check below is itself a gap this guard previously had: JSON-LD 1.1
+      // lets a @context entry be an *object* carrying an `@import` keyword, which the installed
+      // @digitalcredentials/jsonld resolves through this same unrestricted document loader
+      // (context.js's @import handling calls options.contextResolver.resolve() directly) --
+      // confirmed, not theoretical. An object entry never needs @import for this endpoint (real
+      // callers only ever send inline objects like {"@version": 1.1}), so it's rejected outright
+      // rather than validated as a URL. See the #75 review.
       for (const contextEntry of selfAttestedContext) {
         if ('string' === typeof contextEntry) {
           assertSafeContextUrl(contextEntry)
+        } else if (contextEntry && 'object' === typeof contextEntry && '@import' in contextEntry) {
+          throw new BadRequestError("@context entries with '@import' are not allowed")
         }
       }
 

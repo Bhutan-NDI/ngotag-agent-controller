@@ -354,6 +354,14 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
       await rejectsContext(['https://localhost./context.jsonld'], 'disallowed host')
     })
 
+    it('rejects a double-trailing-dot FQDN form too, not just a single dot', async () => {
+      await rejectsContext(['https://localhost../context.jsonld'], 'disallowed host')
+    })
+
+    it("rejects an object @context entry carrying '@import' -- JSON-LD 1.1 resolves it through the same unrestricted document loader this whole guard exists to gate", async () => {
+      await rejectsContext([{ '@import': 'https://169.254.169.254/latest/meta-data/' }], "'@import' are not allowed")
+    })
+
     it.each([
       ['https://127.0.0.1/context.jsonld', 'IPv4 loopback'],
       ['https://169.254.169.254/latest/meta-data/', 'IPv4 link-local (cloud metadata endpoint)'],
