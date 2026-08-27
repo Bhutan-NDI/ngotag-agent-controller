@@ -496,6 +496,91 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     })
   })
 
+  // credentialSubject (and, in principle, any other field) is a JSON-LD node object once the real
+  // vc/v1 context maps it as a term, so it can carry its own local @context/@import the same way
+  // an object @context entry can -- and subject is spread into `claims` with no filtering. See the
+  // #75 review.
+  describe('nested @context/@import guard over the whole payload', () => {
+    const rejectsPayload = async (overrides: Record<string, unknown>, expectedMessageFragment: string) => {
+      const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
+      const signCredential = jest.fn() as jest.Mock
+      const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+      const controller = new AgentController()
+
+      await expect(
+        controller.createW3cSelfAttestedCredential(makeRequest(agent), {
+          ...(REQUEST_BODY as Record<string, unknown>),
+          ...overrides,
+        } as never),
+      ).rejects.toThrow(expectedMessageFragment)
+      expect(signCredential).not.toHaveBeenCalled()
+    }
+
+    it('rejects a local @context smuggled inside credentialSubject, exactly as kinxa0 reproduced it', async () => {
+      await rejectsPayload(
+        {
+          credentialSubject: {
+            id: 'did:example:self',
+            '@context': 'https://169.254.169.254/latest/meta-data/',
+            name: 'x',
+          },
+        },
+        "may not contain a nested '@import' or '@context' key",
+      )
+    })
+
+    it('rejects an @import smuggled inside credentialSubject too, not just a local @context', async () => {
+      await rejectsPayload(
+        { credentialSubject: { id: 'did:example:self', '@import': 'https://169.254.169.254/' } },
+        "may not contain a nested '@import' or '@context' key",
+      )
+    })
+
+    it('rejects a nested @context smuggled inside an array credentialSubject entry', async () => {
+      await rejectsPayload(
+        {
+          credentialSubject: [
+            { id: 'did:example:self' },
+            { id: 'did:example:other', '@context': 'https://169.254.169.254/latest/meta-data/' },
+          ],
+        },
+        "may not contain a nested '@import' or '@context' key",
+      )
+    })
+
+    it('rejects a nested @context smuggled under type instead of credentialSubject -- the guard is field-agnostic, not credentialSubject-specific', async () => {
+      await rejectsPayload(
+        { type: [{ '@context': 'https://169.254.169.254/latest/meta-data/' }] },
+        "may not contain a nested '@import' or '@context' key",
+      )
+    })
+
+    it('does not reject a normal credentialSubject with plain claim values', async () => {
+      const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
+      const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
+        return new W3cJsonLdVerifiableCredential({
+          ...options.credential,
+          proof: {
+            type: 'Ed25519Signature2018',
+            proofPurpose: 'assertionMethod',
+            verificationMethod: VERIFICATION_METHOD_ID,
+            created: new Date().toISOString(),
+            jws: 'fake-jws',
+          },
+        })
+      }) as jest.Mock
+      const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+      const controller = new AgentController()
+
+      await controller.createW3cSelfAttestedCredential(makeRequest(agent), {
+        ...(REQUEST_BODY as Record<string, unknown>),
+        credentialSubject: { id: 'did:example:self', name: 'x', nested: { still: 'fine' } },
+      } as never)
+
+      expect(signCredential).toHaveBeenCalled()
+    })
+  })
+
   it('supports an array credentialSubject — each entry gets the agent DID as id and its own object as claims', async () => {
     // assertionMethod, not verificationMethod: the endpoint only ever signs with a key listed
     // under assertionMethod (see AgentController's own comment on why verificationMethod alone

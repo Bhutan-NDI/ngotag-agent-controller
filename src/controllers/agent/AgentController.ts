@@ -508,6 +508,21 @@ export class AgentController extends Controller {
         }
       }
 
+      // Per the #75 review: the guard above only ever covered the top-level @context array, but
+      // JSON-LD 1.1 lets *any* node object carry its own local @context key once the real vc/v1 or
+      // vc/v2 context maps it as a term -- credentialSubject is exactly such a node object (spread
+      // into `claims` below with no filtering), and there's no principled reason to assume it's the
+      // only field capable of that. Rather than keep enumerating fields one at a time as each new
+      // one is found, this scans the rest of the payload (everything except @context itself, which
+      // already has its own more precise scheme/host validation above -- a blanket keyword ban
+      // there would also reject the real https URLs this endpoint needs to allow) for a nested
+      // '@context'/'@import' key at any depth, regardless of which field it's under.
+      const restOfPayload: Record<string, unknown> = { ...selfAttestedCredentialOptions }
+      delete restOfPayload['@context']
+      if (containsForbiddenNestedContextKeyword(restOfPayload)) {
+        throw new BadRequestError("credential fields may not contain a nested '@import' or '@context' key")
+      }
+
       // A caller-supplied date must actually parse -- Date accepts near-anything and silently
       // yields Invalid Date otherwise, which would reach the signer as a broken expirationDate
       // string instead of a clear 400 here. Checked against `undefined` specifically, not
