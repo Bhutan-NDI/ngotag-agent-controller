@@ -35,9 +35,7 @@ import { NotFoundError, BadRequestError } from '../../errors'
 import { findDefaultDidRecords } from '../../utils/defaultDid'
 import { verifyDidBoundSignature } from '../../utils/didSignatureVerification'
 
-// 100 years: effectively non-expiring default for a self-attested credential whose caller didn't
-// request a real expiry. See createW3cSelfAttestedCredential's own comment for why some value is
-// unavoidable here regardless of caller intent.
+// 100 years: effectively non-expiring default when the caller doesn't request an expiry (W3cCredential requires some value).
 const SELF_ATTESTED_DEFAULT_EXPIRATION_MS = 100 * 365.25 * 24 * 60 * 60 * 1000
 
 const BLOCKED_CONTEXT_HOSTNAMES = new Set(['localhost'])
@@ -59,13 +57,8 @@ function isPrivateOrLoopbackIPv4(ip: string): boolean {
   )
 }
 
-// Node's URL parser canonicalizes any IPv6 address that embeds an IPv4 address to hex-group
-// form, not the dotted-quad form (e.g. ::ffff:127.0.0.1 -> ::ffff:7f00:1, since 0x7f00 0x0001 =
-// 127.0.0.1) -- so a naive dotted-quad string check never matches what actually reaches this
-// function. Three real notations embed an IPv4 address this way, all real SSRF filter-bypass
-// forms if not unwrapped: IPv4-mapped (::ffff:a.b.c.d), the deprecated IPv4-compatible form
-// (::a.b.c.d, no ffff marker -- e.g. ::127.0.0.1 canonicalizes to ::7f00:1), and the NAT64/
-// IPv4-translated form (::ffff:0:a.b.c.d). See the #75 review.
+// Node's URL parser canonicalizes any embedded IPv4 in an IPv6 literal to hex-group form (e.g.
+// ::ffff:127.0.0.1 -> ::ffff:7f00:1), including the un-prefixed/NAT64 forms -- unwrap before checking.
 function ipv4MappedToIPv4(ip: string): string | undefined {
   const dotted = /^::(?:ffff:)?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(ip)
   if (dotted) {
@@ -90,10 +83,7 @@ function isPrivateOrLoopbackIPv6(ip: string): boolean {
   ) {
     return true
   }
-  // fe80::/10 link-local spans first-hextet 0xfe80-0xfebf (fe80::, fe90::, ..., febf:: are all
-  // equally link-local) -- a literal 'fe80:' prefix match only catches the first of those and
-  // misses the rest. Range-check the first hextet instead, same pattern as the IPv4 octet range
-  // checks above. See the #75 review.
+  // fe80::/10 spans first-hextet 0xfe80-0xfebf; a literal 'fe80:' prefix only matches one of them.
   const firstHextet = parseInt(lower.split(':')[0], 16)
   if (!Number.isNaN(firstHextet) && 0xfe80 <= firstHextet && 0xfebf >= firstHextet) {
     return true
@@ -118,12 +108,8 @@ function assertSafeContextUrl(context: string): void {
   if ('https:' !== parsed.protocol) {
     throw new BadRequestError(`@context entry '${context}' must use https`)
   }
-  // URL.hostname keeps the brackets around an IPv6 literal (e.g. "[::1]") -- isIP() and the
-  // range checks below both expect the bare address. It also preserves trailing root dots on an
-  // FQDN (e.g. "localhost." or even "localhost.." -- new URL() accepts any number of them
-  // unmodified), which real DNS resolvers/HTTP clients treat identically to the same name
-  // without one -- an unstripped dot is a bypass of the exact-match check below. Strips *all*
-  // trailing dots, not just one. See the #75 review.
+  // URL.hostname retains IPv6 brackets and any number of trailing root dots (both accepted verbatim
+  // by new URL()) -- strip both before the exact-match/IP checks below, or 'localhost.' bypasses them.
   const rawHostname = parsed.hostname.toLowerCase()
   const bracketless = rawHostname.startsWith('[') ? rawHostname.slice(1, -1) : rawHostname
   const hostname = bracketless.replace(/\.+$/, '')
@@ -138,13 +124,8 @@ function assertSafeContextUrl(context: string): void {
   }
 }
 
-// See createW3cSelfAttestedCredential's SSRF-guard comment for scope. `@import` and term-scoped
-// `@context` are two distinct JSON-LD 1.1 keywords that can each smuggle a URL into context
-// processing from inside an object @context entry -- and term-scoped contexts can themselves
-// nest further term definitions, each with their own scoped context, so this walks the whole
-// entry rather than checking only its top-level keys. Only checks key *presence*, not value
-// shape: neither keyword is ever legitimate here, so there's nothing further to validate once
-// either is found.
+// @import and a term's own scoped @context can each smuggle a URL into JSON-LD processing from
+// inside an object @context entry, and scoped contexts can nest further -- so this recurses.
 function containsForbiddenNestedContextKeyword(value: unknown): boolean {
   if (Array.isArray(value)) {
     return value.some((entry) => containsForbiddenNestedContextKeyword(entry))
@@ -356,29 +337,14 @@ export class AgentController extends Controller {
    * Create and store a self-attested W3C JSON-LD credential — the agent issues a credential to
    * itself using its own default DID, rather than an external issuer signing over a subject DID.
    *
-   * Lives on request.agent, not /multi-tenancy/:tenantId + withTenantAgent() — matching
-   * verifyCredential/verify above rather than the legacy pipeline-implementation placement. The
-   * auth layer already resolves the tenant agent per request for a tenant token (see
-   * authentication.ts), which is why no live controller on develop calls withTenantAgent(); the
-   * /multi-tenancy/:tenantId placement is base-wallet-token only (MULTITENANT_BASE_AGENT), so a
-   * dedicated agent or a tenant's own token could never have reached it there.
+   * Lives on request.agent, not /multi-tenancy/:tenantId + withTenantAgent(): the auth layer
+   * already resolves the tenant agent per request for a tenant token, matching verifyCredential/
+   * verify above.
    *
-   * Ported from pipeline-implementation, adapted for the current Credo version:
-   * - request.agent instead of the legacy this.agent field (no longer exists on this controller).
-   * - credentialSubject's claims are nested under a `claims` key when building the subject —
-   *   W3cCredentialSubject's constructor only reads options.id/options.claims, so spreading the
-   *   request's claims at the top level (as the legacy code effectively did, via a plain object
-   *   that bypassed the class transform) would silently drop every claim from the issued
-   *   credential. Handles a single object or an array of subjects.
-   * - w3cCredentials.store({ record }) instead of the removed storeCredential({ credential });
-   *   W3cCredentialRecord.fromCredential(signedCred) builds the record directly from the signed
-   *   credential — signCredential() already returns a typed W3cVerifiableCredential instance, so
-   *   the legacy JsonTransformer.fromJSON re-parse step is no longer needed either.
-   * - the response restores a top-level `credential` field for back-compat: 0.6.2's
-   *   W3cCredentialRecord replaces 0.5.x's top-level `credential` with a `credentialInstances`
-   *   array (credential survives only as a private write-only setter), which would otherwise
-   *   silently change the response shape for downstream consumers (platform's apps/cloud-wallet
-   *   -> agent-service -> mobile wallet) that read response.credential directly.
+   * credentialSubject's claims are nested under a `claims` key — W3cCredentialSubject's
+   * constructor only reads options.id/options.claims, so spreading claims at the top level would
+   * silently drop them. The response restores a top-level `credential` field for back-compat,
+   * since 0.6.2's W3cCredentialRecord otherwise only exposes `credentialInstances`.
    */
   @Security('jwt', [SCOPES.TENANT_AGENT, SCOPES.DEDICATED_AGENT])
   @Post('/credential/self-attested')
@@ -387,37 +353,17 @@ export class AgentController extends Controller {
     @Body() selfAttestedCredentialOptions: jsonLdCredentialOptions,
   ): Promise<SelfAttestedW3cCredentialResponse> {
     try {
-      // Default DID is tracked as a tag on the DID's own DidRecord (see DidController.writeDid),
-      // not a separate pointer record. Verified directly against this repo's installed
-      // @credo-ts/core/@credo-ts/askar: BaseRecord.setTag accepts arbitrary tag names, and
-      // AskarStorageService applies the same transformFromRecordTagValues encoding on both save
-      // and query, so a query of `{ isDefault: true }` genuinely matches a DidRecord tagged that
-      // way. findByQuery (not findSingleByQuery) is used deliberately: it tolerates more than one
-      // tagged record rather than throwing RecordDuplicateError, since a wallet migrated from the
-      // legacy stack may already carry more than one isDefault-tagged DID from before
-      // DidController.writeDid started clearing the previous default on every write.
-      // findDefaultDidRecords (shared with DidController.getDids, see the #75 review) sorts by
-      // createdAt descending so both endpoints agree on which of several tagged DIDs is current.
+      // Default DID is tracked as an `isDefault` tag on the DID's own DidRecord (see DidController.writeDid).
+      // findByQuery (not findSingleByQuery) tolerates a wallet carrying more than one tagged DID (e.g. legacy
+      // migration); findDefaultDidRecords sorts by createdAt so this agrees with DidController.getDids.
       const [defaultDidRecord] = await findDefaultDidRecords(
         request.agent.dependencyManager.resolve(DidRepository),
         request.agent.context,
       )
       let selfDid = defaultDidRecord?.did
 
-      // Fallback for wallets that have never explicitly marked a DID as default at all (no client
-      // ever called POST /dids/write with isDefault: true) — the tag lookup above correctly finds
-      // nothing for these regardless of storage mechanism, tag or otherwise. Only kicks in when
-      // unambiguous: a tenant with exactly one created DID has an obvious "the" DID to self-issue
-      // from even though it was never explicitly marked default; a tenant with more than one gets
-      // the same 404 as before, since guessing among several would risk silently issuing under the
-      // wrong identity.
-      //
-      // did:peer entries are excluded from the candidate list before that count: getCreatedDids()
-      // is a role filter ("everything with role: Created"), not "DIDs the operator explicitly
-      // wrote" — PeerDidRegistrar saves every DIDComm connection/mediation-routing DID with that
-      // same role. A holder wallet's whole purpose is DIDComm, so having made at least one
-      // connection is the common case, not the exception; without this exclusion, length === 1
-      // would almost never hold for exactly the wallets this fallback exists to unblock.
+      // Fallback for wallets that never explicitly set a default DID: only fires when exactly one
+      // non-peer created DID exists (did:peer is excluded -- DIDComm connections use the same role tag).
       if (!selfDid) {
         const createdDids = (await request.agent.dids.getCreatedDids()).filter(
           (record) => !record.did.startsWith('did:peer:'),
@@ -431,33 +377,14 @@ export class AgentController extends Controller {
         throw new NotFoundError('Default DID not found')
       }
 
-      // resolveCreatedDidDocumentWithKeys, not getCreatedDids({did}) + record.didDocument directly:
-      // Credo only persists didDocument on the DidRecord for some methods —
-      // KeyDidRegistrar never saves one at all, and PeerDidRegistrar only saves one for numAlgo 1
-      // (DidController's handleDidPeer uses numAlgo 2). Reading record.didDocument straight off
-      // the record would silently be undefined for did:key/did:peer defaults, the two most likely
-      // methods for this endpoint. This API resolves the document when it wasn't persisted, and
-      // throws RecordNotFoundError (mapped to 404 by ErrorHandlingService below) when the DID
-      // itself is gone — covering the old !defaultDidRecord branch too.
+      // resolveCreatedDidDocumentWithKeys, not record.didDocument directly: Credo doesn't persist a
+      // document for did:key, and only for did:peer numAlgo 1 (this endpoint uses numAlgo 2).
       const { didDocument: defaultDidDocument } = await request.agent.dids.resolveCreatedDidDocumentWithKeys(selfDid)
-      // Select from assertionMethod only, not by falling through to verificationMethod (or, before
-      // that, authentication) when it's absent. This signs with proofPurpose: assertionMethod
-      // below, and a verification method being listed under verificationMethod does not authorize
-      // it for that purpose -- only an explicit assertionMethod entry does. A verificationMethod
-      // (or authentication) fallback here fixes did:peer's 500 (handleDidPeer's documents have a
-      // verificationMethod/authentication but no assertionMethod) by replacing it with a *worse*
-      // failure: signCredential succeeds (nothing at issuance time checks the key's authorized
-      // purpose), returns 200, and stores a credential that fails verification everywhere else
-      // (ControllerProofPurpose.validate rejects it as "not authorized by controller for proof
-      // purpose 'assertionMethod'"). A loud, immediate error here is strictly better than a
-      // silently unverifiable credential persisted in a holder's wallet -- this is the same
-      // reasoning an earlier pass already applied to remove the authentication fallback; a bare
-      // verificationMethod fallback is not any safer. See the #73/#75 reviews. If did:peer
-      // genuinely needs to be usable here, the fix belongs upstream in how the DID is created
-      // (give it an assertion-capable key), not in which key is chosen at signing time.
-      //
-      // assertionMethod entries can legitimately be either a plain DID-URL string or an embedded
-      // VerificationMethod object, hence the typeof check.
+      // assertionMethod only, no verificationMethod/authentication fallback: proofPurpose is always
+      // assertionMethod below, and a verificationMethod-only key would sign successfully but produce a
+      // credential that fails verification everywhere else -- a loud error here beats a silently-
+      // unverifiable credential in a holder's wallet. did:peer lacking an assertionMethod key is a
+      // DID-creation gap, not something to work around at signing time.
       const vmRef = defaultDidDocument?.assertionMethod?.[0]
       const selfDidVerificationMethod = typeof vmRef === 'string' ? vmRef : vmRef?.id
 
@@ -475,27 +402,10 @@ export class AgentController extends Controller {
         expirationDate: selfAttestedExpirationDate,
       } = selfAttestedCredentialOptions
 
-      // Scope-limited SSRF guard, per the #75 review: @context is caller-controlled, and any URL
-      // outside CachedDocumentLoader's small static map falls through to Credo's native JSON-LD
-      // loader with no egress restrictions -- an authenticated tenant could otherwise reach
-      // internal/loopback/link-local services. This blocks non-https schemes and literal
-      // loopback/private/link-local IP addresses before the credential is ever built. It does
-      // NOT resolve hostnames via DNS, so a public-looking hostname that resolves to an internal
-      // address (DNS rebinding) is not covered -- that needs a constrained loader (allowlist +
-      // DNS-time resolution + redirect revalidation + timeout/size limits), tracked separately as
-      // item 16/26 in cloud-wallet-security-escalations.md. This closes the immediate,
-      // trivially-exploitable hole without that larger design.
-      //
-      // The string-only type check below is itself a gap this guard previously had: JSON-LD 1.1
-      // lets an object @context entry carry a URL two different ways -- an `@import` keyword, or a
-      // term definition's own scoped `@context` (e.g. `{evilTerm: {"@context": "<url>"}}`, resolved
-      // lazily whenever the term is actually used, e.g. in credentialSubject). Both are confirmed
-      // (not theoretical) against the installed @digitalcredentials/jsonld, and term-scoped contexts
-      // can themselves nest further term definitions with their own scoped contexts, so a shallow,
-      // single-keyword check isn't enough -- containsForbiddenNestedContextKeyword walks the whole
-      // entry for either keyword at any depth. Neither keyword is needed by any real caller of this
-      // endpoint (real callers only ever send flat objects like {"@version": 1.1}), so any entry
-      // carrying one is rejected outright rather than validated as a URL. See the #75 review.
+      // Caller-controlled @context can reach Credo's native JSON-LD loader with no egress restriction
+      // (SSRF) for any URL outside its small static context cache. Blocks non-https and literal
+      // loopback/private/link-local addresses; does NOT resolve hostnames via DNS, so DNS rebinding is
+      // still possible -- tracked separately (cloud-wallet-security-escalations.md item 16/26).
       for (const contextEntry of selfAttestedContext) {
         if ('string' === typeof contextEntry) {
           assertSafeContextUrl(contextEntry)
@@ -508,43 +418,23 @@ export class AgentController extends Controller {
         }
       }
 
-      // Per the #75 review: the guard above only ever covered the top-level @context array, but
-      // JSON-LD 1.1 lets *any* node object carry its own local @context key once the real vc/v1 or
-      // vc/v2 context maps it as a term -- credentialSubject is exactly such a node object (spread
-      // into `claims` below with no filtering), and there's no principled reason to assume it's the
-      // only field capable of that. Rather than keep enumerating fields one at a time as each new
-      // one is found, this scans the rest of the payload (everything except @context itself, which
-      // already has its own more precise scheme/host validation above -- a blanket keyword ban
-      // there would also reject the real https URLs this endpoint needs to allow) for a nested
-      // '@context'/'@import' key at any depth, regardless of which field it's under.
+      // Any node object can carry its own local @context once the real vc context maps a field as a term
+      // (credentialSubject does) -- rather than enumerate fields, scan the rest of the payload (excluding
+      // @context itself, already validated above) for a nested '@context'/'@import' key at any depth.
       const restOfPayload: Record<string, unknown> = { ...selfAttestedCredentialOptions }
       delete restOfPayload['@context']
       if (containsForbiddenNestedContextKeyword(restOfPayload)) {
         throw new BadRequestError("credential fields may not contain a nested '@import' or '@context' key")
       }
 
-      // A caller-supplied date must actually parse -- Date accepts near-anything and silently
-      // yields Invalid Date otherwise, which would reach the signer as a broken expirationDate
-      // string instead of a clear 400 here. Checked against `undefined` specifically, not
-      // truthiness: `selfAttestedExpirationDate && ...` would let an empty string skip this
-      // check entirely (`'' &&` short-circuits), then also skip the `??` default below (which
-      // only coalesces null/undefined, not ''), reaching the signer as a literal empty string.
-      // Date.parse('') is itself NaN, so this same check catches it once the truthiness gate is
-      // gone. See the #75 review.
+      // Checked against undefined, not truthiness -- '' && ... would skip this and the default below, letting an empty string reach the signer. Date.parse('') is NaN, so this catches it once fixed.
       if (undefined !== selfAttestedExpirationDate && Number.isNaN(Date.parse(selfAttestedExpirationDate))) {
         throw new BadRequestError(`expirationDate '${selfAttestedExpirationDate}' is not a valid date`)
       }
-      // W3cCredential's constructor always assigns its own expirationDate field, even to
-      // undefined, and @digitalcredentials/vc's issuer checks `'expirationDate' in credential`
-      // rather than its truthiness -- so signing throws "must be a valid date: undefined" unless
-      // a real date reaches it, regardless of whether the caller wanted one. There is no way to
-      // omit the field entirely given that class's behavior, so default far enough out to be
-      // effectively non-expiring for a caller who didn't ask for a real expiry. See the #75 review.
-      //
-      // A caller-supplied date is normalized to ISO 8601 via `new Date(...).toISOString()`,
-      // not embedded verbatim: it's already confirmed parseable above, but Date.parse accepts
-      // far more formats than ISO 8601 (e.g. "08/26/2026"), and every issued credential should
-      // carry a spec-compliant date regardless of what format the caller sent. See the #75 review.
+      // W3cCredential's constructor always sets expirationDate (even to undefined), and the issuer checks
+      // 'expirationDate' in credential rather than truthiness -- a real date is required, so default to
+      // 100 years out when the caller doesn't ask for a real expiry, and normalize a caller-supplied date
+      // to ISO 8601 (Date.parse accepts far more formats than that).
       const selfAttestedExpiration =
         undefined !== selfAttestedExpirationDate
           ? new Date(selfAttestedExpirationDate).toISOString()
@@ -558,13 +448,7 @@ export class AgentController extends Controller {
         ? selfAttestedSubjectOptions.map(toSubject)
         : toSubject(selfAttestedSubjectOptions)
       const selfAttestedW3cCredential: W3cCredentialOptions = {
-        // Same unconditional-class-field issue as expirationDate above: W3cCredential's
-        // constructor always assigns its own `id`, and the vc/v1 @context aliases the JSON key
-        // "id" to "@id" -- an undefined id reaches jsonld-signatures as a literal `@id: undefined`
-        // and fails canonicalization with "'@id' value must a string" before signing even gets to
-        // check the proof purpose. A caller-supplied id isn't part of this endpoint's contract
-        // (self-attested credentials aren't tracked by an external id), so this is always
-        // generated, not defaulted-when-absent like expirationDate. See the #75 review.
+        // id always generated (not caller-supplied): an undefined id reaches jsonld-signatures as literal @id: undefined and fails canonicalization before signing even checks the proof purpose.
         id: `urn:uuid:${randomUUID()}`,
         context: selfAttestedContext,
         type: selfAttestedType,
@@ -579,14 +463,9 @@ export class AgentController extends Controller {
         proofType: selfAttestedProofType,
         verificationMethod: selfDidVerificationMethod,
       }
-      // Sanitized catch around signCredential specifically (not the outer one, which still returns
-      // clear, safe messages like the assertionMethod check above): CachedDocumentLoader falls
-      // back to Credo's native JSON-LD loader for any @context URL outside its small static map,
-      // which can reach attacker-chosen or internal addresses (SSRF) via this caller-controlled
-      // field. ErrorHandlingService's generic branch serializes error.message verbatim into the
-      // HTTP response, which would turn that into a probing oracle (resolved URL, HTTP status,
-      // redirect/network failure detail). Log the real cause server-side; the caller only ever
-      // sees a generic failure. See the #75 review.
+      // Sanitized catch around signCredential specifically: it can reach attacker-chosen/internal
+      // addresses via the caller-controlled @context (SSRF), and the outer catch's generic branch
+      // serializes error.message verbatim -- that would turn failures into a probing oracle.
       let signedCred
       try {
         signedCred = await request.agent.w3cCredentials.signCredential(selfAttestedJsonLdCredential)
@@ -602,12 +481,7 @@ export class AgentController extends Controller {
       return {
         ...JsonTransformer.toJSON(selfAttestedStoredCredential),
         credential: JsonTransformer.toJSON(selfAttestedStoredCredential.firstCredential),
-        // JsonTransformer.toJSON<T>() is declared Record<string, any> regardless of T, so the
-        // compiler can't verify the spread above actually carries id/createdAt/credentialInstances
-        // -- it does; they're BaseRecord/W3cCredentialRecord's own real, always-present fields.
-        // The cast exists only so this method's return type can be declared explicitly for tsoa
-        // (see SelfAttestedW3cCredentialResponse's own comment); it isn't asserting anything the
-        // runtime object doesn't already guarantee.
+        // Cast to SelfAttestedW3cCredentialResponse: JsonTransformer.toJSON<T>() is typed Record<string, any> regardless of T, but the spread genuinely carries BaseRecord/W3cCredentialRecord's real fields.
       } as SelfAttestedW3cCredentialResponse
     } catch (error) {
       throw ErrorHandlingService.handle(error)

@@ -117,57 +117,17 @@ export class DidController extends Controller {
 
       didRes = { ...result }
 
-      // Tracked as a tag on the DID's own DidRecord, not a separate pointer record. Credo 0.6.2's
-      // BaseRecord.setTag accepts arbitrary tag names (`keyof CustomTags | (string & {})`), the
-      // value round-trips through AskarStorageService's transformFromRecordTagValues on both save
-      // and query (booleans <-> "1"/"0"), so `setTag('isDefault', true)` followed later by
-      // `findByQuery({ isDefault: true })` genuinely matches — verified directly against this
-      // repo's installed @credo-ts/core/@credo-ts/askar packages. An earlier version of this code
-      // moved isDefault tracking into a GenericRecord pointer on the (incorrect) belief that
-      // DidRecord tags could no longer carry it; see the #75 review. Reverted back to tagging the
-      // DidRecord directly: it needs no backfill (every DID ever created already carries this tag
-      // if it was ever marked default) and keeps the read path (AgentController's self-attested
-      // lookup, below) a plain tag query instead of a second record type to keep in sync.
+      // Default DID is tracked as an `isDefault` tag on the DID's own DidRecord, looked up by `did`
+      // alone (not restricted to did:key) so isDefault works for every method, with the previous
+      // default's tag cleared on every write so findSingleByQuery elsewhere never sees duplicates.
       //
-      // Two real bugs existed in the legacy (pre-migration) version of this same approach, both
-      // fixed here: (1) it never cleared the previous default before tagging a new one, so
-      // `findSingleByQuery` could find N previously-tagged DIDs and throw RecordDuplicateError —
-      // fixed by clearing every other isDefault-tagged record for this tenant first; (2) it always
-      // re-fetched the record via `getCreatedDids({ did, method: DidMethod.Key })`, so isDefault
-      // silently no-opped (`undefined.setTag(...)` throwing, caught below) for any non-did:key
-      // method — fixed by looking the record up by `did` alone, with no method restriction.
-      //
-      // Each individual write below goes through updateByIdWithLock, not a plain update: Askar's
-      // implementation (AskarStorageService#updateByIdWithLock) wraps the read-modify-write in one
-      // transaction with `forUpdate: true`, so a concurrent write racing the exact same record
-      // can't silently clobber this one's tag. This closes the lost-update case per record — it does
-      // not add a single mutex around the whole "list current defaults, then clear+set" sequence
-      // (Credo's Repository API has no cross-record transaction), so two isDefault: true requests
-      // for two *different* DIDs racing at the read step above can still both proceed to tag a
-      // different record true. See the #75 review; a full fix needs a dedicated lock record, which
-      // was deliberately not reintroduced here to avoid recreating the split-brain risk that came
-      // with the GenericRecord pointer this same fix already reverted away from.
-      //
-      // Best-effort, in its own try/catch: the DID is the expensive, non-idempotent side effect
-      // (for did:indy/did:bcovrin/did:indicio, already a ledger NYM by this point) — the isDefault
-      // tag is not. A storage/Askar failure recording it must never turn an already-successful
-      // creation into a 500, since the client's only recourse on a 500 is to retry the whole
-      // request, anchoring a second, orphaned DID for a real ledger method. Logged as a warning,
-      // and — per the #75 review — also surfaced on the response itself as `isDefaultSet: false`
-      // when `isDefault` was requested but the bookkeeping below didn't actually happen: a client
-      // that explicitly asked for this DID to become the default has no other way to learn its
-      // request was silently not honored (a subsequent self-attested-issuance call would otherwise
-      // just 404 or sign under a stale default, with no link back to this response). Absent
-      // entirely (not `true`) when isDefault was never requested, so existing callers that don't
-      // use isDefault see no shape change.
+      // Best-effort: the DID itself (already a ledger NYM for did:indy/etc.) must not be rolled back
+      // by a bookkeeping failure -- logged as a warning, surfaced as isDefaultSet: false only when
+      // the primary tag write itself didn't happen.
       let isDefaultSet: boolean | undefined
       try {
-        // Cast, not a widened type: `result`'s inferred type is a union across all handler
-        // branches and TS won't narrow it here without a per-branch type guard. Note that
-        // handleIndicio's non-endorser branch returns the raw registrar result, hence the
-        // didState fallback — every other branch (handleIndy's other paths, handleKey/handleWeb/
-        // handlePolygon/handleDidPeer/handleEthereum, and handleBcovrin's equivalent non-endorser
-        // branch) already normalizes to a top-level `did`.
+        // handleIndicio's non-endorser branch returns the raw registrar result (hence the didState
+        // fallback) -- every other branch already normalizes to a top-level did.
         const createdDid =
           (didRes as { did?: string })?.did ?? (didRes as { didState?: { did?: string } })?.didState?.did
         if (createDidOptions.isDefault) {
@@ -179,38 +139,18 @@ export class DidController extends Controller {
           if (!newDefaultRecord) {
             throw new InternalServerError(`isDefault was requested but no DidRecord could be found for ${createdDid}`)
           }
-          // Snapshotted BEFORE the tag write below, not after -- reading it after (the previous
-          // fix's own shape) let two concurrent isDefault:true writes for two different DIDs each
-          // see the other's freshly-tagged record as "previous" and clear it, converging on ZERO
-          // tagged defaults (worse than the pre-#73 clear-then-tag order, which at least
-          // converged on a single winner). Snapshotting first keeps that race's worst case at
-          // "two defaults" -- this request's own view of "previous" can no longer include a
-          // default a *concurrent* request tags after this read. See the #75 review.
+          // Snapshot previous defaults BEFORE tagging the new one, and tag-then-clear rather than
+          // clear-then-tag: both orders can still fail mid-sequence with no cross-record transaction,
+          // but this order's worst case is two tagged defaults (tolerated) instead of zero (a false 404).
           const previousDefaults = await didRepository.findByQuery(request.agent.context, { isDefault: true })
-          // Tag the new default FIRST, then clear the previous ones -- not the other order. Both
-          // writes are separate updateByIdWithLock calls (Credo's Repository API has no
-          // cross-record transaction to lean on instead), so either order can still fail partway
-          // through a real Askar/storage error or a lock timeout. Tagging first makes the worst
-          // case strictly better: a failure after this write but before the clearing loop below
-          // leaves the tenant with *two* tagged defaults, which the read path already tolerates
-          // by design (findByQuery, not findSingleByQuery -- see AgentController's own comment on
-          // the same query). The previous order's worst case was clearing every previous default
-          // and then failing on this exact write, leaving the tenant with *zero* defaults and a
-          // self-attested-issuance endpoint that 404s where it worked a moment before. See the
-          // #73 review.
+          // Per-record lock, not a whole-sequence mutex (Credo has no cross-record transaction) --
+          // two isDefault:true writes for different DIDs can still both succeed; tolerated by design, not fixed here.
           await didRepository.updateByIdWithLock(request.agent.context, newDefaultRecord.id, async (record) => {
             record.setTag('isDefault', true)
             return record
           })
-          // Set as soon as the write above succeeds, not after the whole tag+clear sequence -- a
-          // failure in the clearing loop below (thrown, caught by the outer catch) used to report
-          // isDefaultSet: false even though the new DID was already tagged and, being the newest
-          // by createdAt, is exactly what AgentController's sorted read path picks. A client told
-          // "not set" for a request that was in fact honored has one recourse -- retry
-          // POST /dids/write -- which for did:indy/bcovrin/indicio anchors a second, orphaned NYM
-          // on the ledger. The catch block below only downgrades this to false when it is still
-          // undefined, so a clearing-loop failure now stays a logged warning about stale extra
-          // tags, which the read path already tolerates. See the #75 review.
+          // isDefaultSet is set true as soon as the tag write succeeds, before the clearing loop
+          // below -- a clearing-loop failure shouldn't report an honored request as failed.
           isDefaultSet = true
           for (const previousDefault of previousDefaults) {
             if (previousDefault.id !== newDefaultRecord.id) {
@@ -816,18 +756,14 @@ export class DidController extends Controller {
     return didResponse
   }
 
-  // isDefault, not a separate route: mirrors how the default is tracked (a tag on the same
-  // DidRecord, not a separate resource), and keeps the filter query-string based like every other
-  // list endpoint in this file's siblings. Answers platform #71's follow-up finding that there was
-  // no read path at all for isDefault on this repo -- platform's own gateway route now forwards
-  // here instead of failing loudly, see the platform #71 review.
+  // isDefault as a query param, not a separate route: mirrors how the default is tracked (a tag on
+  // the same DidRecord) and matches this file's other list-filter endpoints.
   @Get('/')
   public async getDids(@Request() request: Req, @Query('isDefault') isDefault?: boolean) {
     try {
       if (isDefault) {
-        // findDefaultDidRecords (shared with AgentController.createW3cSelfAttestedCredential, see
-        // the #75 review) sorts by createdAt descending so this read path can't disagree with what
-        // issuance actually uses for a wallet migrated with more than one isDefault-tagged DID.
+        // findDefaultDidRecords is shared with AgentController's self-attested lookup so the two
+        // endpoints can't disagree about which DID is default.
         return await findDefaultDidRecords(
           request.agent.dependencyManager.resolve(DidRepository),
           request.agent.context,

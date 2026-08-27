@@ -331,11 +331,7 @@ export interface DidCreate {
   didDocument?: DidDocument
   privatekey?: string
   endpoint?: string
-  // Marks the newly created DID as this wallet's default issuer DID. Tracked as an `isDefault`
-  // tag on the DID's own DidRecord (booleans round-trip through AskarStorageService as "1"/"0"),
-  // and read back via DidRepository.findByQuery({ isDefault: true }) — see DidController.writeDid
-  // for the clear-previous-default bookkeeping and AgentController's self-attested lookup for the
-  // read path.
+  // Marks the newly created DID as this wallet's default issuer DID (see DidController.writeDid).
   isDefault?: boolean
 }
 
@@ -459,32 +455,17 @@ export interface jsonLdCredentialOptions {
   type: Array<string>
   credentialSubject: SingleOrArray<JsonObject>
   proofType: string
-  // ISO 8601. Optional in the VC data model, but W3cCredential's constructor always sets its own
-  // expirationDate field (even to undefined), and @digitalcredentials/vc's issuer checks
-  // 'expirationDate' in credential rather than its truthiness -- so signing throws unless a real
-  // date reaches it. Defaulted server-side when omitted; see AgentController.
+  // ISO 8601; defaulted server-side when omitted (W3cCredential requires a real date once signed).
   expirationDate?: string
 }
 
-// The actual runtime shape of AgentController.createW3cSelfAttestedCredential's response:
-// JsonTransformer.toJSON() of the stored W3cCredentialRecord (id, createdAt, credentialInstances,
-// plus Credo's own dynamic tag fields -- issuerId, subjectIds, etc. -- not individually modeled
-// here since JsonTransformer.toJSON<T>()'s own declared return type is just Record<string, any>,
-// there's nothing more specific upstream to model against), plus a `credential` field added for
-// back-compat with consumers that read response.credential directly (0.6.2's W3cCredentialRecord
-// only exposes credentialInstances via JsonTransformer.toJSON). Declared as this endpoint's return
-// type so tsoa's generated OpenAPI schema actually reflects the record id/credentialInstances a
-// caller relies on, instead of documenting only `credential` -- all the previous no-return-type
-// schema could tell client-generation tooling to expect. The index signature is deliberate, not a
-// cop-out: it documents that Credo's own dynamic tag fields are real and present, just not
-// individually enumerable from this endpoint's own code. See the #75 review.
+// Runtime shape of createW3cSelfAttestedCredential's response: JsonTransformer.toJSON() of the
+// stored W3cCredentialRecord, plus a back-compat `credential` field for consumers reading it
+// directly. Index signature covers Credo's own dynamic tag fields (issuerId, subjectIds, etc.).
 export interface SelfAttestedW3cCredentialResponse {
   id: string
   createdAt: string
-  // Array of wrapper objects, not credential objects directly -- W3cCredentialRecord.fromCredential
-  // populates this as [{ credential: credential.encoded }]. `credential` is JsonObject | string
-  // since W3cCredentialRecord.encoded can be a JWT string for ClaimFormat.JwtVc, not just an
-  // expanded JSON-LD object. See the #75 review.
+  // [{ credential }] wrapper, not credential objects directly; credential can be a JWT string for ClaimFormat.JwtVc.
   credentialInstances: Array<{ credential: JsonObject | string }>
   credential: JsonObject
   [key: string]: unknown
