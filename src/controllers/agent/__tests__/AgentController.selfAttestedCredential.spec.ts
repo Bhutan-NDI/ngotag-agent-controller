@@ -350,9 +350,15 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
       await rejectsContext(['https://localhost/context.jsonld'], 'disallowed host')
     })
 
+    it('rejects a trailing-dot FQDN form of localhost -- DNS treats it identically, so an unstripped dot is a bypass', async () => {
+      await rejectsContext(['https://localhost./context.jsonld'], 'disallowed host')
+    })
+
     it.each([
       ['https://127.0.0.1/context.jsonld', 'IPv4 loopback'],
       ['https://169.254.169.254/latest/meta-data/', 'IPv4 link-local (cloud metadata endpoint)'],
+      ['https://100.64.0.1/context.jsonld', 'IPv4 CGNAT / shared address space (100.64.0.0/10)'],
+      ['https://100.127.255.255/context.jsonld', 'IPv4 CGNAT (100.64.0.0/10, upper boundary)'],
       ['https://10.0.0.5/context.jsonld', 'IPv4 private (10.0.0.0/8)'],
       ['https://172.16.0.1/context.jsonld', 'IPv4 private (172.16.0.0/12)'],
       ['https://192.168.1.1/context.jsonld', 'IPv4 private (192.168.0.0/16)'],
@@ -421,6 +427,37 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
       await controller.createW3cSelfAttestedCredential(makeRequest(agent), {
         ...(REQUEST_BODY as Record<string, unknown>),
         '@context': ['https://www.w3.org/2018/credentials/v1', 'https://[fec0::1]/context.jsonld'],
+      } as never)
+
+      expect(signCredential).toHaveBeenCalled()
+    })
+
+    it('does not block IPv4 addresses just outside the 100.64.0.0/10 CGNAT boundary', async () => {
+      // 100.63.255.255 and 100.128.0.0 are one address below/above the /10 range -- locks in the
+      // exact boundary so a future "fix" doesn't silently widen it.
+      const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
+      const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
+        return new W3cJsonLdVerifiableCredential({
+          ...options.credential,
+          proof: {
+            type: 'Ed25519Signature2018',
+            proofPurpose: 'assertionMethod',
+            verificationMethod: VERIFICATION_METHOD_ID,
+            created: new Date().toISOString(),
+            jws: 'fake-jws',
+          },
+        })
+      }) as jest.Mock
+      const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
+      const controller = new AgentController()
+
+      await controller.createW3cSelfAttestedCredential(makeRequest(agent), {
+        ...(REQUEST_BODY as Record<string, unknown>),
+        '@context': [
+          'https://www.w3.org/2018/credentials/v1',
+          'https://100.63.255.255/context.jsonld',
+          'https://100.128.0.0/context.jsonld',
+        ],
       } as never)
 
       expect(signCredential).toHaveBeenCalled()

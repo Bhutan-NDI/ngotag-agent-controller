@@ -52,6 +52,7 @@ function isPrivateOrLoopbackIPv4(ip: string): boolean {
     0 === a || // 0.0.0.0/8
     10 === a || // 10.0.0.0/8 (private)
     127 === a || // 127.0.0.0/8 (loopback)
+    (100 === a && 64 <= b && 127 >= b) || // 100.64.0.0/10 (RFC 6598 CGNAT / shared address space)
     (169 === a && 254 === b) || // 169.254.0.0/16 (link-local, incl. cloud metadata endpoints)
     (172 === a && 16 <= b && 31 >= b) || // 172.16.0.0/12 (private)
     (192 === a && 168 === b) // 192.168.0.0/16 (private)
@@ -118,9 +119,13 @@ function assertSafeContextUrl(context: string): void {
     throw new BadRequestError(`@context entry '${context}' must use https`)
   }
   // URL.hostname keeps the brackets around an IPv6 literal (e.g. "[::1]") -- isIP() and the
-  // range checks below both expect the bare address.
+  // range checks below both expect the bare address. It also preserves a trailing root dot on an
+  // FQDN (e.g. "localhost." -> hostname "localhost."), which any real DNS resolver/HTTP client
+  // treats identically to the same name without one -- an unstripped dot is a one-character
+  // bypass of the exact-match check below. Stripped before both checks. See the #75 review.
   const rawHostname = parsed.hostname.toLowerCase()
-  const hostname = rawHostname.startsWith('[') ? rawHostname.slice(1, -1) : rawHostname
+  const bracketless = rawHostname.startsWith('[') ? rawHostname.slice(1, -1) : rawHostname
+  const hostname = bracketless.endsWith('.') ? bracketless.slice(0, -1) : bracketless
   if (BLOCKED_CONTEXT_HOSTNAMES.has(hostname)) {
     throw new BadRequestError(`@context entry '${context}' points at a disallowed host`)
   }
