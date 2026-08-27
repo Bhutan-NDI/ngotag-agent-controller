@@ -481,7 +481,11 @@ export interface jsonLdCredentialOptions {
 export interface SelfAttestedW3cCredentialResponse {
   id: string
   createdAt: string
-  credentialInstances: JsonObject[]
+  // Array of wrapper objects, not credential objects directly -- W3cCredentialRecord.fromCredential
+  // populates this as [{ credential: credential.encoded }]. `credential` is JsonObject | string
+  // since W3cCredentialRecord.encoded can be a JWT string for ClaimFormat.JwtVc, not just an
+  // expanded JSON-LD object. See the #75 review.
+  credentialInstances: Array<{ credential: JsonObject | string }>
   credential: JsonObject
   [key: string]: unknown
 }

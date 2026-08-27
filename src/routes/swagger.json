@@ -3702,7 +3702,22 @@
 					},
 					"credentialInstances": {
 						"items": {
-							"$ref": "#/components/schemas/JsonObject"
+							"properties": {
+								"credential": {
+									"anyOf": [
+										{
+											"$ref": "#/components/schemas/JsonObject"
+										},
+										{
+											"type": "string"
+										}
+									]
+								}
+							},
+							"required": [
+								"credential"
+							],
+							"type": "object"
 						},
 						"type": "array"
 					},

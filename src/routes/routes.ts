@@ -1612,7 +1612,7 @@ const models: TsoaRoute.Models = {
         "properties": {
             "id": {"dataType":"string","required":true},
             "createdAt": {"dataType":"string","required":true},
-            "credentialInstances": {"dataType":"array","array":{"dataType":"refObject","ref":"JsonObject"},"required":true},
+            "credentialInstances": {"dataType":"array","array":{"dataType":"nestedObjectLiteral","nestedProperties":{"credential":{"dataType":"union","subSchemas":[{"ref":"JsonObject"},{"dataType":"string"}],"required":true}}},"required":true},
             "credential": {"ref":"JsonObject","required":true},
         },
         "additionalProperties": {"dataType":"any"},

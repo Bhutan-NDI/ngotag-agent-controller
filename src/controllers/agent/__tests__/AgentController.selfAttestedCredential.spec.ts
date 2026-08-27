@@ -359,7 +359,31 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     })
 
     it("rejects an object @context entry carrying '@import' -- JSON-LD 1.1 resolves it through the same unrestricted document loader this whole guard exists to gate", async () => {
-      await rejectsContext([{ '@import': 'https://169.254.169.254/latest/meta-data/' }], "'@import' are not allowed")
+      await rejectsContext(
+        [{ '@import': 'https://169.254.169.254/latest/meta-data/' }],
+        "'@import' or '@context' are not allowed",
+      )
+    })
+
+    it('rejects a term-scoped @context nested inside an object entry -- resolved lazily whenever the term is used, no @import keyword needed', async () => {
+      await rejectsContext(
+        [{ evilTerm: { '@id': 'https://schema.org/name', '@context': 'https://169.254.169.254/latest/meta-data/' } }],
+        "'@import' or '@context' are not allowed",
+      )
+    })
+
+    it('rejects a term-scoped @context nested more than one level deep -- a scoped context can itself define further scoped terms', async () => {
+      await rejectsContext(
+        [
+          {
+            outerTerm: {
+              '@id': 'https://schema.org/name',
+              '@context': { innerTerm: { '@id': 'https://schema.org/name', '@context': 'https://169.254.169.254/' } },
+            },
+          },
+        ],
+        "'@import' or '@context' are not allowed",
+      )
     })
 
     it.each([

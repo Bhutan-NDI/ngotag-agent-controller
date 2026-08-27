@@ -138,6 +138,26 @@ function assertSafeContextUrl(context: string): void {
   }
 }
 
+// See createW3cSelfAttestedCredential's SSRF-guard comment for scope. `@import` and term-scoped
+// `@context` are two distinct JSON-LD 1.1 keywords that can each smuggle a URL into context
+// processing from inside an object @context entry -- and term-scoped contexts can themselves
+// nest further term definitions, each with their own scoped context, so this walks the whole
+// entry rather than checking only its top-level keys. Only checks key *presence*, not value
+// shape: neither keyword is ever legitimate here, so there's nothing further to validate once
+// either is found.
+function containsForbiddenNestedContextKeyword(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((entry) => containsForbiddenNestedContextKeyword(entry))
+  }
+  if (value && 'object' === typeof value) {
+    return Object.entries(value as Record<string, unknown>).some(
+      ([key, nestedValue]) =>
+        '@import' === key || '@context' === key || containsForbiddenNestedContextKeyword(nestedValue),
+    )
+  }
+  return false
+}
+
 @Tags('Agent')
 @Route('/agent')
 @injectable()
@@ -467,17 +487,24 @@ export class AgentController extends Controller {
       // trivially-exploitable hole without that larger design.
       //
       // The string-only type check below is itself a gap this guard previously had: JSON-LD 1.1
-      // lets a @context entry be an *object* carrying an `@import` keyword, which the installed
-      // @digitalcredentials/jsonld resolves through this same unrestricted document loader
-      // (context.js's @import handling calls options.contextResolver.resolve() directly) --
-      // confirmed, not theoretical. An object entry never needs @import for this endpoint (real
-      // callers only ever send inline objects like {"@version": 1.1}), so it's rejected outright
-      // rather than validated as a URL. See the #75 review.
+      // lets an object @context entry carry a URL two different ways -- an `@import` keyword, or a
+      // term definition's own scoped `@context` (e.g. `{evilTerm: {"@context": "<url>"}}`, resolved
+      // lazily whenever the term is actually used, e.g. in credentialSubject). Both are confirmed
+      // (not theoretical) against the installed @digitalcredentials/jsonld, and term-scoped contexts
+      // can themselves nest further term definitions with their own scoped contexts, so a shallow,
+      // single-keyword check isn't enough -- containsForbiddenNestedContextKeyword walks the whole
+      // entry for either keyword at any depth. Neither keyword is needed by any real caller of this
+      // endpoint (real callers only ever send flat objects like {"@version": 1.1}), so any entry
+      // carrying one is rejected outright rather than validated as a URL. See the #75 review.
       for (const contextEntry of selfAttestedContext) {
         if ('string' === typeof contextEntry) {
           assertSafeContextUrl(contextEntry)
-        } else if (contextEntry && 'object' === typeof contextEntry && '@import' in contextEntry) {
-          throw new BadRequestError("@context entries with '@import' are not allowed")
+        } else if (
+          contextEntry &&
+          'object' === typeof contextEntry &&
+          containsForbiddenNestedContextKeyword(contextEntry)
+        ) {
+          throw new BadRequestError("@context entries with a nested '@import' or '@context' are not allowed")
         }
       }
 
