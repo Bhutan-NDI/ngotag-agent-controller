@@ -1431,6 +1431,7 @@ const models: TsoaRoute.Models = {
             "didDocument": {"ref":"DidDocument"},
             "privatekey": {"dataType":"string"},
             "endpoint": {"dataType":"string"},
+            "isDefault": {"dataType":"boolean"},
         },
         "additionalProperties": false,
     },
@@ -1602,6 +1603,34 @@ const models: TsoaRoute.Models = {
             "verifyCredentialStatus": {"dataType":"boolean"},
             "proofPurpose": {"ref":"ProofPurpose"},
             "proof": {"ref":"SingleOrArray_any-or-DataIntegrityProofOptions_","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "SelfAttestedW3cCredentialResponse": {
+        "dataType": "refObject",
+        "properties": {
+            "id": {"dataType":"string","required":true},
+            "createdAt": {"dataType":"string","required":true},
+            "credentialInstances": {"dataType":"array","array":{"dataType":"nestedObjectLiteral","nestedProperties":{"credential":{"dataType":"union","subSchemas":[{"ref":"JsonObject"},{"dataType":"string"}],"required":true}}},"required":true},
+            "credential": {"ref":"JsonObject","required":true},
+        },
+        "additionalProperties": {"dataType":"any"},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "SingleOrArray_JsonObject_": {
+        "dataType": "refAlias",
+        "type": {"dataType":"union","subSchemas":[{"ref":"JsonObject"},{"dataType":"array","array":{"dataType":"refObject","ref":"JsonObject"}}],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "jsonLdCredentialOptions": {
+        "dataType": "refObject",
+        "properties": {
+            "@context": {"dataType":"array","array":{"dataType":"union","subSchemas":[{"dataType":"string"},{"ref":"JsonObject"}]},"required":true},
+            "type": {"dataType":"array","array":{"dataType":"string"},"required":true},
+            "credentialSubject": {"ref":"SingleOrArray_JsonObject_","required":true},
+            "proofType": {"dataType":"string","required":true},
+            "expirationDate": {"dataType":"string"},
         },
         "additionalProperties": false,
     },
@@ -1846,11 +1875,6 @@ const models: TsoaRoute.Models = {
             "id": {"dataType":"string","required":true},
         },
         "additionalProperties": false,
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "SingleOrArray_JsonObject_": {
-        "dataType": "refAlias",
-        "type": {"dataType":"union","subSchemas":[{"ref":"JsonObject"},{"dataType":"array","array":{"dataType":"refObject","ref":"JsonObject"}}],"validators":{}},
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "JsonCredential": {
@@ -4781,6 +4805,7 @@ export function RegisterRoutes(app: Router) {
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
         const argsDidController_getDids: Record<string, TsoaRoute.ParameterSchema> = {
                 request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                isDefault: {"in":"query","name":"isDefault","dataType":"boolean"},
         };
         app.get('/dids',
             authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
@@ -4987,6 +5012,43 @@ export function RegisterRoutes(app: Router) {
 
               await templateService.apiHandler({
                 methodName: 'verifyCredential',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsAgentController_createW3cSelfAttestedCredential: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                selfAttestedCredentialOptions: {"in":"body","name":"selfAttestedCredentialOptions","required":true,"ref":"jsonLdCredentialOptions"},
+        };
+        app.post('/agent/credential/self-attested',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(AgentController)),
+            ...(fetchMiddlewares<RequestHandler>(AgentController.prototype.createW3cSelfAttestedCredential)),
+
+            async function AgentController_createW3cSelfAttestedCredential(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsAgentController_createW3cSelfAttestedCredential, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<AgentController>(AgentController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'createW3cSelfAttestedCredential',
                 controller,
                 response,
                 next,

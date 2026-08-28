@@ -22,7 +22,7 @@ import {
 import { Key, KeyAlgorithm, askar } from '@openwallet-foundation/askar-nodejs'
 import axios from 'axios'
 import { Request as Req } from 'express'
-import { Body, Controller, Example, Get, Path, Post, Route, Tags, Security, Request } from 'tsoa'
+import { Body, Controller, Example, Get, Path, Post, Query, Route, Tags, Security, Request } from 'tsoa'
 import { injectable } from 'tsyringe'
 import { container } from 'tsyringe'
 
@@ -32,6 +32,7 @@ import ErrorHandlingService from '../../errorHandlingService'
 import { BadRequestError, InternalServerError } from '../../errors'
 import { AgentType } from '../../types'
 import { keyAlgorithmToCurve, p521, verkey } from '../../utils/constant'
+import { findDefaultDidRecords } from '../../utils/defaultDid'
 import { getTypeFromCurve } from '../../utils/helpers'
 import { CreateDidResponse, Did, DidRecordExample } from '../examples'
 import { DidCreate, supportedKeyTypesDID } from '../types'
@@ -116,7 +117,60 @@ export class DidController extends Controller {
 
       didRes = { ...result }
 
-      return didRes
+      // Default DID is tracked as an `isDefault` tag on the DID's own DidRecord, looked up by `did`
+      // alone (not restricted to did:key) so isDefault works for every method, with the previous
+      // default's tag cleared on every write so findSingleByQuery elsewhere never sees duplicates.
+      //
+      // Best-effort: the DID itself (already a ledger NYM for did:indy/etc.) must not be rolled back
+      // by a bookkeeping failure -- logged as a warning, surfaced as isDefaultSet: false only when
+      // the primary tag write itself didn't happen.
+      let isDefaultSet: boolean | undefined
+      try {
+        // handleIndicio's non-endorser branch returns the raw registrar result (hence the didState
+        // fallback) -- every other branch already normalizes to a top-level did.
+        const createdDid =
+          (didRes as { did?: string })?.did ?? (didRes as { didState?: { did?: string } })?.didState?.did
+        if (createDidOptions.isDefault) {
+          if (!createdDid) {
+            throw new InternalServerError('isDefault was requested but the created did could not be determined')
+          }
+          const didRepository = request.agent.dependencyManager.resolve(DidRepository)
+          const newDefaultRecord = await didRepository.findCreatedDid(request.agent.context, createdDid)
+          if (!newDefaultRecord) {
+            throw new InternalServerError(`isDefault was requested but no DidRecord could be found for ${createdDid}`)
+          }
+          // Snapshot previous defaults BEFORE tagging the new one, and tag-then-clear rather than
+          // clear-then-tag: both orders can still fail mid-sequence with no cross-record transaction,
+          // but this order's worst case is two tagged defaults (tolerated) instead of zero (a false 404).
+          const previousDefaults = await didRepository.findByQuery(request.agent.context, { isDefault: true })
+          // Per-record lock, not a whole-sequence mutex (Credo has no cross-record transaction) --
+          // two isDefault:true writes for different DIDs can still both succeed; tolerated by design, not fixed here.
+          await didRepository.updateByIdWithLock(request.agent.context, newDefaultRecord.id, async (record) => {
+            record.setTag('isDefault', true)
+            return record
+          })
+          // isDefaultSet is set true as soon as the tag write succeeds, before the clearing loop
+          // below -- a clearing-loop failure shouldn't report an honored request as failed.
+          isDefaultSet = true
+          for (const previousDefault of previousDefaults) {
+            if (previousDefault.id !== newDefaultRecord.id) {
+              await didRepository.updateByIdWithLock(request.agent.context, previousDefault.id, async (record) => {
+                record.setTag('isDefault', false)
+                return record
+              })
+            }
+          }
+        }
+      } catch (bookkeepingError) {
+        this.agent.config.logger.warn(
+          `[DidController] isDefault bookkeeping failed for a newly created DID — the DID itself was created successfully and is still returned below: ${bookkeepingError}`,
+        )
+        if (createDidOptions.isDefault && undefined === isDefaultSet) {
+          isDefaultSet = false
+        }
+      }
+
+      return isDefaultSet === undefined ? didRes : { ...didRes, isDefaultSet }
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }
@@ -702,9 +756,19 @@ export class DidController extends Controller {
     return didResponse
   }
 
+  // isDefault as a query param, not a separate route: mirrors how the default is tracked (a tag on
+  // the same DidRecord) and matches this file's other list-filter endpoints.
   @Get('/')
-  public async getDids(@Request() request: Req) {
+  public async getDids(@Request() request: Req, @Query('isDefault') isDefault?: boolean) {
     try {
+      if (isDefault) {
+        // findDefaultDidRecords is shared with AgentController's self-attested lookup so the two
+        // endpoints can't disagree about which DID is default.
+        return await findDefaultDidRecords(
+          request.agent.dependencyManager.resolve(DidRepository),
+          request.agent.context,
+        )
+      }
       const createdDids = await request.agent.dids.getCreatedDids()
       return createdDids
     } catch (error) {

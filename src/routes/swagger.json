@@ -3261,6 +3261,9 @@
 					},
 					"endpoint": {
 						"type": "string"
+					},
+					"isDefault": {
+						"type": "boolean"
 					}
 				},
 				"required": [
@@ -3685,6 +3688,101 @@
 				"required": [
 					"credential",
 					"proof"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"SelfAttestedW3cCredentialResponse": {
+				"properties": {
+					"id": {
+						"type": "string"
+					},
+					"createdAt": {
+						"type": "string"
+					},
+					"credentialInstances": {
+						"items": {
+							"properties": {
+								"credential": {
+									"anyOf": [
+										{
+											"$ref": "#/components/schemas/JsonObject"
+										},
+										{
+											"type": "string"
+										}
+									]
+								}
+							},
+							"required": [
+								"credential"
+							],
+							"type": "object"
+						},
+						"type": "array"
+					},
+					"credential": {
+						"$ref": "#/components/schemas/JsonObject"
+					}
+				},
+				"required": [
+					"id",
+					"createdAt",
+					"credentialInstances",
+					"credential"
+				],
+				"type": "object",
+				"additionalProperties": {}
+			},
+			"SingleOrArray_JsonObject_": {
+				"anyOf": [
+					{
+						"$ref": "#/components/schemas/JsonObject"
+					},
+					{
+						"items": {
+							"$ref": "#/components/schemas/JsonObject"
+						},
+						"type": "array"
+					}
+				]
+			},
+			"jsonLdCredentialOptions": {
+				"properties": {
+					"@context": {
+						"items": {
+							"anyOf": [
+								{
+									"type": "string"
+								},
+								{
+									"$ref": "#/components/schemas/JsonObject"
+								}
+							]
+						},
+						"type": "array"
+					},
+					"type": {
+						"items": {
+							"type": "string"
+						},
+						"type": "array"
+					},
+					"credentialSubject": {
+						"$ref": "#/components/schemas/SingleOrArray_JsonObject_"
+					},
+					"proofType": {
+						"type": "string"
+					},
+					"expirationDate": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"@context",
+					"type",
+					"credentialSubject",
+					"proofType"
 				],
 				"type": "object",
 				"additionalProperties": false
@@ -4252,19 +4350,6 @@
 				],
 				"type": "object",
 				"additionalProperties": false
-			},
-			"SingleOrArray_JsonObject_": {
-				"anyOf": [
-					{
-						"$ref": "#/components/schemas/JsonObject"
-					},
-					{
-						"items": {
-							"$ref": "#/components/schemas/JsonObject"
-						},
-						"type": "array"
-					}
-				]
 			},
 			"JsonCredential": {
 				"properties": {
@@ -9531,7 +9616,16 @@
 						]
 					}
 				],
-				"parameters": []
+				"parameters": [
+					{
+						"in": "query",
+						"name": "isDefault",
+						"required": false,
+						"schema": {
+							"type": "boolean"
+						}
+					}
+				]
 			}
 		},
 		"/v1/orgs/{orgId}/token": {
@@ -9714,6 +9808,46 @@
 									},
 									{}
 								]
+							}
+						}
+					}
+				}
+			}
+		},
+		"/agent/credential/self-attested": {
+			"post": {
+				"operationId": "CreateW3cSelfAttestedCredential",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/SelfAttestedW3cCredentialResponse"
+								}
+							}
+						}
+					}
+				},
+				"description": "Create and store a self-attested W3C JSON-LD credential — the agent issues a credential to\nitself using its own default DID, rather than an external issuer signing over a subject DID.\n\nLives on request.agent, not /multi-tenancy/:tenantId + withTenantAgent() — matching\nverifyCredential/verify above rather than the legacy pipeline-implementation placement. The\nauth layer already resolves the tenant agent per request for a tenant token (see\nauthentication.ts), which is why no live controller on develop calls withTenantAgent(); the\n/multi-tenancy/:tenantId placement is base-wallet-token only (MULTITENANT_BASE_AGENT), so a\ndedicated agent or a tenant's own token could never have reached it there.\n\nPorted from pipeline-implementation, adapted for the current Credo version:\n- request.agent instead of the legacy this.agent field (no longer exists on this controller).\n- credentialSubject's claims are nested under a `claims` key when building the subject —\n  W3cCredentialSubject's constructor only reads options.id/options.claims, so spreading the\n  request's claims at the top level (as the legacy code effectively did, via a plain object\n  that bypassed the class transform) would silently drop every claim from the issued\n  credential. Handles a single object or an array of subjects.\n- w3cCredentials.store({ record }) instead of the removed storeCredential({ credential });\n  W3cCredentialRecord.fromCredential(signedCred) builds the record directly from the signed\n  credential — signCredential() already returns a typed W3cVerifiableCredential instance, so\n  the legacy JsonTransformer.fromJSON re-parse step is no longer needed either.\n- the response restores a top-level `credential` field for back-compat: 0.6.2's\n  W3cCredentialRecord replaces 0.5.x's top-level `credential` with a `credentialInstances`\n  array (credential survives only as a private write-only setter), which would otherwise\n  silently change the response shape for downstream consumers (platform's apps/cloud-wallet\n  -> agent-service -> mobile wallet) that read response.credential directly.",
+				"tags": [
+					"Agent"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/jsonLdCredentialOptions"
 							}
 						}
 					}
