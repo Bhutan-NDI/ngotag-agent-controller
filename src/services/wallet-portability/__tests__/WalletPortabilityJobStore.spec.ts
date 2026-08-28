@@ -1,6 +1,6 @@
 /**
  * Regression tests for WalletPortabilityJobStore's Redis/in-memory dual-store behavior. Locks in
- * two fixes from a second review pass on the #72/#73 hardening work:
+ * two fixes:
  *
  *   1. get() must reconcile a Redis record against a newer in-memory one, not prefer Redis
  *      unconditionally. save() mirrors into the in-memory store whenever Redis was unready at
@@ -518,7 +518,7 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
     // WalletPortabilityService), so a brand-new, perfectly live reservation genuinely has no
     // backing record for the first few milliseconds. Without a grace period, a second request
     // landing in that exact window would misread "no record" as "the holder is dead" and admit a
-    // second concurrent job — this is the #73 review's dead-job-reclaim race.
+    // second concurrent job.
     const { store } = makeReadyStore()
     const tenantId = 'tenant-1'
 
@@ -544,13 +544,11 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
   })
 
   it('reclaims a Pending reservation once its heartbeat lease has elapsed — a crash/restart between the Pending save and the first InProgress write', async () => {
-    // #73 review: the InProgress staleness check only closed half the 24h-wedge bug -- a
-    // crash/restart between exportWallet/importWallet's initial Pending save and runExport/
-    // runImport's first setJobStatus(InProgress) call left a Pending record that read as "still
-    // running" unconditionally, for the whole 24h JOB_TTL_SECONDS. A later review pass found the
-    // fix's own bound (a flat RESERVATION_GRACE_PERIOD_MS from reservedAt) was itself wall-clock,
-    // not lease-based -- Pending now shares InProgress's heartbeat-refreshed MAX_IN_PROGRESS_
-    // DURATION_MS bound instead, checked against the record's own updatedAt.
+    // A crash/restart between exportWallet/importWallet's initial Pending save and runExport/
+    // runImport's first setJobStatus(InProgress) call would otherwise leave a Pending record that
+    // reads as "still running" unconditionally, for the whole 24h JOB_TTL_SECONDS. Pending shares
+    // InProgress's heartbeat-refreshed MAX_IN_PROGRESS_DURATION_MS bound instead, checked against
+    // the record's own updatedAt, rather than a flat wall-clock grace period from reservedAt.
     const nowSpy = jest.spyOn(Date, 'now')
     const startedAt = 1_000_000
     nowSpy.mockReturnValue(startedAt)
@@ -693,9 +691,8 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
 
     // SET ... NX is refused (the key exists) — but job-A releases (or its key otherwise
     // vanishes) in the exact window before the follow-up GET that tries to identify the holder.
-    // The old code returned `holder?.jobId` here — undefined, since holder ends up genuinely
-    // undefined — which the caller reads as "I own the slot", admitting a second concurrent job
-    // even though this job's own SET NX never actually landed. See the #73 review.
+    // A bare `holder?.jobId` here would be undefined, which the caller would read as "I own the
+    // slot", admitting a second concurrent job even though this job's own SET NX never landed.
     redis.hideKeyOnCall = { key: `walletPortabilityActiveJob:${tenantId}`, callNumber: 1 }
     const result = await store.tryReserveActiveJob(tenantId, 'job-B')
 
@@ -715,10 +712,9 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
 
     // The reclaim CAS itself loses (another process's own reclaim/release already changed the
     // key by the time this caller's eval runs), and by the time the follow-up GET tries to
-    // identify the new holder, that key has *also* already vanished. The old code returned
-    // `current?.jobId` here — undefined, since current ends up genuinely undefined — which the
-    // caller reads as "I own the slot", admitting a concurrent job even though this caller's own
-    // CAS never actually landed. See the #73 review.
+    // identify the new holder, that key has *also* already vanished. A bare `current?.jobId` here
+    // would be undefined, which the caller would read as "I own the slot", admitting a concurrent
+    // job even though this caller's own CAS never landed.
     redis.forceNextEvalMiss = true
     redis.hideKeyOnCall = { key: `walletPortabilityActiveJob:${tenantId}`, callNumber: 2 }
     const result = await store.tryReserveActiveJob(tenantId, 'job-B')
@@ -734,10 +730,8 @@ describe('WalletPortabilityJobStore — active-job reservation/release', () => {
     expect(await store.tryReserveActiveJob(tenantId, 'job-1')).toBeUndefined()
     // job-1 crashed mid-run: its own record reached InProgress (the very first write
     // runExport/runImport makes) and nothing ever marked it terminal afterward — the process
-    // died. Before this fix, an InProgress record was treated as live regardless of age,
-    // wedging the tenant out of both export and import for the rest of the 24h TTL. An explicit
-    // old updatedAt (rather than makePendingRecord's now-fresh-by-default one) is already far
-    // older than MAX_IN_PROGRESS_DURATION_MS. See the #73 review.
+    // died. An explicit old updatedAt (rather than makePendingRecord's now-fresh-by-default one)
+    // is already far older than MAX_IN_PROGRESS_DURATION_MS.
     await store.save({
       ...makePendingRecord('job-1', tenantId, '2026-01-01T00:00:00.000Z'),
       status: WalletPortabilityJobStatus.InProgress,
@@ -853,10 +847,9 @@ describe('WalletPortabilityJobStore — touchIfActive (heartbeat)', () => {
       updatedAt: '2026-01-01T00:00:00.000Z',
     })
 
-    // Simulates a commandTimeout on the eval itself -- the failure the #73 review found was
-    // invisible under the old get()-then-setJobStatus() shape, since get() already swallows Redis
-    // errors internally and just resolves to undefined, leaving nothing for the heartbeat's own
-    // error handling to catch or log.
+    // Simulates a commandTimeout on the eval itself -- a plain get()-then-setJobStatus() shape
+    // would swallow this Redis error internally and just resolve to undefined, leaving nothing
+    // for the heartbeat's own error handling to catch or log.
     redis.failNextEval = true
     expect(await store.touchIfActive(jobId)).toBe(false)
     expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('heartbeat touch failed'))

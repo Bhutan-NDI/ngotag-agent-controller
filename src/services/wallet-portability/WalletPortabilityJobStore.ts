@@ -12,9 +12,9 @@ const JOB_TTL_SECONDS = 24 * 60 * 60
 const JOB_KEY_PREFIX = 'walletPortabilityJob:'
 // Per-tenant "is a portability job already running" pointer — export and import both rename the
 // tenant's profile away during their work, so they can never safely run concurrently with each
-// other or with a second instance of themselves for the same tenant. Same TTL as job records:
-// if a crash ever leaves this stuck, it self-clears within 24h rather than wedging the tenant
-// forever (see the reservation logic in tryReserveActiveJob/releaseActiveJob below).
+// other or with a second instance of themselves for the same tenant. Same TTL as job records: if
+// a crash ever leaves this stuck, it self-clears within 24h rather than wedging the tenant forever
+// (see the reservation logic in tryReserveActiveJob/releaseActiveJob below).
 const ACTIVE_JOB_KEY_PREFIX = 'walletPortabilityActiveJob:'
 
 const CONNECT_TIMEOUT_MS = 5000
@@ -36,18 +36,15 @@ const RESERVATION_GRACE_PERIOD_MS = 15 * 1000
 // A crash/restart *after* setJobStatus(InProgress) has already landed in Redis leaves a job
 // record that is neither terminal nor absent — without this, isReservationStillActive's
 // record-based branch below returns true for the rest of the job's 24h TTL, wedging the tenant
-// out of every future export AND import for a full day with no way to clear it (see the #73
-// review: a container rolled ~30s into a 3-minute export leaves the tenant 409ing on both
-// endpoints until the TTL expires).
+// out of every future export AND import for a full day with no way to clear it (e.g. a container
+// rolled ~30s into a 3-minute export would otherwise leave the tenant 409ing on both endpoints
+// until the TTL expires).
 //
-// This is a real lease, not just "job started more than N ago": WalletPortabilityService's
-// runExport/runImport re-save the record on this interval for the duration of the run (see
-// HEARTBEAT_INTERVAL_MS), touching updatedAt each time. A second review pass on the first
-// version of this fix (a bare "30 minutes since InProgress was first written" check) correctly
-// pointed out that MAX_DOWNLOAD_BYTES/MAX_DECOMPRESSED_BYTES explicitly permit a 2 GiB transfer
-// with no time cap of its own — a genuinely long-running large import could cross a fixed
-// duration threshold and get falsely reclaimed, admitting a second concurrent job on the same
-// tenant profile. Exported so the service can share the exact interval its heartbeat runs on.
+// This is a real lease, not "job started more than N ago" — runExport/runImport re-save the
+// record on this interval for the duration of the run, touching updatedAt each time, so a
+// genuinely long-running large transfer (up to MAX_DOWNLOAD_BYTES/MAX_DECOMPRESSED_BYTES, with no
+// time cap of its own) isn't falsely reclaimed mid-run. Exported so the service can share the
+// exact interval its heartbeat runs on.
 export const HEARTBEAT_INTERVAL_MS = 30 * 1000
 // Missing this many consecutive heartbeats (with headroom for one slow/delayed tick) means the
 // process genuinely stopped, not just "hasn't finished yet" — independent of how long the job
@@ -74,10 +71,9 @@ else
 end
 `
 
-// Shared by RELEASE_IF_OWNED_SCRIPT and TOUCH_ACTIVE_JOB_IF_OWNED_SCRIPT below — both only ever
-// act on a reservation if the caller's jobId matches the one holding it. Factored out so a third
-// owned-script doesn't have to hand-copy this again. cjson is a standard part of Redis's Lua
-// scripting environment, not an application dependency. See the #73 review.
+// Shared by RELEASE_IF_OWNED_SCRIPT and TOUCH_ACTIVE_JOB_IF_OWNED_SCRIPT below — both only act on
+// a reservation if the caller's jobId matches the one holding it. cjson is a standard part of
+// Redis's Lua scripting environment, not an application dependency.
 const OWNERSHIP_CHECK_PREAMBLE = `
 local current = redis.call('GET', KEYS[1])
 if not current then
@@ -102,38 +98,22 @@ return 1
 `
 
 // Same ownership check as RELEASE_IF_OWNED_SCRIPT, but refreshes the reservation's TTL instead of
-// deleting it -- the heartbeat calls this on the same interval it already refreshes the job
-// record's own TTL. Without this, tryReserveActiveJob's 24h EX (set once, at reservation time,
-// never refreshed) is the *only* thing bounding how long a reservation survives, completely
-// independent of the heartbeat/lease mechanism that already makes the job record itself track
-// real liveness rather than a fixed duration. A transfer that's still genuinely alive and
-// heartbeating past 24h (there is no absolute time cap, only the byte cap and the heartbeat
-// itself) would have its reservation silently expire out of Redis while the job record stays
-// alive -- tryReserveActiveJob's SET...NX would then simply succeed for a second caller on the
-// same tenant, admitting a second concurrent job against a first one that never actually died.
-// Re-writes the exact same value just read back (not a freshly-constructed one), rather than
-// reconstructing {jobId, reservedAt} client-side -- the caller only has jobId at heartbeat time,
-// not the original reservedAt. Safe against a concurrent reclaim taking over the slot in between
-// for the same reason every other script in this file is: Redis executes the whole eval as one
-// atomic operation, so there is no "in between" for another client's write to land in. See the
-// #73 review.
+// deleting it — the heartbeat calls this on the same interval it refreshes the job record's own
+// TTL. Without it, tryReserveActiveJob's 24h EX (set once, never refreshed) is the only thing
+// bounding reservation lifetime, so a still-alive, still-heartbeating transfer past 24h would have
+// its reservation silently expire while the job record stays alive, letting a second caller's
+// SET...NX succeed against a job that never died. Re-writes the exact value just read back, since
+// the caller only has jobId at heartbeat time, not the original reservedAt.
 const TOUCH_ACTIVE_JOB_IF_OWNED_SCRIPT = `
 ${OWNERSHIP_CHECK_PREAMBLE}
 redis.call('SET', KEYS[1], current, 'EX', ARGV[2])
 return 1
 `
 
-// The heartbeat's job is to refresh updatedAt on a schedule, independent of any specific state
-// transition the caller already knows is correct — every other write in this class is a plain
-// get()-then-save() precisely because the caller (exportWallet/setJobStatus/etc.) already decided
-// what the record should say. A heartbeat has no such decision to make; it only wants "bump
-// updatedAt if this job is still Pending/InProgress", and a get()-then-save() shape for that has a
-// real window between the two round trips where a terminal write (Completed/Failed) landing in
-// between gets silently clobbered back to non-terminal by the heartbeat's own save(). Doing the
-// check-and-update as one atomic server-side operation (same compare-and-swap idea as the two
-// scripts above, applied to the job record instead of the reservation) removes that window
-// entirely: Redis executes one command at a time, so whichever of {this eval, a terminal SET}
-// reaches Redis first is the one that's still true when the other runs. See the #73 review.
+// The heartbeat only wants to bump updatedAt while the job is still Pending/InProgress — a plain
+// get()-then-save() has a window where a terminal write (Completed/Failed) landing in between
+// gets silently clobbered back to non-terminal. Doing the check-and-update as one atomic
+// server-side operation removes that window entirely.
 const TOUCH_IF_NOT_TERMINAL_SCRIPT = `
 local current = redis.call('GET', KEYS[1])
 if not current then
@@ -166,20 +146,18 @@ enum ConnectionState {
 /**
  * Tracks async export/import job status.
  *
- * Mirrors RedisCache's hardened connection options (src/utils/RedisCache.ts) — not just its
- * fallback *philosophy* — since a plain `new Redis(url, { maxRetriesPerRequest: null })` leaves
- * `enableOfflineQueue` at its default `true` with unbounded retries: commands issued while
- * disconnected queue up and never settle, hanging `save`/`get` (and so the export/import HTTP
- * endpoints) indefinitely instead of failing fast. With `enableOfflineQueue: false` +
- * `commandTimeout`/`connectTimeout` + a readiness gate, a Redis outage degrades to "fall back to
- * the in-memory store" rather than "hang forever".
+ * Mirrors RedisCache's hardened connection options (src/utils/RedisCache.ts), not just its
+ * fallback philosophy: a plain `new Redis(url, { maxRetriesPerRequest: null })` leaves
+ * `enableOfflineQueue` at its default `true`, so commands issued while disconnected queue up and
+ * hang `save`/`get` (and so the export/import HTTP endpoints) indefinitely instead of failing
+ * fast. `enableOfflineQueue: false` + `commandTimeout`/`connectTimeout` + a readiness gate makes a
+ * Redis outage degrade to "fall back to the in-memory store" instead of "hang forever".
  */
 interface MemoryStoreEntry {
   record: WalletPortabilityJobRecord
-  // Mirrors JOB_TTL_SECONDS, applied in application code since a plain Map has no TTL of its
-  // own — without this, a REDIS_URL-less deployment (or one where Redis is unready at write
-  // time) retains every job record for the life of the process, unlike the Redis side which
-  // self-expires. See the #72 review.
+  // Mirrors JOB_TTL_SECONDS, applied in application code since a plain Map has no TTL of its own
+  // — without this a REDIS_URL-less deployment (or Redis unready at write time) retains every job
+  // record for the life of the process, unlike the Redis side which self-expires.
   expiresAt: number
 }
 
@@ -255,11 +233,10 @@ export class WalletPortabilityJobStore {
     if (this.redisClient && this.isRedisReady()) {
       try {
         await this.redisClient.set(`${JOB_KEY_PREFIX}${job.jobId}`, JSON.stringify(job), 'EX', JOB_TTL_SECONDS)
-        // Clears any stale mirror left by an earlier write that landed here during a Redis
-        // outage. Without this, get()'s tie-break (>=, favoring memory) can pick that stale
-        // memory entry back up if a later write for the same jobId happens to share its
-        // updatedAt millisecond — the exact mirror-direction failure this fixes. Once Redis has
-        // this job's latest write, memory has nothing useful left to contribute for it.
+        // Clears any stale mirror left by an earlier write during a Redis outage — without this,
+        // get()'s tie-break (>=, favoring memory) could pick the stale entry back up if a later
+        // write shares its updatedAt millisecond. Once Redis has the latest write, memory has
+        // nothing useful left to contribute.
         this.memoryStore.delete(job.jobId)
         return
       } catch (error) {
@@ -267,35 +244,27 @@ export class WalletPortabilityJobStore {
       }
     }
     // Also mirror into the in-memory store when Redis is configured but unreachable, so a job
-    // started during an outage is still observable for the life of this process instead of
-    // silently vanishing. Sweeps expired entries on every write rather than only lazily on read
-    // — a job whose status is never polled again after this write would otherwise never be
-    // looked up again either, and so would never get a chance to expire lazily.
+    // started during an outage stays observable for the life of this process. Sweeps expired
+    // entries on every write, not just lazily on read, since a job never polled again would
+    // otherwise never expire.
     this.pruneExpiredMemoryEntries()
     this.memoryStore.set(job.jobId, { record: job, expiresAt: Date.now() + JOB_TTL_SECONDS * 1000 })
   }
 
   /**
-   * Atomically refresh a job record's updatedAt, but only while it's still Pending or InProgress
-   * — see TOUCH_IF_NOT_TERMINAL_SCRIPT above for why the check-and-update must be one operation
-   * rather than this class's usual get()-then-save(). Used exclusively by
-   * WalletPortabilityService's heartbeat, for both the Pending and InProgress phases of a job —
-   * Pending now gets the same refreshed lease InProgress already relied on, rather than a fixed
-   * wall-clock grace period from when the slot was first reserved (see the #73 review: a
-   * genuinely live job stalled on scheduling/GC before its first save() could still be reclaimed
-   * by a second caller once RESERVATION_GRACE_PERIOD_MS elapsed, however generous that constant
-   * was, since nothing about the Pending record itself was ever refreshed to prove liveness).
+   * Atomically refresh a job record's updatedAt, but only while it's still Pending or InProgress —
+   * see TOUCH_IF_NOT_TERMINAL_SCRIPT above for why the check-and-update must be one operation.
+   * Used by WalletPortabilityService's heartbeat for both the Pending and InProgress phases, so
+   * Pending gets the same refreshed lease InProgress relies on rather than a fixed wall-clock
+   * grace period from reservation time.
    *
-   * Returns true if the touch landed, false if it was skipped (no record, or already terminal) —
-   * both "skipped" cases mean the same thing to the caller ("nothing to refresh right now"), so
-   * there's no separate error path between them.
+   * Returns true if the touch landed, false if skipped (no record, or already terminal) — both
+   * cases mean the same thing to the caller.
    *
    * On a Redis failure this falls through to the in-memory store rather than returning false
-   * outright: "the read/eval failed" must never be indistinguishable from "confirmed terminal or
-   * missing" — collapsing the two silently starves a genuinely live job's updatedAt of any
-   * refresh for the rest of the outage with no trace of why. See the #73 review (a failed
-   * heartbeat read was previously read as "nothing to touch", with the failure itself invisible
-   * since get() already swallows Redis errors internally).
+   * outright: a failed read must never be indistinguishable from a confirmed terminal/missing
+   * record, or a genuinely live job's updatedAt would silently stop refreshing for the outage's
+   * duration.
    */
   public async touchIfActive(jobId: string): Promise<boolean> {
     const now = new Date().toISOString()
@@ -345,22 +314,16 @@ export class WalletPortabilityJobStore {
     return (await this.getWithReadStatus(jobId)).record
   }
 
-  // Split out from get() so the reservation-reclaim logic below can tell "definitively no record
-  // exists" apart from "we cannot currently see Redis's true state" — get()'s own callers don't
-  // need that distinction (degrading to "not found" is the right behavior for them either way),
-  // but a reclaim decision does: mistaking either a timed-out GET *or* an unready connection for
-  // "the job is dead" would let a live job's active-job slot be reclaimed out from under it.
+  // Split out from get() so reclaim logic can tell "definitively no record exists" apart from "we
+  // cannot currently see Redis's true state" — get()'s callers don't need that distinction, but a
+  // reclaim decision does: mistaking a timed-out GET or an unready connection for "the job is
+  // dead" would let a live job's slot be reclaimed.
   //
-  // redisUnavailable covers both cases that mean "a miss here might not be a real miss": a read
-  // that threw, and — the gap the read-threw check alone missed — Redis being configured but not
-  // currently ready, so the read is never even attempted (a reconnecting/closed connection reports
-  // empty exactly like a genuine cache miss unless this is checked separately). It is only ever
-  // true when NO record was found by either store: a memory record answers the question on its
-  // own regardless of Redis's state (that's the whole point of the memory mirror), so a
-  // Redis-configured-but-perpetually-unready deployment operating correctly off memory the entire
-  // time must not have every lookup treated as untrustworthy just because isRedisReady() is false.
-  // A deployment with no REDIS_URL at all must also never trip this — that's a legitimate
-  // memory-only mode, not an outage.
+  // redisUnavailable is only ever true when NO record was found by either store, covering both a
+  // read that threw and Redis being configured-but-not-ready (which reports empty exactly like a
+  // genuine miss unless checked separately). A memory record answers the question on its own
+  // regardless of Redis's state, and a deployment with no REDIS_URL at all must never trip this —
+  // that's a legitimate memory-only mode, not an outage.
   private async getWithReadStatus(
     jobId: string,
   ): Promise<{ record?: WalletPortabilityJobRecord; redisUnavailable: boolean }> {
@@ -379,10 +342,7 @@ export class WalletPortabilityJobStore {
     const memoryRecord = this.getUnexpiredMemoryRecord(jobId)
     // Reconcile rather than preferring Redis unconditionally — save() mirrors into memoryStore
     // whenever Redis was unready at write time, so the two can genuinely disagree for the same
-    // jobId (Redis holds a stale record from before an outage, memory holds the true latest
-    // state, or the reverse if Redis recovered mid-job and a later write landed there instead).
-    // Taking whichever has the later updatedAt is always correct either way — an entry only ever
-    // exists in memoryStore because Redis was unavailable for that particular write.
+    // jobId. Taking whichever has the later updatedAt is always correct.
     if (redisRecord && memoryRecord) {
       // >= not >: updatedAt is millisecond-resolution and consecutive writes for one job routinely
       // share a millisecond (Pending -> InProgress is only a couple of microtasks apart). A
@@ -445,11 +405,9 @@ export class WalletPortabilityJobStore {
 
     if (this.redisClient && this.isRedisReady()) {
       // Tracks whether Redis has already answered "the slot is taken" (SET ... NX refused) before
-      // the catch below runs. Without this, a follow-up round trip failing *after* that answer —
-      // the holder GET, or the reclaim CAS eval, both a few lines below — falls into the same catch
-      // as a failure on the initial NX itself, and previously fell through to the unconditional
-      // in-memory grant at the bottom of this method: silently discarding Redis's own "taken"
-      // answer and admitting a second concurrent job for the tenant.
+      // the catch below runs — a follow-up round trip failing after that answer must not fall
+      // into the same catch as a failure on the initial NX and silently fall through to the
+      // unconditional in-memory grant, discarding Redis's own "taken" answer.
       let redisRefusedReservation = false
       try {
         const value = JSON.stringify({ jobId, reservedAt } satisfies ActiveJobReservation)
@@ -491,10 +449,9 @@ export class WalletPortabilityJobStore {
           const currentRaw = await this.redisClient.get(key)
           const current = currentRaw ? (JSON.parse(currentRaw) as ActiveJobReservation) : undefined
           // Never a bare `current?.jobId` here — Redis already told us this CAS lost (or the
-          // holder released between our GET and this one), which only means "the slot is
-          // spoken for by someone", not "nobody holds it". A falsy return is read by the caller
-          // as "I own the slot"; on this path we categorically do not, so fail closed with the
-          // sentinel rather than silently admitting a second concurrent job. See the #73 review.
+          // holder released between our GET and this one), which only means the slot is spoken
+          // for, not that nobody holds it. Fail closed with the sentinel rather than silently
+          // admitting a second concurrent job.
           return current?.jobId ?? UNKNOWN_HOLDER_JOB_ID
         }
         // Same reasoning as above: Redis's own NX refusal already established the slot is held.
@@ -527,8 +484,7 @@ export class WalletPortabilityJobStore {
   // "the process crashed before ever saving" (genuinely dead) or "we're a few milliseconds into a
   // perfectly live reservation, its save() call just hasn't landed yet" — the grace period below
   // is what tells those two apart, rather than treating every record-less reservation as dead the
-  // instant it's checked (which readmitted a second concurrent job for the exact race this whole
-  // mechanism exists to prevent).
+  // instant it's checked.
   private async isReservationStillActive(reservation: ActiveJobReservation): Promise<boolean> {
     const { record, redisUnavailable } = await this.getWithReadStatus(reservation.jobId)
     if (redisUnavailable) {
@@ -543,15 +499,9 @@ export class WalletPortabilityJobStore {
         record.status === WalletPortabilityJobStatus.Pending ||
         record.status === WalletPortabilityJobStatus.InProgress
       ) {
-        // Pending and InProgress share one bound: WalletPortabilityService now starts the
-        // heartbeat (touchIfActive) *before* the Pending save, not only once InProgress is
-        // reached, so a Pending record's updatedAt is kept just as fresh as an InProgress one's
-        // for as long as the job is genuinely alive. Before that change, Pending used a flat
-        // wall-clock grace period measured from reservation.reservedAt -- generous for the
-        // *normal* case (this save() landing milliseconds later) but not provably long enough
-        // under real scheduling delay (a GC pause, an event-loop backlog) before runExport/
-        // runImport's own first await ever ran, which could see a live reservation reclaimed out
-        // from under it. See the #73 review.
+        // Pending and InProgress share one bound: the heartbeat starts before the Pending save,
+        // not only once InProgress is reached, so a Pending record's updatedAt stays just as
+        // fresh as an InProgress one's for as long as the job is genuinely alive.
         return Date.now() - new Date(record.updatedAt).getTime() <= MAX_IN_PROGRESS_DURATION_MS
       }
       return false
@@ -562,26 +512,18 @@ export class WalletPortabilityJobStore {
   /**
    * Release the active-job slot, but only if it still points at this exact jobId — never clobber
    * a newer job's reservation. Clears BOTH stores unconditionally rather than picking one based on
-   * Redis's *current* readiness: reservation and release can observe different readiness states
-   * for the same job (it runs for seconds to minutes, plenty of time for Redis to blip), so
-   * checking only the store that looks live right now can miss the store the reservation actually
-   * landed in. A reservation stuck in Redis wedges the tenant for up to the 24h TTL; one stuck in
-   * memory (no TTL) wedges it permanently until the process restarts.
+   * Redis's current readiness: reservation and release can observe different readiness states for
+   * the same job (it runs for seconds to minutes), so checking only the store that looks live
+   * right now can miss the store the reservation actually landed in.
    *
-   * The Redis attempt below is gated on the client merely *existing*, not on isRedisReady() —
-   * deliberately looser than every other Redis call in this class. Gating on readiness here would
-   * reproduce the exact bug this fixes: a reservation made while Redis was ready can outlive a
-   * disconnect, so by release time isRedisReady() may already be false even though the key is
-   * still sitting in Redis waiting to be deleted. Attempting anyway costs nothing when truly
-   * disconnected (enableOfflineQueue: false means the call rejects fast instead of hanging, same
-   * as everywhere else in this class) and is the only way the Redis-side key ever gets cleared in
-   * the disagreement window this finding described.
+   * The Redis attempt is gated on the client merely existing, not on isRedisReady() — a
+   * reservation made while Redis was ready can outlive a disconnect, so by release time
+   * isRedisReady() may already be false even though the key is still sitting in Redis waiting to
+   * be deleted.
    *
-   * The ownership check and the delete happen in one Lua eval (RELEASE_IF_OWNED_SCRIPT), not a
-   * separate GET-then-DEL: between those two round trips, a newer job can legitimately take over
-   * the slot (a tryReserveActiveJob reclaim, exactly like the one this class already makes atomic
-   * on the reclaim side), and the plain DEL would then remove that new owner's reservation even
-   * though *this* jobId was the owner when the GET ran.
+   * The ownership check and the delete happen in one Lua eval, not a separate GET-then-DEL:
+   * between those two round trips a newer job can legitimately take over the slot, and a plain
+   * DEL would then remove that new owner's reservation.
    */
   public async releaseActiveJob(tenantId: string, jobId: string): Promise<void> {
     const key = `${ACTIVE_JOB_KEY_PREFIX}${tenantId}`
@@ -599,15 +541,12 @@ export class WalletPortabilityJobStore {
 
   /**
    * Refresh the active-job reservation's own TTL, called by the heartbeat on the same interval as
-   * touchIfActive -- see TOUCH_ACTIVE_JOB_IF_OWNED_SCRIPT above for why this exists: the
-   * reservation's 24h Redis TTL is otherwise set once, at tryReserveActiveJob time, and never
-   * refreshed, completely independent of whether the job it belongs to is still genuinely alive.
+   * touchIfActive — the reservation's 24h Redis TTL is otherwise set once, at reserve time, and
+   * never refreshed, independent of whether the job it belongs to is still alive.
    *
-   * No-op for the in-memory fallback: activeJobMemoryStore entries have no TTL of their own (see
-   * its own field comment), so there is nothing there that needs periodic refreshing -- the
-   * expiry problem this method closes is specific to Redis's `EX`. Returns whether the refresh
-   * landed (matching touchIfActive's own boolean convention) -- the heartbeat itself doesn't act
-   * on the result, but a caller that wants to know (or a test) can.
+   * No-op for the in-memory fallback: activeJobMemoryStore entries have no TTL of their own, so
+   * there's nothing to refresh there. Returns whether the refresh landed, matching touchIfActive's
+   * convention.
    */
   public async touchActiveJobReservation(tenantId: string, jobId: string): Promise<boolean> {
     if (!this.redisClient || !this.isRedisReady()) return false

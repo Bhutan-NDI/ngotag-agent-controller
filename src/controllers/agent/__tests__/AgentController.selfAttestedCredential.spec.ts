@@ -7,8 +7,8 @@
  *      longer exists on this class.
  *   2. It operates directly on request.agent (no tenantId param, no withTenantAgent()) — matching
  *      verifyCredential/verify's generic-op convention on this same controller, not the legacy
- *      /multi-tenancy/:tenantId placement, which only a base-wallet token could ever reach (see
- *      the #75 review: a dedicated agent or a tenant's own token both 401'd there).
+ *      /multi-tenancy/:tenantId placement, which only a base-wallet token could ever reach (a
+ *      dedicated agent or a tenant's own token both 401 there).
  *   3. It must build a real W3cCredential instance and call w3cCredentials.store({ record }) via
  *      W3cCredentialRecord.fromCredential(...) — the legacy w3cCredentials.storeCredential(...)
  *      method no longer exists on the current Credo version, and passing a plain object literal
@@ -23,9 +23,7 @@
  *   6. The default DID is resolved via a DidRepository tag query ({ isDefault: true }) against the
  *      DID's own DidRecord, not a separate GenericRecord pointer — verified directly against the
  *      installed @credo-ts/core/@credo-ts/askar packages that arbitrary DidRecord tags round-trip
- *      through save and query. See DidController.writeDid, which writes this same tag. (An earlier
- *      version of this endpoint read a GenericRecord instead, on the incorrect belief that
- *      DidRecord tags could no longer carry this on Credo 0.6.2; see the #75 review.)
+ *      through save and query. See DidController.writeDid, which writes this same tag.
  *   7. The DID document itself comes from dids.resolveCreatedDidDocumentWithKeys(selfDid), not
  *      getCreatedDids({did}) + record.didDocument — Credo only persists didDocument on the
  *      DidRecord for some methods (never for did:key, only for did:peer numAlgo 1), so reading it
@@ -200,7 +198,7 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
   // which looks at key presence (`'expirationDate' in credential`), not truthiness. A real
   // (non-mocked) signCredential call throws "must be a valid date: undefined" for id/expirationDate
   // alike -- confirmed directly against a real in-memory Credo agent, not just inferred from
-  // reading the library. Neither field was ever set here before this fix. See the #75 review.
+  // reading the library.
   it('always supplies a real id and a far-future default expirationDate, since W3cCredential/vc-js require both present', async () => {
     const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
     const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
@@ -276,7 +274,7 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
   it('rejects an empty-string expirationDate instead of silently forwarding it to the signer', async () => {
     // '' is falsy, so a truthiness-gated check would skip validation entirely, and '' ?? default
     // would also skip the default substitution (?? only coalesces null/undefined) -- reaching the
-    // signer as a literal empty string. See the #75 review.
+    // signer as a literal empty string.
     const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
     const signCredential = jest.fn() as jest.Mock
     const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
@@ -294,7 +292,6 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
   it('normalizes a caller-supplied expirationDate to ISO 8601, even when the input parses but is not itself ISO', async () => {
     // Date.parse accepts far more formats than ISO 8601 (e.g. "08/26/2026") -- every issued
     // credential should carry a spec-compliant date regardless of what format the caller sent.
-    // See the #75 review.
     const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
     const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
       return new W3cJsonLdVerifiableCredential({
@@ -397,7 +394,7 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
       ['https://[::1]/context.jsonld', 'IPv6 loopback'],
       ['https://[fe80::1]/context.jsonld', 'IPv6 link-local'],
       // fe80::/10 spans first-hextet 0xfe80-0xfebf, not just the literal "fe80" prefix -- these
-      // three are equally link-local and were missed by a naive prefix match. See the #75 review.
+      // three are equally link-local and would be missed by a naive prefix match.
       ['https://[fe90::1]/context.jsonld', 'IPv6 link-local (fe90::/10 subrange)'],
       ['https://[fea0::1]/context.jsonld', 'IPv6 link-local (fea0::/10 subrange)'],
       ['https://[febf::1]/context.jsonld', 'IPv6 link-local (febf::/10 subrange, upper boundary)'],
@@ -498,8 +495,7 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
 
   // credentialSubject (and, in principle, any other field) is a JSON-LD node object once the real
   // vc/v1 context maps it as a term, so it can carry its own local @context/@import the same way
-  // an object @context entry can -- and subject is spread into `claims` with no filtering. See the
-  // #75 review.
+  // an object @context entry can -- and subject is spread into `claims` with no filtering.
   describe('nested @context/@import guard over the whole payload', () => {
     const rejectsPayload = async (overrides: Record<string, unknown>, expectedMessageFragment: string) => {
       const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
@@ -632,9 +628,9 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
   })
 
   it("falls back to the agent's single created DID when no GenericRecord marks a default — existing/migrated wallets", async () => {
-    // The #75 review's core scenario: a wallet from before the GenericRecord-based default-DID
-    // tracking existed. There's no backfill step, so without this fallback every such wallet
-    // 404s here forever, with re-anchoring a brand-new DID as the only workaround.
+    // Covers a wallet from before the GenericRecord-based default-DID tracking existed. There's
+    // no backfill step, so without this fallback every such wallet would 404 here forever, with
+    // re-anchoring a brand-new DID as the only workaround.
     // assertionMethod, not verificationMethod: the endpoint only ever signs with a key listed
     // under assertionMethod (see AgentController's own comment on why verificationMethod alone
     // does not authorize it) -- this fixture models a document that authorizes the key correctly.
@@ -734,12 +730,11 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
   })
 
   it('picks the most recently created DID when more than one is tagged isDefault — not an arbitrary unordered pick', async () => {
-    // #73 review: findByQuery applies no ordering of its own (a plain Askar scan, no createdAt
-    // sort). A wallet migrated from the legacy stack can carry more than one isDefault-tagged
-    // DID (the old default was never cleared before writeDid's own fix), so an unordered [0]
-    // pick is whatever the store happens to return first -- Askar's rowid-ordered scan returns
-    // the EARLIEST-created record, which can be a long-superseded DID, not the one an operator
-    // actually tagged default most recently.
+    // findByQuery applies no ordering of its own (a plain Askar scan, no createdAt sort). A
+    // wallet migrated from the legacy stack can carry more than one isDefault-tagged DID, so an
+    // unordered [0] pick is whatever the store happens to return first -- Askar's rowid-ordered
+    // scan returns the EARLIEST-created record, which can be a long-superseded DID, not the one
+    // an operator actually tagged default most recently.
     // assertionMethod, not verificationMethod: the endpoint only ever signs with a key listed
     // under assertionMethod (see AgentController's own comment on why verificationMethod alone
     // does not authorize it) -- this fixture models a document that authorizes the key correctly.
@@ -803,9 +798,8 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     // checks that the proof key is referenced by the DID document's assertionMethod relationship
     // specifically -- so the pre-fix fallback (assertionMethod ?? verificationMethod) could sign,
     // store, and return 200 for a credential that later fails verification everywhere else with
-    // "not authorized by controller for proof purpose 'assertionMethod'". Same failure mode
-    // already correctly identified and removed for the authentication fallback; a bare
-    // verificationMethod fallback is not any safer. See the #75 review.
+    // "not authorized by controller for proof purpose 'assertionMethod'". Same failure mode as
+    // the authentication fallback; a bare verificationMethod fallback is not any safer.
     const didDocument = { verificationMethod: [{ id: VERIFICATION_METHOD_ID }] }
     const signCredential = jest.fn() as jest.Mock
     const agent = makeAgent({ defaultDid: SELF_DID, didDocument, signCredentialImpl: signCredential })
@@ -818,8 +812,8 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
   })
 
   it('resolves the verification method for a did:key default DID even though KeyDidRegistrar never persists a didDocument on the DidRecord', async () => {
-    // This is the exact regression the #75 review flagged: for did:key/did:peer(numAlgo2), the
-    // DidRecord's own didDocument field is undefined (nothing sets it at creation time), so a
+    // For did:key/did:peer(numAlgo2), the DidRecord's own didDocument field is undefined (nothing
+    // sets it at creation time), so a
     // naive getCreatedDids({did}) + record.didDocument read would find selfDidVerificationMethod
     // undefined here even though the DID is real and resolvable. This test's fake
     // resolveCreatedDidDocumentWithKeys mimics the real API's resolver-fallback behavior — it
@@ -851,8 +845,8 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
   })
 
   it('resolves the verification method for a did:peer default DID, whose document has no top-level verificationMethod at all', async () => {
-    // The #75 review's follow-up finding: resolveCreatedDidDocumentWithKeys fixed did:key, but
-    // did:peer's numAlgo2 document is built purely through purpose-specific setters
+    // resolveCreatedDidDocumentWithKeys fixed did:key, but did:peer's numAlgo2 document is built
+    // purely through purpose-specific setters
     // (addAssertionMethod/addAuthentication/addKeyAgreement) — none of which populate
     // didDocument.verificationMethod at all, so DidDocumentBuilder leaves it undefined for every
     // did:peer:2. Reading verificationMethod[0] directly (the pre-fix code) would find this
@@ -889,7 +883,7 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     // with (proofPurpose is always assertionMethod, see toSubject above), so verificationMethod
     // and authentication (both pointing at deliberately wrong ids here) must never be consulted
     // at all, not merely deprioritized -- neither authorizes a key for the assertionMethod proof
-    // purpose this endpoint signs with. See the #73/#75 reviews.
+    // purpose this endpoint signs with.
     const didDocument = {
       verificationMethod: [{ id: 'wrong-vm-id' }],
       authentication: ['wrong-auth-id'],
@@ -923,7 +917,7 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
     // with a 200 and persist a credential that is permanently unverifiable everywhere else --
     // ControllerProofPurpose.validate rejects it at verification time as "not authorized by
     // controller for proof purpose 'assertionMethod'". A loud, immediate error here is strictly
-    // better than that silent, delayed failure. See the #75 review.
+    // better than that silent, delayed failure.
     const didDocument = {
       verificationMethod: undefined,
       assertionMethod: undefined,
@@ -940,8 +934,8 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
   })
 
   it('sanitizes a signCredential failure instead of exposing its raw message, and logs the real cause server-side', async () => {
-    // #75 review: a caller-controlled @context can drive CachedDocumentLoader's fallback to
-    // Credo's native JSON-LD loader, reaching attacker-chosen or internal addresses (SSRF).
+    // A caller-controlled @context can drive CachedDocumentLoader's fallback to Credo's native
+    // JSON-LD loader, reaching attacker-chosen or internal addresses (SSRF).
     // Whatever that document loader (or signCredential itself) throws must not be echoed back
     // verbatim -- ErrorHandlingService's generic branch serializes error.message straight into the
     // HTTP response, which would turn this into a probing oracle (resolved URL, HTTP status,

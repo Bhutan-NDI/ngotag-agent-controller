@@ -38,23 +38,19 @@ import { CreateTenantOptions } from '../types'
 
 // Minimum length for a caller-supplied wallet export/import passKey. Argon2i (KdfMethod.Argon2IMod)
 // derives a real encryption key from whatever string is supplied, so a bare non-empty check let
-// through one-character passphrases like "a" -- practical to brute-force offline against an
-// artifact that otherwise sits in S3. 16 is a floor, not a strength guarantee: it rules out the
-// trivial cases without forcing the caller-remembered-passphrase design (matches the legacy
-// contract) into a server-generated-key one, which would be a bigger, separate change. See the
-// #72 review.
+// through one-character passphrases -- practical to brute-force offline against an artifact that
+// otherwise sits in S3. 16 is a floor, not a strength guarantee, chosen to avoid forcing the
+// caller-remembered-passphrase design (matches the legacy contract) into a bigger,
+// server-generated-key change.
 const MIN_PASSKEY_LENGTH = 16
 
 // A SHA-256 digest, hex-encoded: exactly 64 hex characters. Without this, a malformed checksum
-// (too short, too long, non-hex, or just a typo) still passed the earlier `!checksum` truthiness
-// check, reserved the tenant's active-job slot, and downloaded up to MAX_DOWNLOAD_BYTES (2 GiB)
-// before runImport's own comparison inevitably failed -- wasted work and a wedged reservation for
-// something a cheap upfront regex already rules out. Case-insensitive: SHA-256 hex is conceptually
-// case-insensitive, but WalletPortabilityService's own comparison (`hash.digest('hex')`, always
-// lowercase, compared with `!==`) is case-sensitive, so an uppercase-but-arithmetically-correct
-// checksum would otherwise still fail downstream -- matches the platform-side DTO's own fix for
-// the identical gap (lowercase, don't just narrow the regex to reject uppercase). See the #73
-// review.
+// still passes the earlier truthiness check, reserves the tenant's active-job slot, and downloads
+// up to MAX_DOWNLOAD_BYTES (2 GiB) before runImport's own comparison inevitably fails -- wasted
+// work for something a cheap upfront regex rules out. Case-insensitive: WalletPortabilityService's
+// own comparison (`hash.digest('hex')`, always lowercase) is case-sensitive, so an
+// uppercase-but-correct checksum must be normalized before it reaches that comparison, not just
+// accepted or rejected here.
 const CHECKSUM_PATTERN = /^[a-f0-9]{64}$/i
 
 @Tags('MultiTenancy')
@@ -179,20 +175,15 @@ export class MultiTenancyController extends Controller {
    *
    * Returns jobId/status; status is always 'pending' on this response.
    */
-  // Deliberately not `@returns { jobId, status }` in the docblock above -- tsoa's JSDoc parser
-  // reads the `{` right after `@returns` as an attempt at a JSDoc type annotation, truncates on
-  // the first `}` it finds inside the object literal, and mangles the rest into the generated
-  // OpenAPI description (this used to render as `", status } — status is always 'pending'..."`).
-  // The explicit Promise<ExportWalletResult> return type below already documents the real shape
-  // in the generated schema; the docblock's own line above only needs to say what the schema
-  // doesn't: that status is always 'pending' here specifically. See the #73 review.
+  // Not `@returns {...}` in the docblock above -- tsoa's JSDoc parser treats the `{` as a type
+  // annotation and truncates on the first `}`, mangling the generated OpenAPI description. The
+  // explicit Promise<ExportWalletResult> return type already documents the shape; the docblock
+  // only needs to add that status is always 'pending' here.
   //
-  // The next three @Response lines were reachable in code (getTenantById/exportWallet's own catch blocks below) but
-  // undocumented in the generated OpenAPI spec — unlike @Res(), which requires a matching
-  // TsoaResponse parameter the handler actually calls, @Response() documents a status this method
-  // can throw without needing a corresponding parameter, matching every sibling endpoint in this
-  // same file (e.g. getTenantToken above) that already pairs its declared 4xx with a 500. See the
-  // #73 review.
+  // The next three @Response lines document statuses this method can throw (from
+  // getTenantById/exportWallet's own catches below) that aren't otherwise declared — @Response()
+  // doesn't require a matching TsoaResponse parameter the way @Res() does, matching the pattern
+  // other endpoints in this file already use (e.g. getTenantToken's paired 4xx/500).
   @Response<{ message: string }>(404, 'Tenant not found')
   @Response<{ message: string }>(409, 'A wallet portability job is already running for this tenant')
   @Response<{ message: string }>(500, 'Internal Server Error')
@@ -238,9 +229,8 @@ export class MultiTenancyController extends Controller {
    * Poll the status of an export job started via POST /export/:tenantId. On completion, the
    * response carries a short-lived pre-signed S3 URL and the artifact's SHA-256 checksum.
    */
-  // See exportTenantWallet's identical comment on @Response vs @Res -- getJobStatus's own catch
-  // block below can throw anything ErrorHandlingService.handle maps to, not just the 404 already
-  // declared via @Res(). See the #73 review.
+  // Same @Response vs @Res reasoning as exportTenantWallet -- getJobStatus's own catch block below
+  // can throw anything ErrorHandlingService.handle maps to, not just the 404 declared via @Res().
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Get('/export/:tenantId/status/:jobId')
   public async getExportWalletStatus(
@@ -253,10 +243,9 @@ export class MultiTenancyController extends Controller {
         jobId,
       )
       // job.type checked too, not just tenantId: getJobStatus is type-agnostic, so an export
-      // jobId polled through this route (or an import jobId polled through the mirrored
-      // getImportWalletStatus below) would otherwise resolve successfully with a shape that
-      // doesn't match what this route promises (no downloadUrl on an import job masquerading as
-      // an export one, and vice versa) instead of a clean 404. See the #73 review.
+      // jobId polled through this route (or vice versa via getImportWalletStatus below) would
+      // otherwise resolve with a shape that doesn't match what this route promises, instead of a
+      // clean 404.
       if (!job || job.tenantId !== tenantId || job.type !== WalletPortabilityJobType.Export) {
         return notFoundError(404, { reason: `Export job '${jobId}' not found for tenant '${tenantId}'.` })
       }
@@ -282,8 +271,7 @@ export class MultiTenancyController extends Controller {
    *
    * Returns jobId/status; status is always 'pending' on this response.
    */
-  // See exportTenantWallet's identical comments on @Response vs @Res, and on why this docblock's
-  // own return-shape line above isn't written as a literal `@returns {...}` tag. See the #73 review.
+  // Same @Response/@Res and docblock-shape reasoning as exportTenantWallet above.
   @Response<{ message: string }>(404, 'Tenant not found')
   @Response<{ message: string }>(409, 'A wallet portability job is already running for this tenant')
   @Response<{ message: string }>(500, 'Internal Server Error')
@@ -298,9 +286,9 @@ export class MultiTenancyController extends Controller {
     if (!exportUrl || !passKey || !checksum) {
       return badRequestError(400, { reason: 'exportUrl, passKey and checksum are all required.' })
     }
-    // Same MIN_PASSKEY_LENGTH floor as exportTenantWallet -- this passKey is the same one the
-    // caller supplied at export time, so a weak one accepted here just means the earlier check
-    // was bypassable via import's own endpoint. See the #73 review.
+    // Same MIN_PASSKEY_LENGTH floor as exportTenantWallet -- this is the same passKey supplied at
+    // export time, so a weak one accepted here would make the earlier check bypassable via this
+    // endpoint.
     if (passKey.length < MIN_PASSKEY_LENGTH) {
       return badRequestError(400, { reason: `passKey must be at least ${MIN_PASSKEY_LENGTH} characters.` })
     }
@@ -343,7 +331,7 @@ export class MultiTenancyController extends Controller {
    * response carries the name the tenant's pre-import profile was renamed to (backupProfile) —
    * it is never deleted automatically.
    */
-  // See exportTenantWallet's identical comment on @Response vs @Res. See the #73 review.
+  // Same @Response vs @Res reasoning as exportTenantWallet.
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Get('/import/:tenantId/status/:jobId')
   public async getImportWalletStatus(

@@ -1,9 +1,9 @@
 /**
- * Regression test — #72 review: exportTenantWallet accepted any non-empty passKey, including
- * one-character passphrases like "a". Argon2i derives a real encryption key from whatever string
- * is supplied (see WalletPortabilityService#runExport), so a weak passKey is practical to
- * brute-force offline against an artifact that otherwise sits in S3. Fixed with a minimum-length
- * floor, checked before the tenant/agent is ever touched.
+ * Regression test: exportTenantWallet must not accept a one-character passphrase like "a".
+ * Argon2i derives a real encryption key from whatever string is supplied (see
+ * WalletPortabilityService#runExport), so a weak passKey is practical to brute-force offline
+ * against an artifact that otherwise sits in S3. Enforced with a minimum-length floor, checked
+ * before the tenant/agent is ever touched.
  */
 import { jest } from '@jest/globals'
 

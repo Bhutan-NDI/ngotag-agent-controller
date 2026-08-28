@@ -1,8 +1,8 @@
 /**
- * Regression test — #73 review: importTenantWallet only checked passKey for truthiness, the same
- * gap export's own passKey check had before it was fixed (see MultiTenancyController.exportPassKey.spec.ts).
- * This is the same passKey the caller supplied at export time, so accepting a weak one here just
- * means export's own MIN_PASSKEY_LENGTH floor was bypassable by going straight to import instead.
+ * Regression test: importTenantWallet must enforce the same passKey minimum length as export (see
+ * MultiTenancyController.exportPassKey.spec.ts). This is the same passKey the caller supplied at
+ * export time, so accepting a weak one here would make export's own MIN_PASSKEY_LENGTH floor
+ * bypassable by going straight to import instead.
  */
 import { jest } from '@jest/globals'
 

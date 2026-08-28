@@ -92,8 +92,7 @@ describe('Askar native binding — export/import key-derivation and copyProfile'
   // *export* shape (temp store provisioned with the tenant's own profile up front). runImport's
   // copyProfile call is the opposite shape: by the time it runs, the tenant's real profile has
   // already been renamed aside, so `toProfile: profile` does NOT yet exist in baseStore. Never
-  // pinned down against the real binding before -- only checked manually via the CLI per an
-  // earlier review pass. See the #73 review.
+  // pinned down against the real binding before -- only checked manually via the CLI.
   it('copyProfile also carries records over when toProfile does not yet exist in the destination store', async () => {
     const sourcePath = path.join(workDir, 'import-source.db')
     const destPath = path.join(workDir, 'import-dest.db')
@@ -141,10 +140,9 @@ describe('Askar native binding — export/import key-derivation and copyProfile'
   })
 
   it('regression guard: Store.open rejects a KdfMethod that does not match how the file was provisioned', async () => {
-    // A real bug found during the #73 rebase, not caught by any mocked spec: runImport's
-    // Store.open call was still using KdfMethod.Raw after export switched to provisioning with
-    // Argon2IMod. Askar rejects the mismatch outright — every real import would have failed here
-    // before ever reaching a wrong-passphrase check.
+    // Guards against runImport's Store.open call using a KdfMethod that doesn't match how export
+    // provisions the file (Argon2IMod) — Askar rejects the mismatch outright, before ever
+    // reaching a wrong-passphrase check.
     const dbPath = path.join(workDir, 'kdf-mismatch.db')
     const store = await Store.provision({
       uri: `sqlite://${dbPath}`,
