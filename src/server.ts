@@ -32,13 +32,13 @@ import { openId4VcVerificationSessionEvents } from './events/openId4VcVerificati
 import { RegisterRoutes } from './routes/routes'
 import { SecurityMiddleware } from './securityMiddleware'
 import { validateAuthConfig } from './utils/auth'
+import { validateApiKey } from './utils/config'
 
 dotenv.config()
 
 export const setupServer = async (
   agent: Agent<RestMultiTenantAgentModules | RestAgentModules>,
   config: ServerConfig,
-  apiKey?: string,
 ) => {
   if (process.env.OTEL_ENABLED === 'true') {
     await otelSDK.start()
@@ -72,7 +72,7 @@ export const setupServer = async (
     }),
   )
 
-  setDynamicApiKey(apiKey ? apiKey : '')
+  setDynamicApiKey(validateApiKey(config.apiKey))
 
   app.use(bodyParser.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
   app.use('/docs', serve, (_req: ExRequest, res: ExResponse, next: NextFunction) => {

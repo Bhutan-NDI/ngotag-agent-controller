@@ -7,6 +7,10 @@
  * option is absent, so the guard has to reject falsy input as well as short input; `demandOption`
  * alone would still accept API_KEY=''.
  *
+ * setupServer calls this too, so the library entry point (startServer) is covered by the same guard
+ * rather than only the CLI - ServerConfig.apiKey is optional on the type because the event emitters
+ * share that shape, so the runtime check is what actually closes that path.
+ *
  * Runs under Jest ESM mode (see jest.config.base.ts).
  */
 import { validateApiKey } from '../config'

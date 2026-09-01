@@ -633,16 +633,13 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     recordsWithSecretKey.setTag('hasSecretKey', true)
     await agent.genericRecords.update(recordsWithSecretKey)
   }
-  const app = await setupServer(
-    agent,
-    {
-      webhookUrl,
-      port: adminPort,
-      schemaFileServerURL,
-      app: expressApp,
-    },
+  const app = await setupServer(agent, {
+    webhookUrl,
+    port: adminPort,
+    schemaFileServerURL,
+    app: expressApp,
     apiKey,
-  )
+  })
 
   logger.info(`*** API Key: set (${apiKey.length} chars)`)
 
