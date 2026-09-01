@@ -1,4 +1,4 @@
-import type { PeerDidNumAlgo2CreateOptions } from '@credo-ts/core'
+import type { PeerDidNumAlgo2CreateOptions, DifPexInputDescriptorToCredentials } from '@credo-ts/core'
 
 import { PeerDidNumAlgo, createPeerDidDocumentFromServices } from '@credo-ts/core'
 import {
@@ -254,6 +254,70 @@ export class ProofController extends Controller {
       }
 
       const proof = await request.agent.modules.didcomm.proofs.acceptRequest(acceptProofRequest)
+
+      return proof.toJSON()
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  /**
+   * Accept a presentation request as prover, submitting the caller's own credential choice per
+   * input descriptor instead of auto-selecting (see acceptRequest above). Ported from the legacy
+   * `/multi-tenancy/proofs/accept-request-with-cred/:tenantId` endpoint -- this agent's contract
+   * never had an equivalent under `/didcomm/proofs`. Real chosen-credential matching is required
+   * since the legacy version only forwarded a bare `credentialRecord`; the currently-installed
+   * Credo expects the full `SubmissionEntryCredential` (with `claimFormat`) in its place.
+   *
+   * @param proofRecordId
+   * @param body
+   * @returns ProofRecord
+   */
+  @Post('/:proofRecordId/accept-request-with-cred')
+  @Example<DidCommProofExchangeRecordProps>(ProofRecordExample)
+  public async acceptRequestWithCred(
+    @Request() request: Req,
+    @Path('proofRecordId') proofRecordId: string,
+    @Body()
+    body: {
+      comment?: string
+      // inputDescriptorId -> the credentialRecordId the caller chose to satisfy it
+      proofFormats: { presentationExchange: { credentials: Record<string, string> } }
+    },
+  ) {
+    try {
+      const existingProof = await request.agent.modules.didcomm.proofs.getById(proofRecordId)
+      if (existingProof.state !== DidCommProofState.RequestReceived) {
+        throw new BadRequestError(
+          `Cannot accept a proof record in state '${existingProof.state}'; expected '${DidCommProofState.RequestReceived}'.`,
+        )
+      }
+
+      const availableCredentials = await request.agent.modules.didcomm.proofs.getCredentialsForRequest({
+        proofExchangeRecordId: proofRecordId,
+      })
+
+      const chosenCredentials: DifPexInputDescriptorToCredentials = {}
+      const requirements = availableCredentials.proofFormats.presentationExchange?.requirements ?? []
+      for (const requirement of requirements) {
+        const submissionEntry = requirement.submissionEntry[0]
+        if (!submissionEntry) {
+          continue
+        }
+        const chosenCredentialId = body.proofFormats.presentationExchange.credentials[submissionEntry.inputDescriptorId]
+        const match = submissionEntry.verifiableCredentials.find(
+          (candidate) => candidate.credentialRecord.id === chosenCredentialId,
+        )
+        if (match) {
+          chosenCredentials[submissionEntry.inputDescriptorId] = [match]
+        }
+      }
+
+      const proof = await request.agent.modules.didcomm.proofs.acceptRequest({
+        proofExchangeRecordId: proofRecordId,
+        comment: body.comment,
+        proofFormats: { presentationExchange: { credentials: chosenCredentials } },
+      })
 
       return proof.toJSON()
     } catch (error) {

@@ -9,7 +9,7 @@ import {
   DidCommRouting,
 } from '@credo-ts/didcomm'
 import { Request as Req } from 'express'
-import { Body, Controller, Get, Path, Post, Route, Tags, Example, Query, Security, Request } from 'tsoa'
+import { Body, Controller, Delete, Get, Path, Post, Route, Tags, Example, Query, Security, Request } from 'tsoa'
 import { injectable } from 'tsyringe'
 
 import { SCOPES } from '../../../enums'
@@ -99,6 +99,24 @@ export class CredentialController extends Controller {
   }
 
   /**
+   * Delete a W3C credential record by id. Ported from the legacy
+   * `/multi-tenancy/credential/w3c/:credentialRecordId/:tenantId` endpoint -- this agent's
+   * contract never had an equivalent under `/didcomm/credentials`.
+   *
+   * @param id
+   */
+  @Delete('/w3c/:id')
+  public async deleteW3cById(@Request() request: Req, @Path('id') id: string) {
+    try {
+      const w3cCredentialService = await request.agent.dependencyManager.resolve(W3cCredentialService)
+      await w3cCredentialService.removeCredentialRecord(request.agent.context, id)
+      return { message: 'W3C Credential Deleted Successfully' }
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  /**
    * Retrieve credential exchange record by credential record id
    *
    * @param credentialRecordId
@@ -110,6 +128,23 @@ export class CredentialController extends Controller {
     try {
       const credential = await request.agent.modules.didcomm.credentials.getById(credentialRecordId)
       return credential.toJSON()
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  /**
+   * Delete a credential exchange record (and, by default, its associated stored credential) by
+   * id. Ported from the legacy `/multi-tenancy/credential/:credentialRecordId/:tenantId`
+   * endpoint -- this agent's contract never had an equivalent under `/didcomm/credentials`.
+   *
+   * @param credentialRecordId
+   */
+  @Delete('/:credentialRecordId')
+  public async deleteById(@Request() request: Req, @Path('credentialRecordId') credentialRecordId: RecordId) {
+    try {
+      await request.agent.modules.didcomm.credentials.deleteById(credentialRecordId)
+      return { message: 'Credential Deleted Successfully' }
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }
