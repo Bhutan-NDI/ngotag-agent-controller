@@ -92,7 +92,16 @@ export class TsLogger extends BaseLogger {
   ): void {
     const tsLogLevel = this.tsLogLevelMap[level]
 
-    if (data) {
+    // tslog runs a plain object through util.inspect, flattening it to a string -- but an Error
+    // passed as its own argument gets structured stack frames plus a source codeFrame. Split them.
+    if (data?.error instanceof Error) {
+      const { error, ...rest } = data
+      if (0 < Object.keys(rest).length) {
+        this.logger[tsLogLevel](message, error, rest)
+      } else {
+        this.logger[tsLogLevel](message, error)
+      }
+    } else if (data) {
       this.logger[tsLogLevel](message, data)
     } else {
       this.logger[tsLogLevel](message)

@@ -127,6 +127,12 @@ export const setupServer = async (
         details: err?.fields,
       })
     } else if (err instanceof BaseError) {
+      // Level follows the resolved status: a 404 is a normal outcome, not an error. `cause` is
+      // the pre-conversion error, whose stack still points at the real origin.
+      const level = 500 <= err.statusCode ? 'error' : 'warn'
+      agent.config.logger[level](`${req.method} ${req.path} -> ${err.statusCode}: ${err.message}`, {
+        error: err.cause ?? err,
+      })
       return res.status(err.statusCode).json({
         message: err.message,
       })
@@ -134,12 +140,15 @@ export const setupServer = async (
       // Extend the Error type with custom properties
       const error = err as Error & { statusCode?: number; status?: number; stack?: string }
       if (error.status === 401) {
+        agent.config.logger.warn(`${req.method} ${req.path} -> 401: ${error.message}`, { error })
         return res.status(401).json({
           message: `Unauthorized`,
           details: err.message !== ErrorMessages.Unauthorized ? err.message : undefined,
         } satisfies ApiError)
       }
       const statusCode = error.statusCode || error.status || 500
+      const level = 500 <= statusCode ? 'error' : 'warn'
+      agent.config.logger[level](`${req.method} ${req.path} -> ${statusCode}: ${error.message}`, { error })
       return res.status(statusCode).json({
         message: error.message || 'Internal Server Error',
       })

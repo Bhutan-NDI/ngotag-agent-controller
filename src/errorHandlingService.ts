@@ -1,15 +1,31 @@
-import type { BaseError } from './errors/errors'
-
 import { AnonCredsError, AnonCredsRsError, AnonCredsStoreRecordError } from '@credo-ts/anoncreds'
 import { CredoError, RecordNotFoundError, RecordDuplicateError, ClassValidationError } from '@credo-ts/core'
 import { MessageSendingError } from '@credo-ts/didcomm'
 import { IndyVdrError } from '@hyperledger/indy-vdr-nodejs'
 
-import { RecordDuplicateError as CustomRecordDuplicateError, NotFoundError, InternalServerError } from './errors/errors'
+import {
+  BaseError,
+  RecordDuplicateError as CustomRecordDuplicateError,
+  NotFoundError,
+  InternalServerError,
+} from './errors/errors'
 import convertError from './utils/errorConverter'
 
 class ErrorHandlingService {
-  public static handle(error: unknown) {
+  public static handle(error: unknown): never {
+    try {
+      this.convert(error)
+    } catch (converted) {
+      // Keep the original: BaseError re-roots its own stack at the conversion site, so this is
+      // the only surviving reference to where the failure actually came from. server.ts logs it.
+      if (converted instanceof BaseError && undefined === converted.cause) {
+        converted.cause = error
+      }
+      throw converted
+    }
+  }
+
+  private static convert(error: unknown): never {
     if (error instanceof RecordDuplicateError) {
       throw this.handleRecordDuplicateError(error)
     } else if (error instanceof ClassValidationError) {
