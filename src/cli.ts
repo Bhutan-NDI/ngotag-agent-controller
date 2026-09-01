@@ -7,6 +7,7 @@ import { hideBin } from 'yargs/helpers'
 dotenv.config()
 
 import { runRestAgent } from './cliAgent.js'
+import { validateApiKey } from './utils/config.js'
 
 interface IndyLedger {
   genesisTransactions: string
@@ -163,14 +164,7 @@ async function parseArguments(): Promise<Parsed> {
     .option('apiKey', {
       string: true,
       default: process.env.API_KEY,
-      coerce: (input: string | undefined) => {
-        if (!input) return input
-        input = input.trim()
-        if (input && input.length < 16) {
-          throw new Error('API key must be at least 16 characters long')
-        }
-        return input
-      },
+      coerce: validateApiKey,
     })
     .option('updateJwtSecret', {
       boolean: true,

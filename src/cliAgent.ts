@@ -644,7 +644,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     apiKey,
   )
 
-  logger.info(`*** API Key: ${apiKey}`)
+  logger.info(`*** API Key: set (${apiKey.length} chars)`)
 
   // Start purge schedulers if enabled (NATS and Cron are independent)
   const purgeConfig = buildPurgeConfig()

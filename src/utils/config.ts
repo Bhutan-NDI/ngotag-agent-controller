@@ -20,3 +20,16 @@ export const isCustomDocumentLoaderEnabled = (): boolean => {
 
   return isCustomDocumentLoaderEnabled
 }
+
+// Unset or empty leaves dynamicApiKey '', making POST /agent/token - the only route that can mint a
+// token - permanently unreachable on an agent that otherwise boots clean. Fail at boot instead.
+export const validateApiKey = (input: string | undefined | null): string => {
+  const apiKey = input?.trim()
+  if (!apiKey) {
+    throw new Error('API key is required: set API_KEY to at least 16 characters')
+  }
+  if (apiKey.length < 16) {
+    throw new Error('API key must be at least 16 characters long')
+  }
+  return apiKey
+}
