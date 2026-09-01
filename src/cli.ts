@@ -7,7 +7,7 @@ import { hideBin } from 'yargs/helpers'
 dotenv.config()
 
 import { runRestAgent } from './cliAgent.js'
-import { validateApiKey } from './utils/config.js'
+import { apiKeyOptionDefinition } from './utils/config.js'
 
 interface IndyLedger {
   genesisTransactions: string
@@ -161,11 +161,7 @@ async function parseArguments(): Promise<Parsed> {
     .option('wallet-connect-timeout', { number: true })
     .option('wallet-max-connections', { number: true })
     .option('wallet-idle-timeout', { number: true })
-    .option('apiKey', {
-      string: true,
-      default: process.env.API_KEY,
-      coerce: validateApiKey,
-    })
+    .option('apiKey', apiKeyOptionDefinition())
     .option('updateJwtSecret', {
       boolean: true,
       default: process.env.UPDATE_JWT_SECRET === 'true',

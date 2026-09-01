@@ -10,7 +10,9 @@ import { setupServer } from './server'
 
 export const startServer = async (agent: Agent, config: ServerConfig) => {
   const socketServer = config.socketServer ?? new WebSocketServer({ noServer: true })
-  const app = await setupServer(agent, { ...config, socketServer })
+  // Keep apiKey out of the object setupServer serializes to config.json.
+  const { apiKey, ...serverConfig } = config
+  const app = await setupServer(agent, { ...serverConfig, socketServer }, apiKey)
   const server = app.listen(config.port)
 
   // If no socket server is provided, we will use the existing http server

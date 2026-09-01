@@ -33,3 +33,11 @@ export const validateApiKey = (input: string | undefined | null): string => {
   }
   return apiKey
 }
+
+// Shared by cli.ts and its test, so the test exercises the same option definition the CLI parses
+// with. A factory rather than a const because the default reads process.env at call time.
+export const apiKeyOptionDefinition = () => ({
+  string: true,
+  default: process.env.API_KEY,
+  coerce: validateApiKey,
+})

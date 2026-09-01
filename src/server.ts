@@ -31,6 +31,7 @@ import { openId4VcIssuanceSessionEvents } from './events/openId4VcIssuanceSessio
 import { openId4VcVerificationSessionEvents } from './events/openId4VcVerificationSessionEvents'
 import { RegisterRoutes } from './routes/routes'
 import { SecurityMiddleware } from './securityMiddleware'
+import { toSerializableConfig } from './utils/ServerConfig'
 import { validateAuthConfig } from './utils/auth'
 import { validateApiKey } from './utils/config'
 
@@ -39,6 +40,7 @@ dotenv.config()
 export const setupServer = async (
   agent: Agent<RestMultiTenantAgentModules | RestAgentModules>,
   config: ServerConfig,
+  apiKey?: string,
 ) => {
   if (process.env.OTEL_ENABLED === 'true') {
     await otelSDK.start()
@@ -48,7 +50,7 @@ export const setupServer = async (
   }
   validateAuthConfig()
   container.registerInstance(Agent, agent as Agent)
-  fs.writeFileSync('config.json', JSON.stringify(config, null, 2))
+  fs.writeFileSync('config.json', JSON.stringify(toSerializableConfig(config), null, 2))
 
   const app = config.app ?? express()
   if (config.cors) app.use(cors())
@@ -72,7 +74,7 @@ export const setupServer = async (
     }),
   )
 
-  setDynamicApiKey(validateApiKey(config.apiKey))
+  setDynamicApiKey(validateApiKey(apiKey))
 
   app.use(bodyParser.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
   app.use('/docs', serve, (_req: ExRequest, res: ExResponse, next: NextFunction) => {

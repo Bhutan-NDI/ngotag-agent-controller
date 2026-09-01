@@ -3,10 +3,8 @@ import type { Server } from 'ws'
 
 export interface ServerConfig {
   port: number
-  /* Opens POST /agent/token, the only route that mints an agent token. Optional on the type because
-     ServerConfig is also the argument to the event emitters, which have no use for it - but
-     setupServer validates it, so a server started without one fails at boot rather than silently
-     serving an agent whose tokens can never be minted. */
+  /* Opens POST /agent/token, the only route that mints an agent token. setupServer takes it as a
+     separate argument and never serializes it - see toSerializableConfig. */
   apiKey?: string
   cors?: boolean
   app?: Express
@@ -14,4 +12,11 @@ export interface ServerConfig {
   /* Socket server is used for sending events over websocket to clients */
   socketServer?: Server
   schemaFileServerURL?: string
+}
+
+// setupServer writes its config to config.json on boot, so the key has to be dropped before it is
+// serialized: a secret on disk outlives the process and any rotation.
+export const toSerializableConfig = (config: ServerConfig): Omit<ServerConfig, 'apiKey'> => {
+  const { apiKey, ...serializableConfig } = config
+  return serializableConfig
 }
