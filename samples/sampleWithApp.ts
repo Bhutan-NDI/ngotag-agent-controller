@@ -29,7 +29,8 @@ const run = async () => {
 
   const conf: ServerConfig = {
     port: 3000,
-    apiKey: process.env.API_KEY ?? 'replace-with-a-16-char-key',
+    // No fallback: setupServer rejects a missing or short key, which is the point of the guard.
+    apiKey: process.env.API_KEY,
     webhookUrl: 'http://localhost:5000/agent-events',
     app: app,
   }

@@ -42,6 +42,10 @@ export const setupServer = async (
   config: ServerConfig,
   apiKey?: string,
 ) => {
+  // Reject bad configuration before anything is started, registered or written: a caller that
+  // catches the throw and retries would otherwise be left with a half-initialised process.
+  const validatedApiKey = validateApiKey(apiKey)
+
   if (process.env.OTEL_ENABLED === 'true') {
     await otelSDK.start()
     agent.config.logger.info('OpenTelemetry SDK started')
@@ -74,7 +78,7 @@ export const setupServer = async (
     }),
   )
 
-  setDynamicApiKey(validateApiKey(apiKey))
+  setDynamicApiKey(validatedApiKey)
 
   app.use(bodyParser.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
   app.use('/docs', serve, (_req: ExRequest, res: ExResponse, next: NextFunction) => {

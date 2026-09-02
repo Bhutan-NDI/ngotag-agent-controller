@@ -24,6 +24,11 @@ const config: Config.InitialOptions = {
       },
     ],
   },
+  // Source uses ESM-style '.js' specifiers for its own '.ts' files, which Jest cannot resolve on its
+  // own. Map them back to extensionless so a spec can import a module that uses them.
+  moduleNameMapper: {
+    '^(\\.{1,2}/.*)\\.js$': '$1',
+  },
   coveragePathIgnorePatterns: ['/build/', '/node_modules/', '/__tests__/', 'tests'],
   coverageDirectory: '<rootDir>/coverage/',
   verbose: true,

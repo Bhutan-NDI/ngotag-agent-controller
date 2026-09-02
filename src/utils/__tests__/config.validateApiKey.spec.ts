@@ -8,8 +8,9 @@
  * alone would still accept API_KEY=''.
  *
  * setupServer calls this too, so the library entry point (startServer) is covered by the same guard
- * rather than only the CLI - ServerConfig.apiKey is optional on the type because the event emitters
- * share that shape, so the runtime check is what actually closes that path.
+ * rather than only the CLI. The wiring - that this validator is the option's coercion, and that
+ * startServer forwards the key - is covered in src/__tests__/cli.parser.apiKey.spec.ts and
+ * src/__tests__/startServer.apiKey.spec.ts.
  *
  * Runs under Jest ESM mode (see jest.config.base.ts).
  */
@@ -42,54 +43,6 @@ describe('validateApiKey', () => {
   it('trims before measuring, so padding cannot satisfy the minimum', () => {
     expect(() => validateApiKey(`  ${'x'.repeat(15)}  `)).toThrow(tooShort)
     expect(validateApiKey(`  ${'x'.repeat(16)}  `)).toBe('x'.repeat(16))
-  })
-})
-
-describe('apiKey option, parsed by the real yargs', () => {
-  // validateApiKey passing in isolation proves nothing if coerce is detached from the option, so
-  // parse through the actual definition cli.ts uses.
-  const parse = (argv: string[], envValue?: string): { apiKey?: string } => {
-    const previous = process.env.API_KEY
-    if (undefined === envValue) {
-      delete process.env.API_KEY
-    } else {
-      process.env.API_KEY = envValue
-    }
-    try {
-      return yargs(argv)
-        .option('apiKey', apiKeyOptionDefinition())
-        .exitProcess(false)
-        .fail((message, error) => {
-          throw new Error(message || error.message)
-        })
-        .parseSync() as { apiKey?: string }
-    } finally {
-      if (undefined === previous) {
-        delete process.env.API_KEY
-      } else {
-        process.env.API_KEY = previous
-      }
-    }
-  }
-
-  it.each([
-    ['absent (no flag, no env)', [] as string[], undefined],
-    ['empty env value', [] as string[], ''],
-    ['whitespace-only env value', [] as string[], '   '],
-  ])('rejects %s', (_label, argv, envValue) => {
-    expect(() => parse(argv, envValue)).toThrow('API key is required')
-  })
-
-  it('rejects a short value given on the command line', () => {
-    expect(() => parse(['--apiKey', 'x'.repeat(15)])).toThrow('at least 16 characters')
-  })
-
-  it('accepts a valid value from the command line', () => {
-    expect(parse(['--apiKey', 'x'.repeat(16)]).apiKey).toBe('x'.repeat(16))
-  })
-
-  it('accepts a valid value from API_KEY', () => {
-    expect(parse([], 'y'.repeat(20)).apiKey).toBe('y'.repeat(20))
   })
 })
 
