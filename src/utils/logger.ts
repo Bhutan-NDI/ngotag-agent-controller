@@ -11,6 +11,9 @@ const logFilePath = process.env.LOG_FILE_PATH
 // Bounds the sink so an opt-in debug flag can't fill the disk: one rotation, `${path}.1`, kept as backup.
 const maxLogFileBytes = Number(process.env.LOG_FILE_MAX_BYTES) || 10 * 1024 * 1024
 
+// Bound on the rendering of a thrown non-Error, so a large object cannot flood a log line.
+const MAX_NON_ERROR_LENGTH = 500
+
 // Serializes writes so rotation (stat -> rename -> append) can't race across overlapping log calls.
 let writeQueue: Promise<void> = Promise.resolve()
 
@@ -35,6 +38,33 @@ function logToTransport(logObject: ILogObject) {
     .catch((error) => {
       process.stderr.write(`[logger] failed to write to LOG_FILE_PATH: ${String(error)}\n`)
     })
+}
+
+/**
+ * HTTP and SSI libraries hang request state off their errors as *enumerable own properties* --
+ * an Axios error keeps `config` (URL, headers, request body) and `response`. tslog copies every
+ * enumerable own property into its `details` field and into `errorString`, so handing such an
+ * error straight to the transport writes bearer tokens, client secrets and wallet seeds to
+ * stdout and CloudWatch.
+ *
+ * Rebuild it as a bare Error carrying only name, message and stack. A fresh Error has no
+ * enumerable own properties, so `details` stays empty; the original stack text survives in
+ * tslog's `errorString`. Structured stack frames and the codeFrame are lost -- V8's internal
+ * frame state cannot be transplanted -- which is the deliberate cost of not leaking secrets.
+ */
+function toSafeError(value: unknown): Error | undefined {
+  if (undefined === value || null === value) {
+    return undefined
+  }
+  if (!(value instanceof Error)) {
+    // A non-Error rejection: keep a bounded rendering, never the object itself.
+    return new Error(String(value).slice(0, MAX_NON_ERROR_LENGTH))
+  }
+  const safe = new Error(value.message)
+  // Non-enumerable, or it would land back in tslog's `details`.
+  Object.defineProperty(safe, 'name', { value: value.name, enumerable: false, writable: true, configurable: true })
+  safe.stack = value.stack
+  return safe
 }
 
 export class TsLogger extends BaseLogger {
@@ -92,14 +122,16 @@ export class TsLogger extends BaseLogger {
   ): void {
     const tsLogLevel = this.tsLogLevelMap[level]
 
-    // tslog runs a plain object through util.inspect, flattening it to a string -- but an Error
-    // passed as its own argument gets structured stack frames plus a source codeFrame. Split them.
-    if (data?.error instanceof Error) {
-      const { error, ...rest } = data
+    // Sanitised once, here, so no call site can leak by forgetting to. tslog inspects a plain
+    // object into a single string, so the error is passed as its own argument to keep name,
+    // message and errorString as named JSON fields.
+    const safeError = toSafeError(data?.error)
+    if (safeError) {
+      const { error: _rawError, ...rest } = data as Record<string, any>
       if (0 < Object.keys(rest).length) {
-        this.logger[tsLogLevel](message, error, rest)
+        this.logger[tsLogLevel](message, safeError, rest)
       } else {
-        this.logger[tsLogLevel](message, error)
+        this.logger[tsLogLevel](message, safeError)
       }
     } else if (data) {
       this.logger[tsLogLevel](message, data)
@@ -113,30 +145,18 @@ export class TsLogger extends BaseLogger {
       logMessage = message.message
     }
 
-    let errorDetails
-    if (data?.error) {
-      const error = data.error
-      if (typeof error === 'string') {
-        errorDetails = error
-      } else if (error instanceof Error) {
-        errorDetails = {
-          name: error.name,
-          message: error.message,
-          stack: error.stack,
-        }
-      } else {
-        try {
-          errorDetails = JSON.parse(JSON.stringify(error))
-        } catch {
-          errorDetails = String(error)
-        }
-      }
-    }
+    // Same sanitised error as the console transport -- previously this branch JSON-stringified a
+    // non-Error value wholesale, which had the same disclosure problem.
+    const errorDetails = safeError
+      ? { name: safeError.name, message: safeError.message, stack: safeError.stack }
+      : undefined
+    // `error` is dropped from the spread rather than relying on the later key to override it.
+    const { error: _omitRawError, ...safeAttributes } = (data ?? {}) as Record<string, any>
     otelLogger.emit({
       body: logMessage,
       severityText: LogLevel[level].toUpperCase(),
       attributes: {
-        ...(data || {}),
+        ...safeAttributes,
         ...(errorDetails ? { error: errorDetails } : {}),
       },
     })
