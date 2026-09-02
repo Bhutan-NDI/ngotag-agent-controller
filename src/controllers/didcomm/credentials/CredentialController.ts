@@ -120,6 +120,14 @@ export class CredentialController extends Controller {
       // credentialIds is stored as one flattened per-value tag per array entry (Askar's
       // representation of an array tag), so the query side must match with an array too -- a bare
       // string here would search a different, nonexistent flat tag key and never match anything.
+      //
+      // This check lives only here, not in W3cCredentialService itself (a Credo library class, not
+      // ours to extend) -- any other caller of removeCredentialRecord (another controller, a
+      // script, a future purge path) bypasses it and could orphan a reference. Also not atomic
+      // with the delete below: a concurrent request creating a new exchange record that references
+      // this id between the query and the delete would still get orphaned. Accepted given the
+      // actual usage pattern (rare admin/holder-triggered deletes, not high-concurrency). See the
+      // #85 review.
       const referencingExchangeRecords = await request.agent.modules.didcomm.credentials.findAllByQuery({
         credentialIds: [id],
       })
@@ -164,12 +172,35 @@ export class CredentialController extends Controller {
   @Delete('/:credentialRecordId')
   public async deleteById(@Request() request: Req, @Path('credentialRecordId') credentialRecordId: RecordId) {
     try {
+      // Credo's own cascade-delete (deleteAssociatedCredentials, on by default) dispatches by each
+      // bound credential's credentialRecordType -- 'w3c' resolves to
+      // DidCommJsonLdCredentialFormatService, whose deleteCredentialById is a bare
+      // `throw new Error("Not implemented.")`. So the default cascade throws instead of deleting
+      // for exactly the DIDComm-issued JSON-LD credentials deleteW3cById's own docstring says
+      // should be deleted through here. This repo's own PurgeDeleteRecord.ts independently
+      // documents avoiding this same cascade for the same reason (a differently-ordered format
+      // service there risks silently destroying the wrong record instead of throwing). Detect any
+      // w3c-bound credential first and clean it up directly via W3cCredentialService instead of
+      // letting the cascade reach it. See the #85 review.
+      const exchangeRecord = await request.agent.modules.didcomm.credentials.getById(credentialRecordId)
+      const w3cBindings = exchangeRecord.credentials.filter((binding) => 'w3c' === binding.credentialRecordType)
+
       // 204/no-body, matching this package's other didcomm/* deletes (ConnectionController.
       // deleteConnection, OutOfBandController.deleteOutOfBandRecord) -- previously returned
       // 200 + { message } instead, a shape borrowed from the unrelated openid4vc module. See the
       // #85 review.
       this.setStatus(204)
-      await request.agent.modules.didcomm.credentials.deleteById(credentialRecordId)
+      if (w3cBindings.length > 0) {
+        await request.agent.modules.didcomm.credentials.deleteById(credentialRecordId, {
+          deleteAssociatedCredentials: false,
+        })
+        const w3cCredentialService = await request.agent.dependencyManager.resolve(W3cCredentialService)
+        for (const binding of w3cBindings) {
+          await w3cCredentialService.removeCredentialRecord(request.agent.context, binding.credentialRecordId)
+        }
+      } else {
+        await request.agent.modules.didcomm.credentials.deleteById(credentialRecordId)
+      }
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }

@@ -306,7 +306,14 @@ export class ProofController extends Controller {
       }
 
       const chosenCredentials: DifPexInputDescriptorToCredentials = {}
-      const unresolvedDescriptors: string[] = []
+      // Two distinct failure kinds, kept separate rather than folded into one untyped list --
+      // an invalid choice is always a real error (stale id/typo), while an unsatisfied requirement
+      // may be legitimate up until the needsCount check (another alternative could have covered
+      // it). Joined into one message below since the response contract here is a single string,
+      // but kept distinguishable in code for any future caller that wants to render them
+      // differently. See the #85 review.
+      const invalidCredentialChoices: string[] = []
+      const unsatisfiedRequirements: string[] = []
       for (const requirement of pexResult.requirements) {
         // Loop the full submissionEntry array, not just [0] -- a single requirement can
         // legitimately contain multiple submission entries (rule 'all' with 2+ descriptors, or
@@ -328,7 +335,7 @@ export class ProofController extends Controller {
             // A caller-supplied id that matches nothing is always a real error (stale id, typo) --
             // unlike an omitted descriptor, this is never legitimate, so it's reported immediately
             // rather than folded into the needsCount check below. See the #85 review.
-            unresolvedDescriptors.push(
+            invalidCredentialChoices.push(
               `${submissionEntry.inputDescriptorId} (no credential '${chosenCredentialId}' available)`,
             )
             continue
@@ -337,16 +344,18 @@ export class ProofController extends Controller {
           matchedCount += 1
         }
         if (matchedCount < requirement.needsCount) {
-          unresolvedDescriptors.push(
+          unsatisfiedRequirements.push(
             `requirement needing ${requirement.needsCount} credential(s), only ${matchedCount} provided`,
           )
         }
       }
-      if (unresolvedDescriptors.length > 0) {
+      if (invalidCredentialChoices.length > 0 || unsatisfiedRequirements.length > 0) {
         // Previously, an unmatched/omitted descriptor was silently dropped and the presentation
         // was still submitted -- the verifier would receive a presentation missing a required
         // credential with no error raised anywhere. See the #85 review.
-        throw new BadRequestError(`Unable to satisfy proof request: ${unresolvedDescriptors.join('; ')}.`)
+        throw new BadRequestError(
+          `Unable to satisfy proof request: ${[...invalidCredentialChoices, ...unsatisfiedRequirements].join('; ')}.`,
+        )
       }
 
       const proof = await request.agent.modules.didcomm.proofs.acceptRequest({
