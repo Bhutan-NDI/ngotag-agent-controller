@@ -172,35 +172,27 @@ export class CredentialController extends Controller {
   @Delete('/:credentialRecordId')
   public async deleteById(@Request() request: Req, @Path('credentialRecordId') credentialRecordId: RecordId) {
     try {
-      // Credo's own cascade-delete (deleteAssociatedCredentials, on by default) dispatches by each
-      // bound credential's credentialRecordType -- 'w3c' resolves to
-      // DidCommJsonLdCredentialFormatService, whose deleteCredentialById is a bare
-      // `throw new Error("Not implemented.")`. So the default cascade throws instead of deleting
-      // for exactly the DIDComm-issued JSON-LD credentials deleteW3cById's own docstring says
-      // should be deleted through here. This repo's own PurgeDeleteRecord.ts independently
-      // documents avoiding this same cascade for the same reason (a differently-ordered format
-      // service there risks silently destroying the wrong record instead of throwing). Detect any
-      // w3c-bound credential first and clean it up directly via W3cCredentialService instead of
-      // letting the cascade reach it. See the #85 review.
-      const exchangeRecord = await request.agent.modules.didcomm.credentials.getById(credentialRecordId)
-      const w3cBindings = exchangeRecord.credentials.filter((binding) => 'w3c' === binding.credentialRecordType)
-
+      // Reverting the #85-review-round-2 "fix" here -- it was based on a wrong premise. Every
+      // format service actually registered for DIDComm-issued credentials in cliAgent.ts
+      // (legacyIndyCredentialFormat, jsonLdCredentialFormatService, anonCredsCredentialFormatService)
+      // declares credentialRecordType = 'w3c', and Credo's cascade dispatches by
+      // `.find(f => f.credentialRecordType === type)` -- always resolving to whichever is FIRST in
+      // that array (legacyIndyCredentialFormat), never reaching jsonLdCredentialFormatService's
+      // `deleteCredentialById` (a bare `throw new Error("Not implemented.")`) at all, regardless of
+      // the credential's real format. legacyIndyCredentialFormat.deleteCredentialById itself
+      // delegates to AnonCredsHolderService.deleteCredential, which already checks
+      // W3cCredentialRepository first and falls back to AnonCredsCredentialRepository for
+      // pre-migration legacy credentials -- exactly the fallback the round-2 bypass lacked. So the
+      // default cascade (deleteAssociatedCredentials: true, the default) was already correct for
+      // every registered format; round-2's bypass (deleteAssociatedCredentials: false + a direct
+      // W3cCredentialService.removeCredentialRecord call, with no anoncreds fallback) orphaned
+      // legacy anoncreds credentials instead of fixing a real bug. See the #85 review (round 3).
+      //
       // 204/no-body, matching this package's other didcomm/* deletes (ConnectionController.
       // deleteConnection, OutOfBandController.deleteOutOfBandRecord) -- previously returned
-      // 200 + { message } instead, a shape borrowed from the unrelated openid4vc module. See the
-      // #85 review.
+      // 200 + { message } instead, a shape borrowed from the unrelated openid4vc module.
       this.setStatus(204)
-      if (w3cBindings.length > 0) {
-        await request.agent.modules.didcomm.credentials.deleteById(credentialRecordId, {
-          deleteAssociatedCredentials: false,
-        })
-        const w3cCredentialService = await request.agent.dependencyManager.resolve(W3cCredentialService)
-        for (const binding of w3cBindings) {
-          await w3cCredentialService.removeCredentialRecord(request.agent.context, binding.credentialRecordId)
-        }
-      } else {
-        await request.agent.modules.didcomm.credentials.deleteById(credentialRecordId)
-      }
+      await request.agent.modules.didcomm.credentials.deleteById(credentialRecordId)
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }

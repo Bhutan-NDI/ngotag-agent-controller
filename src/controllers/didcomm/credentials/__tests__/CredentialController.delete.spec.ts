@@ -6,19 +6,25 @@
  * the cloud-wallet compatibility audit that this is a live, wired frontend flow
  * (DeleteCredentialModal, gated by an isSelfAttested flag that picks between these two).
  *
- * #85 review findings, all fixed and covered here:
- *  - deleteById's default cascade-delete throws Credo's own
- *    `DidCommJsonLdCredentialFormatService.deleteCredentialById` ("Not implemented.") for any
- *    exchange record with a w3c-bound credential -- exactly the DIDComm-issued JSON-LD case
- *    deleteW3cById's own docstring says should be deleted through here. Now detects any w3c-bound
- *    credential first and cleans it up directly via W3cCredentialService instead of letting the
- *    cascade reach it.
+ * #85 review findings, fixed and covered here:
  *  - deleteW3cById deleted the raw W3cCredentialRecord unconditionally, with no check for a
  *    DidCommCredentialExchangeRecord still referencing it -- orphaning a same-tenant
  *    credentialRecordId with no cleanup path if ever called against a DIDComm-issued (not
  *    self-attested) credential.
  *  - both endpoints returned 200 + { message } instead of this package's 204/no-body convention
  *    (ConnectionController.deleteConnection, OutOfBandController.deleteOutOfBandRecord).
+ *
+ * deleteById deliberately does NOT special-case w3c-bound credentials (a round-2 review comment
+ * suggested it does, and an earlier revision of this file did so before being reverted in round 3
+ * of the same review): every format service actually registered for DIDComm-issued credentials in
+ * cliAgent.ts declares credentialRecordType = 'w3c', and Credo's cascade-delete dispatches to
+ * whichever is registered FIRST for that type (legacyIndyCredentialFormat) regardless of the
+ * credential's real format -- that service's own deleteCredentialById delegates to
+ * AnonCredsHolderService.deleteCredential, which already checks W3cCredentialRepository first and
+ * falls back to AnonCredsCredentialRepository for pre-migration legacy credentials. So Credo's
+ * default cascade (deleteAssociatedCredentials: true, left at its default here) was already
+ * correct; a same-tenant bypass around it (as the reverted revision did) has no equivalent
+ * fallback and orphans legacy anoncreds credentials instead of fixing a real bug.
  *
  * Runs under Jest's ESM mode, mirroring ProofController.declineAndCredentialsForRequest.spec.ts.
  */
@@ -47,35 +53,15 @@ const { CredentialController } = await import('../CredentialController')
 
 const CREDENTIAL_RECORD_ID = 'credential-record-1'
 
-const makeAgentForDeleteById = (
-  overrides: {
-    deleteByIdImpl?: jest.Mock
-    getByIdImpl?: jest.Mock
-    removeCredentialRecordImpl?: jest.Mock
-  } = {},
-) => {
-  const removeCredentialRecord = overrides.removeCredentialRecordImpl ?? (jest.fn(async () => undefined) as jest.Mock)
-  return {
-    context: { contextCorrelationId: 'ctx-1' },
-    dependencyManager: {
-      resolve: jest.fn(async () => ({ removeCredentialRecord })),
-    },
-    modules: {
-      didcomm: {
-        credentials: {
-          deleteById: overrides.deleteByIdImpl ?? (jest.fn(async () => undefined) as jest.Mock),
-          // Default: a plain indy/anoncreds-bound exchange record, no w3c binding.
-          getById:
-            overrides.getByIdImpl ??
-            (jest.fn(async () => ({
-              credentials: [{ credentialRecordType: 'indy', credentialRecordId: 'x' }],
-            })) as jest.Mock),
-        },
+const makeAgentForDeleteById = (deleteByIdImpl?: jest.Mock) => ({
+  modules: {
+    didcomm: {
+      credentials: {
+        deleteById: deleteByIdImpl ?? (jest.fn(async () => undefined) as jest.Mock),
       },
     },
-    __removeCredentialRecord: removeCredentialRecord,
-  }
-}
+  },
+})
 
 const makeAgentForDeleteW3c = (
   overrides: { removeCredentialRecordImpl?: jest.Mock; findAllByQueryImpl?: jest.Mock } = {},
@@ -100,61 +86,25 @@ const makeAgentForDeleteW3c = (
 const makeRequest = (agent: unknown) => ({ agent }) as never
 
 describe('CredentialController.deleteById', () => {
-  it('deletes the credential exchange record (and, by default, its associated stored credential) by id, returning 204/no-body', async () => {
+  it("deletes the credential exchange record via Credo's own default cascade (deleteAssociatedCredentials: true), returning 204/no-body", async () => {
     const agent = makeAgentForDeleteById()
     const controller = new CredentialController(undefined as never)
 
     const result = await controller.deleteById(makeRequest(agent), CREDENTIAL_RECORD_ID)
 
+    // No options object -- the default cascade is what's correct here (see file header). Passing
+    // { deleteAssociatedCredentials: false } would bypass AnonCredsHolderService.deleteCredential's
+    // own w3c-then-legacy-anoncreds fallback with no equivalent replacement.
     expect(agent.modules.didcomm.credentials.deleteById).toHaveBeenCalledWith(CREDENTIAL_RECORD_ID)
-    expect(agent.__removeCredentialRecord).not.toHaveBeenCalled()
     expect(result).toBeUndefined()
-  })
-
-  it('does not use the default cascade for a w3c-bound credential -- deletes without the cascade, then removes the w3c record directly', async () => {
-    const agent = makeAgentForDeleteById({
-      getByIdImpl: jest.fn(async () => ({
-        credentials: [{ credentialRecordType: 'w3c', credentialRecordId: 'w3c-record-1' }],
-      })) as jest.Mock,
-    })
-    const controller = new CredentialController(undefined as never)
-
-    const result = await controller.deleteById(makeRequest(agent), CREDENTIAL_RECORD_ID)
-
-    // Not the default call -- deleteAssociatedCredentials: false, since the default cascade would
-    // dispatch to DidCommJsonLdCredentialFormatService.deleteCredentialById, which throws
-    // "Not implemented." for exactly this credentialRecordType.
-    expect(agent.modules.didcomm.credentials.deleteById).toHaveBeenCalledWith(CREDENTIAL_RECORD_ID, {
-      deleteAssociatedCredentials: false,
-    })
-    expect(agent.__removeCredentialRecord).toHaveBeenCalledWith(agent.context, 'w3c-record-1')
-    expect(result).toBeUndefined()
-  })
-
-  it('removes every w3c-bound credential when an exchange record has more than one', async () => {
-    const agent = makeAgentForDeleteById({
-      getByIdImpl: jest.fn(async () => ({
-        credentials: [
-          { credentialRecordType: 'w3c', credentialRecordId: 'w3c-record-1' },
-          { credentialRecordType: 'w3c', credentialRecordId: 'w3c-record-2' },
-        ],
-      })) as jest.Mock,
-    })
-    const controller = new CredentialController(undefined as never)
-
-    await controller.deleteById(makeRequest(agent), CREDENTIAL_RECORD_ID)
-
-    expect(agent.__removeCredentialRecord).toHaveBeenCalledWith(agent.context, 'w3c-record-1')
-    expect(agent.__removeCredentialRecord).toHaveBeenCalledWith(agent.context, 'w3c-record-2')
-    expect(agent.__removeCredentialRecord).toHaveBeenCalledTimes(2)
   })
 
   it('routes a failure through ErrorHandlingService rather than throwing the raw Credo error', async () => {
-    const agent = makeAgentForDeleteById({
-      deleteByIdImpl: jest.fn(async () => {
+    const agent = makeAgentForDeleteById(
+      jest.fn(async () => {
         throw new Error('credential not found')
       }) as jest.Mock,
-    })
+    )
     const controller = new CredentialController(undefined as never)
 
     await expect(controller.deleteById(makeRequest(agent), CREDENTIAL_RECORD_ID)).rejects.toBeDefined()
