@@ -103,7 +103,9 @@ return 1
 // bounding reservation lifetime, so a still-alive, still-heartbeating transfer past 24h would have
 // its reservation silently expire while the job record stays alive, letting a second caller's
 // SET...NX succeed against a job that never died. Re-writes the exact value just read back, since
-// the caller only has jobId at heartbeat time, not the original reservedAt.
+// the caller only has jobId at heartbeat time, not the original reservedAt — safe against a
+// concurrent reclaim because Redis executes the whole eval atomically, so there's no "in between"
+// for another client's write to land in.
 const TOUCH_ACTIVE_JOB_IF_OWNED_SCRIPT = `
 ${OWNERSHIP_CHECK_PREAMBLE}
 redis.call('SET', KEYS[1], current, 'EX', ARGV[2])
@@ -113,7 +115,9 @@ return 1
 // The heartbeat only wants to bump updatedAt while the job is still Pending/InProgress — a plain
 // get()-then-save() has a window where a terminal write (Completed/Failed) landing in between
 // gets silently clobbered back to non-terminal. Doing the check-and-update as one atomic
-// server-side operation removes that window entirely.
+// server-side operation removes that window entirely: Redis executes one command at a time, so
+// whichever of {this eval, a terminal SET} reaches Redis first is the one still true when the
+// other runs.
 const TOUCH_IF_NOT_TERMINAL_SCRIPT = `
 local current = redis.call('GET', KEYS[1])
 if not current then
@@ -514,7 +518,10 @@ export class WalletPortabilityJobStore {
    * a newer job's reservation. Clears BOTH stores unconditionally rather than picking one based on
    * Redis's current readiness: reservation and release can observe different readiness states for
    * the same job (it runs for seconds to minutes), so checking only the store that looks live
-   * right now can miss the store the reservation actually landed in.
+   * right now can miss the store the reservation actually landed in. A reservation stuck in Redis
+   * wedges the tenant for up to the 24h TTL; one stuck in memory (no TTL) wedges it permanently
+   * until the process restarts — both stores must be cleared unconditionally, not just whichever
+   * looks ready.
    *
    * The Redis attempt is gated on the client merely existing, not on isRedisReady() — a
    * reservation made while Redis was ready can outlive a disconnect, so by release time

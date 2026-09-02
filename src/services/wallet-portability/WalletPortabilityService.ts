@@ -391,9 +391,10 @@ export class WalletPortabilityService {
       updatedAt: now,
     })
 
-    // Fire-and-forget async job. Best-effort mark Failed and release the reservation here too, in
-    // case setJobStatus(InProgress) itself throws — otherwise the job stays Pending and the
-    // tenant's slot never releases, wedging every future export/import until the 24h TTL clears.
+    // Fire-and-forget async job — same reasoning as exportWallet's identical handler above. Best-
+    // effort mark Failed and release the reservation here too, in case setJobStatus(InProgress)
+    // itself throws — otherwise the job stays Pending and the tenant's slot never releases,
+    // wedging every future export/import until the 24h TTL clears.
     this.runImport(agent, tenantId, jobId, exportUrl, passKey, checksum, heartbeat).catch((error) => {
       this.logger.error(`[WalletPortabilityService] import job ${jobId} failed to start: ${error}`)
       this.setJobStatus(
@@ -455,8 +456,8 @@ export class WalletPortabilityService {
     let workDir: string | undefined
 
     try {
-      // If this throws, the job must land in the catch below and mark Failed, not stay stuck at
-      // Pending forever.
+      // Same reasoning as runExport's identical line: if this throws, the job must land in the
+      // catch below and mark Failed, not stay stuck at Pending forever.
       await this.setJobStatus(jobId, tenantId, WalletPortabilityJobType.Import, WalletPortabilityJobStatus.InProgress)
 
       workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-import-'))
@@ -475,7 +476,8 @@ export class WalletPortabilityService {
       importedStore = await Store.open({
         uri: `sqlite://${importedDbPath}`,
         // Must match the KdfMethod the artifact was provisioned with (Argon2IMod, see runExport)
-        // — Store.open rejects a mismatch outright, before ever reaching a wrong-passphrase error.
+        // — Store.open rejects a mismatch outright ("Store key method mismatch", verified against
+        // the real binding), before ever reaching a wrong-passphrase error.
         keyMethod: new StoreKeyMethod(KdfMethod.Argon2IMod),
         passKey,
       })
@@ -492,7 +494,9 @@ export class WalletPortabilityService {
         // Take the source profile from the artifact rather than requiring it match the target
         // tenant's id — this supports importing onto a rebuilt agent or a freshly created tenant.
         // Verified only for artifacts this service's own export produces (always exactly one
-        // profile); NOT verified for a legacy askar-wallet-tools artifact.
+        // profile); NOT verified for a legacy askar-wallet-tools artifact — Store.open above
+        // hardcodes Argon2IMod and would reject one provisioned with a different KDF, and nothing
+        // here establishes that askar-wallet-tools' own export always yields exactly one profile.
         //
         // importedStore is always assigned before this callback runs, so this guard isn't
         // reachable today — but it replaces a `?.` that would have silently skipped the
@@ -520,7 +524,8 @@ export class WalletPortabilityService {
         // Past this point the imported profile is live under the tenant's real name — a later
         // failure must not trigger rollback, which would try to rename the backup on top of it
         // and fail with a false "manual intervention required" alert for an import that had, in
-        // fact, already succeeded.
+        // fact, already succeeded (verified against the real binding: that rename fails outright
+        // with a UNIQUE constraint).
         renamedAway = false
         // Cleared here too: from this instant, whatever sits at backupProfile is a stale
         // pre-import copy, not current data — a later throw in this same try must not report

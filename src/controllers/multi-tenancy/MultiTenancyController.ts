@@ -47,10 +47,10 @@ const MIN_PASSKEY_LENGTH = 16
 // A SHA-256 digest, hex-encoded: exactly 64 hex characters. Without this, a malformed checksum
 // still passes the earlier truthiness check, reserves the tenant's active-job slot, and downloads
 // up to MAX_DOWNLOAD_BYTES (2 GiB) before runImport's own comparison inevitably fails -- wasted
-// work for something a cheap upfront regex rules out. Case-insensitive: WalletPortabilityService's
-// own comparison (`hash.digest('hex')`, always lowercase) is case-sensitive, so an
-// uppercase-but-correct checksum must be normalized before it reaches that comparison, not just
-// accepted or rejected here.
+// work for something a cheap upfront regex rules out. Case-insensitive: SHA-256 hex is
+// conceptually case-insensitive, but WalletPortabilityService's own comparison
+// (`hash.digest('hex')`, always lowercase) is case-sensitive, so an uppercase-but-correct checksum
+// must be normalized before it reaches that comparison, not just accepted or rejected here.
 const CHECKSUM_PATTERN = /^[a-f0-9]{64}$/i
 
 @Tags('MultiTenancy')

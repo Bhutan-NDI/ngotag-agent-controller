@@ -8,7 +8,7 @@
  *   2. It operates directly on request.agent (no tenantId param, no withTenantAgent()) — matching
  *      verifyCredential/verify's generic-op convention on this same controller, not the legacy
  *      /multi-tenancy/:tenantId placement, which only a base-wallet token could ever reach (a
- *      dedicated agent or a tenant's own token both 401 there).
+ *      dedicated agent or a tenant's own token both 401'd there).
  *   3. It must build a real W3cCredential instance and call w3cCredentials.store({ record }) via
  *      W3cCredentialRecord.fromCredential(...) — the legacy w3cCredentials.storeCredential(...)
  *      method no longer exists on the current Credo version, and passing a plain object literal
