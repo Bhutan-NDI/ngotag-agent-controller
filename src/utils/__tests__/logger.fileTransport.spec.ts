@@ -8,7 +8,7 @@
  * lives in its own file rather than sharing a module registry with the stdout tests.
  */
 import { jest } from '@jest/globals'
-import { mkdtempSync, readFileSync } from 'fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -39,38 +39,58 @@ class FakeAxiosError extends Error {
   }
 }
 
-/** The transport writes through a promise queue, so give it a turn to drain. */
-async function flush(): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt++) {
+/**
+ * The transport writes through a promise queue, so wait for this test's own line to land. The
+ * file is truncated before each case, so "non-empty" unambiguously means the write completed --
+ * otherwise a later case could assert against an earlier case's content and pass vacuously.
+ */
+async function flushOneLine(): Promise<string> {
+  for (let attempt = 0; attempt < 40; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 25))
     try {
-      if ('' !== readFileSync(logFile, 'utf8')) {
-        return
+      const contents = readFileSync(logFile, 'utf8')
+      if ('' !== contents.trim()) {
+        return contents
       }
     } catch {
       // Not created yet.
     }
   }
+  throw new Error('file transport never wrote a line')
 }
 
 describe('TsLogger file transport', () => {
-  it('writes the sanitised error, never the raw one', async () => {
-    const suppress = jest.spyOn(process.stderr, 'write').mockImplementation(() => true)
-    try {
-      new TsLogger(LogLevel.error, 'file-transport-test').error('POST /token -> 500: upstream failed', {
-        error: new FakeAxiosError('Request failed with status code 401'),
-      })
-    } finally {
-      suppress.mockRestore()
-    }
+  // Same three shapes as the console/OTel matrix -- the file sink is fed by the same log object.
+  const SHAPES: [string, () => Record<string, unknown>][] = [
+    ['error', () => ({ error: new FakeAxiosError('Request failed with status code 401') })],
+    ['cause', () => ({ cause: new FakeAxiosError('Request failed with status code 401') })],
+    [
+      'the Error itself as the data argument',
+      () => new FakeAxiosError('Request failed with status code 401') as unknown as Record<string, unknown>,
+    ],
+  ]
 
-    await flush()
-    const written = readFileSync(logFile, 'utf8')
-
-    expect(written).not.toBe('')
-    expect(written).not.toContain('SENTINEL_BEARER_TOKEN')
-    expect(written).not.toContain('SENTINEL_WALLET_SEED')
-    // Still useful: the error is identifiable in the file.
-    expect(written).toContain('Request failed with status code 401')
+  beforeEach(() => {
+    writeFileSync(logFile, '')
   })
+
+  for (const [shapeName, buildPayload] of SHAPES) {
+    it(`writes the sanitised error, never the raw one, via ${shapeName}`, async () => {
+      const suppress = jest.spyOn(process.stderr, 'write').mockImplementation(() => true)
+      try {
+        new TsLogger(LogLevel.error, 'file-transport-test').error('POST /token -> 500: upstream failed', buildPayload())
+      } finally {
+        suppress.mockRestore()
+      }
+
+      const written = await flushOneLine()
+
+      // Exactly this test's record, so the assertions below cannot pass on stale content.
+      expect(written.trim().split('\n')).toHaveLength(1)
+      expect(written).not.toContain('SENTINEL_BEARER_TOKEN')
+      expect(written).not.toContain('SENTINEL_WALLET_SEED')
+      // Still useful: the error is identifiable in the file.
+      expect(written).toContain('Request failed with status code 401')
+    })
+  }
 })

@@ -93,6 +93,44 @@ describe('TsLogger error boundary', () => {
     emitted.length = 0
   })
 
+  // The three shapes callers actually use, asserted against both egresses. `cause` and
+  // Error-as-data reached OpenTelemetry as well as stdout before 4b0df69.
+  const SHAPES: [string, () => Record<string, unknown>][] = [
+    ['error', () => ({ error: thrownAxiosError() })],
+    ['cause', () => ({ cause: thrownAxiosError() })],
+    ['the Error itself as the data argument', () => thrownAxiosError() as unknown as Record<string, unknown>],
+  ]
+
+  for (const [shapeName, buildPayload] of SHAPES) {
+    it(`leaks nothing to the console transport via ${shapeName}`, () => {
+      const output = captureStderr(() => {
+        new TsLogger(LogLevel.error, 'boundary-test').error('boundary', buildPayload())
+      })
+
+      expect(output).not.toBe('')
+      for (const sentinel of SENTINELS) {
+        expect(output).not.toContain(sentinel)
+      }
+    })
+
+    it(`leaks nothing to OpenTelemetry via ${shapeName}`, () => {
+      captureStderr(() => {
+        new TsLogger(LogLevel.error, 'boundary-test').error('boundary', buildPayload())
+      })
+
+      expect(emitted).toHaveLength(1)
+      const serialised = JSON.stringify(emitted[0].attributes)
+      for (const sentinel of SENTINELS) {
+        expect(serialised).not.toContain(sentinel)
+      }
+      expect(emitted[0].attributes.error).toEqual({
+        name: 'AxiosError',
+        message: 'Request failed with status code 401',
+        stack: expect.stringContaining('failingCallSite'),
+      })
+    })
+  }
+
   it('does not write any enumerable property of the error to the console transport', () => {
     const error = thrownAxiosError()
     const output = captureStderr(() => {
