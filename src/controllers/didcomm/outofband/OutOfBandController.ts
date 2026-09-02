@@ -222,7 +222,10 @@ export class OutOfBandController extends Controller {
     @Request() request: Req,
     @Body() invitationRequest: ReceiveInvitationByUrlProps,
   ) {
-    const { invitationUrl, ...config } = invitationRequest
+    // connectionType isn't part of Credo's own ReceiveOutOfBandInvitationConfig -- kept out of
+    // config so it doesn't reach receiveInvitationFromUrl as an unrecognized option, used only to
+    // tag the resulting connection afterward.
+    const { invitationUrl, connectionType, ...config } = invitationRequest
 
     try {
       // const linkSecretIds = await request.agent.modules.anoncreds.getLinkSecretIds()
@@ -233,9 +236,16 @@ export class OutOfBandController extends Controller {
         invitationUrl,
         config,
       )
+      let connectionRecordTemp = connectionRecord
+      if (connectionRecordTemp && connectionType && !connectionRecordTemp.connectionTypes.includes(connectionType)) {
+        connectionRecordTemp = await request.agent.modules.didcomm.connections.addConnectionType(
+          connectionRecordTemp.id,
+          connectionType,
+        )
+      }
       return {
         outOfBandRecord: outOfBandRecord.toJSON(),
-        connectionRecord: connectionRecord?.toJSON(),
+        connectionRecord: connectionRecordTemp?.toJSON(),
       }
     } catch (error) {
       throw ErrorHandlingService.handle(error)

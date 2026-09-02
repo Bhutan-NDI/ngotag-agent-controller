@@ -1353,6 +1353,7 @@ const models: TsoaRoute.Models = {
             "acceptInvitationTimeoutMs": {"dataType":"double"},
             "ourDid": {"dataType":"string"},
             "invitationUrl": {"dataType":"string","required":true},
+            "connectionType": {"dataType":"string"},
         },
         "additionalProperties": false,
     },
