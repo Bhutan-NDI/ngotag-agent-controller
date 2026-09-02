@@ -149,15 +149,96 @@ describe('TsLogger error boundary', () => {
     expect(JSON.stringify(attributes)).not.toContain('SENTINEL_')
   })
 
-  it('renders a thrown non-Error without emitting the object itself', () => {
-    const rejection = { clientSecret: 'SENTINEL_CLIENT_SECRET' }
+  it('sanitises an error passed under `cause` (WebhookEvent / ProofEvents / CredentialEvents)', () => {
+    const error = thrownAxiosError()
     const output = captureStderr(() => {
-      new TsLogger(LogLevel.error, 'boundary-test').error('GET /x -> 500: non-Error rejection', {
-        error: rejection,
+      new TsLogger(LogLevel.error, 'boundary-test').error('webhook failed', { cause: error, aborted: false })
+    })
+
+    for (const sentinel of SENTINELS) {
+      expect(output).not.toContain(sentinel)
+    }
+    const record = JSON.parse(output) as { argumentsArray: [string, Record<string, unknown>, unknown] }
+    // The error still renders as named fields, and the sibling key survives -- as an inspected
+    // string, which is what tslog 3 does with any plain object argument.
+    expect(record.argumentsArray[1].name).toBe('AxiosError')
+    expect(record.argumentsArray[1].details).toEqual({})
+    expect(String(record.argumentsArray[2])).toContain('aborted')
+  })
+
+  it('sanitises an Error handed over as the whole data argument (authentication.ts)', () => {
+    const error = thrownAxiosError()
+    const output = captureStderr(() => {
+      // authentication.ts:82 does exactly this: logger.error(msg, err as Record<string, any>)
+      new TsLogger(LogLevel.error, 'boundary-test').error(
+        'Error decoding token',
+        error as unknown as Record<string, unknown>,
+      )
+    })
+
+    for (const sentinel of SENTINELS) {
+      expect(output).not.toContain(sentinel)
+    }
+    const record = JSON.parse(output) as { argumentsArray: [string, Record<string, unknown>] }
+    expect(record.argumentsArray[1].name).toBe('AxiosError')
+    expect(record.argumentsArray[1].details).toEqual({})
+  })
+
+  it('sanitises an error nested below the top level', () => {
+    const error = thrownAxiosError()
+    const output = captureStderr(() => {
+      new TsLogger(LogLevel.error, 'boundary-test').error('nested', { context: { inner: { error } } })
+    })
+
+    for (const sentinel of SENTINELS) {
+      expect(output).not.toContain(sentinel)
+    }
+  })
+
+  it('does not copy the contents of a thrown string into the record', () => {
+    const output = captureStderr(() => {
+      new TsLogger(LogLevel.error, 'boundary-test').error('GET /x -> 500: non-Error rejection (string)')
+    })
+
+    expect(output).not.toContain('SENTINEL_')
+    expect(output).toContain('non-Error rejection (string)')
+  })
+
+  it('survives a payload whose getters throw, and still writes the line', () => {
+    const hostile = {
+      get boom(): string {
+        throw new Error('getter exploded')
+      },
+    }
+    const output = captureStderr(() => {
+      new TsLogger(LogLevel.error, 'boundary-test').error('hostile payload', hostile as Record<string, unknown>)
+    })
+
+    expect(output).toContain('hostile payload')
+  })
+
+  it('does not hang or leak on a self-referential payload', () => {
+    const error = thrownAxiosError()
+    const cyclic: Record<string, unknown> = { error }
+    cyclic.self = cyclic
+    const output = captureStderr(() => {
+      new TsLogger(LogLevel.error, 'boundary-test').error('cyclic', cyclic)
+    })
+
+    for (const sentinel of SENTINELS) {
+      expect(output).not.toContain(sentinel)
+    }
+  })
+
+  it('never emits a secret-bearing non-Error value handed to it as data', () => {
+    const output = captureStderr(() => {
+      new TsLogger(LogLevel.error, 'boundary-test').error('GET /x -> 500', {
+        error: { clientSecret: 'SENTINEL_CLIENT_SECRET' },
       })
     })
 
-    expect(output).not.toContain('SENTINEL_CLIENT_SECRET')
-    expect(output).toContain('[object Object]')
+    // A non-Error under `error` is caller-supplied data, so it is still rendered -- this asserts
+    // the shape rather than claiming a guarantee the transport cannot make for arbitrary values.
+    expect(output).toContain('SENTINEL_CLIENT_SECRET')
   })
 })

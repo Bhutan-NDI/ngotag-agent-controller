@@ -49,7 +49,11 @@ export const createErrorHandler = (logger: Logger): ErrorRequestHandler =>
     }
     // A rejection that is not an Error at all -- a thrown string, or next(someObject). This used
     // to fall through to a bare next(), which logged nothing and sent no response.
-    logger.error(`${req.method} ${req.path} -> 500: non-Error rejection (${typeof err})`, { error: err })
+    //
+    // Only the *type* is logged, never the value: a rejected string can be an upstream response
+    // body carrying a token or seed, and nothing here can tell that from a safe message. The
+    // method and path identify the site well enough to find it.
+    logger.error(`${req.method} ${req.path} -> 500: non-Error rejection (${typeof err})`)
     return res.status(500).json({
       message: 'Internal Server Error',
     })

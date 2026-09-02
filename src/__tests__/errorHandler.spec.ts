@@ -16,7 +16,7 @@ import { jest } from '@jest/globals'
 
 const { createErrorHandler } = await import('../errorHandler')
 const ErrorHandlingService = (await import('../errorHandlingService')).default
-const { BaseError, NotFoundError, InternalServerError } = await import('../errors/errors')
+const { BaseError, NotFoundError, InternalServerError, RecordDuplicateError } = await import('../errors/errors')
 
 type Logged = { level: string; message: string; data?: Record<string, unknown> }
 
@@ -111,6 +111,15 @@ describe('createErrorHandler', () => {
     expect(logged[0].level).toBe('error')
   })
 
+  it('logs a 409 at warn — a duplicate is a normal outcome, not a failure', async () => {
+    const { res, captured } = makeRes()
+    await handler(new RecordDuplicateError('Tenant already exists'), req, res, jest.fn())
+
+    expect(captured.status).toBe(409)
+    expect(logged).toHaveLength(1)
+    expect(logged[0].level).toBe('warn')
+  })
+
   it('logs the cause, not the re-rooted converted error', async () => {
     const cause = new Error('Askar: wallet not found')
     const converted = new InternalServerError('CredoError: Askar: wallet not found')
@@ -122,16 +131,19 @@ describe('createErrorHandler', () => {
     expect(logged[0].data?.error).toBe(cause)
   })
 
-  it('gives a non-Error rejection one log line and a controlled 500', async () => {
+  it('gives a non-Error rejection one log line and a controlled 500, without its contents', async () => {
     const { res, captured } = makeRes()
     const next = jest.fn()
-    await handler('a thrown string', req, res, next)
+    await handler('upstream said: Bearer SENTINEL_TOKEN', req, res, next)
 
     expect(captured.status).toBe(500)
     expect(captured.body).toEqual({ message: 'Internal Server Error' })
     expect(logged).toHaveLength(1)
     expect(logged[0].level).toBe('error')
-    expect(logged[0].message).toContain('non-Error rejection')
+    expect(logged[0].message).toContain('non-Error rejection (string)')
+    // A rejected string can be an upstream response body; only its type is recorded.
+    expect(logged[0].message).not.toContain('SENTINEL_TOKEN')
+    expect(logged[0].data).toBeUndefined()
     // Previously this path called next() and produced no response at all.
     expect(next).not.toHaveBeenCalled()
   })
