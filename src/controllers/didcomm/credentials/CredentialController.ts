@@ -9,11 +9,12 @@ import {
   DidCommRouting,
 } from '@credo-ts/didcomm'
 import { Request as Req } from 'express'
-import { Body, Controller, Get, Path, Post, Route, Tags, Example, Query, Security, Request } from 'tsoa'
+import { Body, Controller, Delete, Get, Path, Post, Route, Tags, Example, Query, Security, Request } from 'tsoa'
 import { injectable } from 'tsyringe'
 
 import { SCOPES } from '../../../enums'
 import ErrorHandlingService from '../../../errorHandlingService'
+import { BadRequestError } from '../../../errors'
 import { PurgeRecordType } from '../../../purge/PurgeTypes'
 import { SchedulePurge } from '../../../purge/decorators/SchedulePurge'
 import { AgentType } from '../../../types'
@@ -99,6 +100,52 @@ export class CredentialController extends Controller {
   }
 
   /**
+   * Delete a W3C credential record by id. Ported from the legacy
+   * `/multi-tenancy/credential/w3c/:credentialRecordId/:tenantId` endpoint -- this agent's
+   * contract never had an equivalent under `/didcomm/credentials`.
+   *
+   * @param id
+   */
+  @Delete('/w3c/:id')
+  public async deleteW3cById(@Request() request: Req, @Path('id') id: string) {
+    try {
+      // W3cCredentialService.removeCredentialRecord is a bare delete with no reference checks --
+      // a DidCommCredentialExchangeRecord for a DIDComm-issued (not self-attested) JSON-LD
+      // credential stores { credentialRecordType: 'w3c', credentialRecordId } pointing at exactly
+      // this kind of record. Deleting out from under one would orphan its credentialRecordId with
+      // no cleanup path. credentialIds is a queryable default tag (derived from that same
+      // credentials[] array), so this is a single indexed lookup, not a full scan. See the #85
+      // review -- this endpoint is meant for self-attested credentials only; callers are expected
+      // to route DIDComm-issued ones through deleteById instead.
+      // credentialIds is stored as one flattened per-value tag per array entry (Askar's
+      // representation of an array tag), so the query side must match with an array too -- a bare
+      // string here would search a different, nonexistent flat tag key and never match anything.
+      //
+      // This check lives only here, not in W3cCredentialService itself (a Credo library class, not
+      // ours to extend) -- any other caller of removeCredentialRecord (another controller, a
+      // script, a future purge path) bypasses it and could orphan a reference. Also not atomic
+      // with the delete below: a concurrent request creating a new exchange record that references
+      // this id between the query and the delete would still get orphaned. Accepted given the
+      // actual usage pattern (rare admin/holder-triggered deletes, not high-concurrency). See the
+      // #85 review.
+      const referencingExchangeRecords = await request.agent.modules.didcomm.credentials.findAllByQuery({
+        credentialIds: [id],
+      })
+      if (referencingExchangeRecords.length > 0) {
+        throw new BadRequestError(
+          `Cannot delete W3C credential '${id}' directly -- it is referenced by a DIDComm credential exchange record. Delete via the credential exchange record instead.`,
+        )
+      }
+
+      this.setStatus(204)
+      const w3cCredentialService = await request.agent.dependencyManager.resolve(W3cCredentialService)
+      await w3cCredentialService.removeCredentialRecord(request.agent.context, id)
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  /**
    * Retrieve credential exchange record by credential record id
    *
    * @param credentialRecordId
@@ -110,6 +157,42 @@ export class CredentialController extends Controller {
     try {
       const credential = await request.agent.modules.didcomm.credentials.getById(credentialRecordId)
       return credential.toJSON()
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  /**
+   * Delete a credential exchange record (and, by default, its associated stored credential) by
+   * id. Ported from the legacy `/multi-tenancy/credential/:credentialRecordId/:tenantId`
+   * endpoint -- this agent's contract never had an equivalent under `/didcomm/credentials`.
+   *
+   * @param credentialRecordId
+   */
+  @Delete('/:credentialRecordId')
+  public async deleteById(@Request() request: Req, @Path('credentialRecordId') credentialRecordId: RecordId) {
+    try {
+      // Reverting the #85-review-round-2 "fix" here -- it was based on a wrong premise. Every
+      // format service actually registered for DIDComm-issued credentials in cliAgent.ts
+      // (legacyIndyCredentialFormat, jsonLdCredentialFormatService, anonCredsCredentialFormatService)
+      // declares credentialRecordType = 'w3c', and Credo's cascade dispatches by
+      // `.find(f => f.credentialRecordType === type)` -- always resolving to whichever is FIRST in
+      // that array (legacyIndyCredentialFormat), never reaching jsonLdCredentialFormatService's
+      // `deleteCredentialById` (a bare `throw new Error("Not implemented.")`) at all, regardless of
+      // the credential's real format. legacyIndyCredentialFormat.deleteCredentialById itself
+      // delegates to AnonCredsHolderService.deleteCredential, which already checks
+      // W3cCredentialRepository first and falls back to AnonCredsCredentialRepository for
+      // pre-migration legacy credentials -- exactly the fallback the round-2 bypass lacked. So the
+      // default cascade (deleteAssociatedCredentials: true, the default) was already correct for
+      // every registered format; round-2's bypass (deleteAssociatedCredentials: false + a direct
+      // W3cCredentialService.removeCredentialRecord call, with no anoncreds fallback) orphaned
+      // legacy anoncreds credentials instead of fixing a real bug. See the #85 review (round 3).
+      //
+      // 204/no-body, matching this package's other didcomm/* deletes (ConnectionController.
+      // deleteConnection, OutOfBandController.deleteOutOfBandRecord) -- previously returned
+      // 200 + { message } instead, a shape borrowed from the unrelated openid4vc module.
+      this.setStatus(204)
+      await request.agent.modules.didcomm.credentials.deleteById(credentialRecordId)
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }

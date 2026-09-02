@@ -1,4 +1,4 @@
-import type { PeerDidNumAlgo2CreateOptions } from '@credo-ts/core'
+import type { PeerDidNumAlgo2CreateOptions, DifPexInputDescriptorToCredentials } from '@credo-ts/core'
 
 import { PeerDidNumAlgo, createPeerDidDocumentFromServices } from '@credo-ts/core'
 import {
@@ -262,6 +262,126 @@ export class ProofController extends Controller {
   }
 
   /**
+   * Accept a presentation request as prover, submitting the caller's own credential choice per
+   * input descriptor instead of auto-selecting (see acceptRequest above). Ported from the legacy
+   * `/multi-tenancy/proofs/accept-request-with-cred/:tenantId` endpoint -- this agent's contract
+   * never had an equivalent under `/didcomm/proofs`. Real chosen-credential matching is required
+   * since the legacy version only forwarded a bare `credentialRecord`; the currently-installed
+   * Credo expects the full `SubmissionEntryCredential` (with `claimFormat`) in its place.
+   *
+   * @param proofRecordId
+   * @param body
+   * @returns ProofRecord
+   */
+  @Post('/:proofRecordId/accept-request-with-cred')
+  @Example<DidCommProofExchangeRecordProps>(ProofRecordExample)
+  public async acceptRequestWithCred(
+    @Request() request: Req,
+    @Path('proofRecordId') proofRecordId: string,
+    @Body()
+    body: {
+      comment?: string
+      // inputDescriptorId -> the credentialRecordId the caller chose to satisfy it
+      proofFormats: { presentationExchange: { credentials: Record<string, string> } }
+    },
+  ) {
+    try {
+      const existingProof = await request.agent.modules.didcomm.proofs.getById(proofRecordId)
+      this.assertProofState(existingProof, 'accept')
+
+      const availableCredentials = await request.agent.modules.didcomm.proofs.getCredentialsForRequest({
+        proofExchangeRecordId: proofRecordId,
+      })
+
+      // This endpoint only supports the presentationExchange proof format -- the legacy version
+      // this was ported from made the same assumption implicitly (it never checked), which threw
+      // an opaque "No attachment found for service presentationExchange" CredoError (mapped to a
+      // raw 500) for an indy/anoncreds-negotiated proof record instead of a clear rejection. See
+      // the #85 review.
+      const pexResult = availableCredentials.proofFormats.presentationExchange
+      if (!pexResult) {
+        throw new BadRequestError(
+          'This proof record was not negotiated using the presentationExchange format; accept-request-with-cred only supports presentationExchange.',
+        )
+      }
+
+      const chosenCredentials: DifPexInputDescriptorToCredentials = {}
+      // Two distinct failure kinds, kept separate rather than folded into one untyped list --
+      // an invalid choice is always a real error (stale id/typo), while an unsatisfied requirement
+      // may be legitimate up until the needsCount check (another alternative could have covered
+      // it). Joined into one message below since the response contract here is a single string,
+      // but kept distinguishable in code for any future caller that wants to render them
+      // differently. See the #85 review.
+      const invalidCredentialChoices: string[] = []
+      const unsatisfiedRequirements: string[] = []
+      for (const requirement of pexResult.requirements) {
+        // Loop the full submissionEntry array, not just [0] -- a single requirement can
+        // legitimately contain multiple submission entries (rule 'all' with 2+ descriptors, or
+        // rule 'pick' with needsCount > 1). Indexing [0] silently dropped every entry beyond the
+        // first. See the #85 review.
+        let matchedCount = 0
+        for (const submissionEntry of requirement.submissionEntry) {
+          const chosenCredentialId =
+            body.proofFormats.presentationExchange.credentials[submissionEntry.inputDescriptorId]
+          if (chosenCredentialId === undefined) {
+            // Caller didn't choose this descriptor -- may be an unneeded alternative within an
+            // 'all'/'pick' group; only flagged below if the requirement ends up under-satisfied.
+            continue
+          }
+          const match = submissionEntry.verifiableCredentials.find(
+            (candidate) => candidate.credentialRecord.id === chosenCredentialId,
+          )
+          if (!match) {
+            // A caller-supplied id that matches nothing is always a real error (stale id, typo) --
+            // unlike an omitted descriptor, this is never legitimate, so it's reported immediately
+            // rather than folded into the needsCount check below. See the #85 review.
+            invalidCredentialChoices.push(
+              `${submissionEntry.inputDescriptorId} (no credential '${chosenCredentialId}' available)`,
+            )
+            continue
+          }
+          chosenCredentials[submissionEntry.inputDescriptorId] = [match]
+          matchedCount += 1
+        }
+        if (matchedCount < requirement.needsCount) {
+          unsatisfiedRequirements.push(
+            `requirement needing ${requirement.needsCount} credential(s), only ${matchedCount} provided`,
+          )
+        }
+      }
+      if (invalidCredentialChoices.length > 0 || unsatisfiedRequirements.length > 0) {
+        // Previously, an unmatched/omitted descriptor was silently dropped and the presentation
+        // was still submitted -- the verifier would receive a presentation missing a required
+        // credential with no error raised anywhere. See the #85 review.
+        throw new BadRequestError(
+          `Unable to satisfy proof request: ${[...invalidCredentialChoices, ...unsatisfiedRequirements].join('; ')}.`,
+        )
+      }
+
+      const proof = await request.agent.modules.didcomm.proofs.acceptRequest({
+        proofExchangeRecordId: proofRecordId,
+        comment: body.comment,
+        proofFormats: { presentationExchange: { credentials: chosenCredentials } },
+      })
+
+      return proof.toJSON()
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  // Shared by declineRequest/getCredentialsForRequest/acceptRequestWithCred -- all three only ever
+  // proceed from RequestReceived, differing solely in the verb used in the resulting message. See
+  // the #85 review.
+  private assertProofState(record: { state: DidCommProofState }, verb: string): void {
+    if (record.state !== DidCommProofState.RequestReceived) {
+      throw new BadRequestError(
+        `Cannot ${verb} a proof record in state '${record.state}'; expected '${DidCommProofState.RequestReceived}'.`,
+      )
+    }
+  }
+
+  /**
    * Accept a presentation as prover by sending an accept presentation message
    * to the connection associated with the proof record.
    *
@@ -339,11 +459,7 @@ export class ProofController extends Controller {
         // Idempotent: the record is already in the terminal state this call is trying to reach.
         return existingProof.toJSON()
       }
-      if (existingProof.state !== DidCommProofState.RequestReceived) {
-        throw new BadRequestError(
-          `Cannot decline a proof record in state '${existingProof.state}'; expected '${DidCommProofState.RequestReceived}'.`,
-        )
-      }
+      this.assertProofState(existingProof, 'decline')
 
       const proof = await request.agent.modules.didcomm.proofs.declineRequest({
         proofExchangeRecordId: proofRecordId,
@@ -375,11 +491,7 @@ export class ProofController extends Controller {
       // 500 -- including immediately after a successful decline, on a verifier-side record, or on
       // a v1 record reached via this v2-only path. See the #76 review.
       const existingProof = await request.agent.modules.didcomm.proofs.getById(proofRecordId)
-      if (existingProof.state !== DidCommProofState.RequestReceived) {
-        throw new BadRequestError(
-          `Cannot list credentials for a proof record in state '${existingProof.state}'; expected '${DidCommProofState.RequestReceived}'.`,
-        )
-      }
+      this.assertProofState(existingProof, 'list credentials for')
 
       const credentials = await request.agent.modules.didcomm.proofs.getCredentialsForRequest({
         proofExchangeRecordId: proofRecordId,

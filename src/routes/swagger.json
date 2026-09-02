@@ -5396,6 +5396,14 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"Record_string.string_": {
+				"properties": {},
+				"additionalProperties": {
+					"type": "string"
+				},
+				"type": "object",
+				"description": "Construct a type with a set of properties K of type T"
+			},
 			"ProofFormatDataMessagePayload__40_LegacyIndyDidCommProofFormat-or-AnonCredsDidCommProofFormat-or-DidCommDifPresentationExchangeProofFormat_41_-Array.proposal_": {
 				"properties": {},
 				"type": "object",
@@ -10325,6 +10333,36 @@
 						}
 					}
 				]
+			},
+			"delete": {
+				"operationId": "DeleteW3cById",
+				"responses": {
+					"204": {
+						"description": "No content"
+					}
+				},
+				"description": "Delete a W3C credential record by id. Ported from the legacy\n`/multi-tenancy/credential/w3c/:credentialRecordId/:tenantId` endpoint -- this agent's\ncontract never had an equivalent under `/didcomm/credentials`.",
+				"tags": [
+					"DIDComm - Credentials"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
 			}
 		},
 		"/didcomm/credentials/{credentialRecordId}": {
@@ -10367,6 +10405,36 @@
 					}
 				},
 				"description": "Retrieve credential exchange record by credential record id",
+				"tags": [
+					"DIDComm - Credentials"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "credentialRecordId",
+						"required": true,
+						"schema": {
+							"$ref": "#/components/schemas/RecordId"
+						}
+					}
+				]
+			},
+			"delete": {
+				"operationId": "DeleteById",
+				"responses": {
+					"204": {
+						"description": "No content"
+					}
+				},
+				"description": "Delete a credential exchange record (and, by default, its associated stored credential) by\nid. Ported from the legacy `/multi-tenancy/credential/:credentialRecordId/:tenantId`\nendpoint -- this agent's contract never had an equivalent under `/didcomm/credentials`.",
 				"tags": [
 					"DIDComm - Credentials"
 				],
@@ -11300,6 +11368,94 @@
 										"type": "boolean"
 									}
 								},
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/didcomm/proofs/{proofRecordId}/accept-request-with-cred": {
+			"post": {
+				"operationId": "AcceptRequestWithCred",
+				"responses": {
+					"200": {
+						"description": "ProofRecord",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/Record_string.unknown_"
+								},
+								"examples": {
+									"Example 1": {
+										"value": {
+											"metadata": {},
+											"id": "821f9b26-ad04-4f56-89b6-e2ef9c72b36e",
+											"createdAt": "2022-01-01T00:00:00.000Z",
+											"connectionId": "2aecf74c-3073-4f98-9acb-92415d096834",
+											"threadId": "0019d466-5eea-4269-8c40-031b4896c5b7",
+											"protocolVersion": "v1"
+										}
+									}
+								}
+							}
+						}
+					}
+				},
+				"description": "Accept a presentation request as prover, submitting the caller's own credential choice per\ninput descriptor instead of auto-selecting (see acceptRequest above). Ported from the legacy\n`/multi-tenancy/proofs/accept-request-with-cred/:tenantId` endpoint -- this agent's contract\nnever had an equivalent under `/didcomm/proofs`. Real chosen-credential matching is required\nsince the legacy version only forwarded a bare `credentialRecord`; the currently-installed\nCredo expects the full `SubmissionEntryCredential` (with `claimFormat`) in its place.",
+				"tags": [
+					"DIDComm - Proofs"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "proofRecordId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"proofFormats": {
+										"properties": {
+											"presentationExchange": {
+												"properties": {
+													"credentials": {
+														"$ref": "#/components/schemas/Record_string.string_"
+													}
+												},
+												"required": [
+													"credentials"
+												],
+												"type": "object"
+											}
+										},
+										"required": [
+											"presentationExchange"
+										],
+										"type": "object"
+									},
+									"comment": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"proofFormats"
+								],
 								"type": "object"
 							}
 						}
