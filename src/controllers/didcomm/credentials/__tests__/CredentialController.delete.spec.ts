@@ -6,6 +6,14 @@
  * the cloud-wallet compatibility audit that this is a live, wired frontend flow
  * (DeleteCredentialModal, gated by an isSelfAttested flag that picks between these two).
  *
+ * #85 review findings, both fixed and covered here:
+ *  - deleteW3cById deleted the raw W3cCredentialRecord unconditionally, with no check for a
+ *    DidCommCredentialExchangeRecord still referencing it -- orphaning a same-tenant
+ *    credentialRecordId with no cleanup path if ever called against a DIDComm-issued (not
+ *    self-attested) credential.
+ *  - both endpoints returned 200 + { message } instead of this package's 204/no-body convention
+ *    (ConnectionController.deleteConnection, OutOfBandController.deleteOutOfBandRecord).
+ *
  * Runs under Jest's ESM mode, mirroring ProofController.declineAndCredentialsForRequest.spec.ts.
  */
 import { jest } from '@jest/globals'
@@ -43,28 +51,37 @@ const makeAgentForDeleteById = (deleteByIdImpl?: jest.Mock) => ({
   },
 })
 
-const makeAgentForDeleteW3c = (removeCredentialRecordImpl?: jest.Mock) => {
-  const removeCredentialRecord = removeCredentialRecordImpl ?? (jest.fn(async () => undefined) as jest.Mock)
+const makeAgentForDeleteW3c = (
+  overrides: { removeCredentialRecordImpl?: jest.Mock; findAllByQueryImpl?: jest.Mock } = {},
+) => {
+  const removeCredentialRecord = overrides.removeCredentialRecordImpl ?? (jest.fn(async () => undefined) as jest.Mock)
+  const findAllByQuery = overrides.findAllByQueryImpl ?? (jest.fn(async () => []) as jest.Mock)
   return {
     context: { contextCorrelationId: 'ctx-1' },
     dependencyManager: {
       resolve: jest.fn(async () => ({ removeCredentialRecord })),
     },
+    modules: {
+      didcomm: {
+        credentials: { findAllByQuery },
+      },
+    },
     __removeCredentialRecord: removeCredentialRecord,
+    __findAllByQuery: findAllByQuery,
   }
 }
 
 const makeRequest = (agent: unknown) => ({ agent }) as never
 
 describe('CredentialController.deleteById', () => {
-  it('deletes the credential exchange record (and, by default, its associated stored credential) by id', async () => {
+  it('deletes the credential exchange record (and, by default, its associated stored credential) by id, returning 204/no-body', async () => {
     const agent = makeAgentForDeleteById()
     const controller = new CredentialController(undefined as never)
 
     const result = await controller.deleteById(makeRequest(agent), CREDENTIAL_RECORD_ID)
 
     expect(agent.modules.didcomm.credentials.deleteById).toHaveBeenCalledWith(CREDENTIAL_RECORD_ID)
-    expect(result).toEqual({ message: 'Credential Deleted Successfully' })
+    expect(result).toBeUndefined()
   })
 
   it('routes a failure through ErrorHandlingService rather than throwing the raw Credo error', async () => {
@@ -80,22 +97,35 @@ describe('CredentialController.deleteById', () => {
 })
 
 describe('CredentialController.deleteW3cById', () => {
-  it('resolves W3cCredentialService and deletes the record by id, passing the agent context explicitly', async () => {
+  it("queries credentialIds as an array (Askar's array-tag representation), deletes by id, returning 204/no-body", async () => {
     const agent = makeAgentForDeleteW3c()
     const controller = new CredentialController(undefined as never)
 
     const result = await controller.deleteW3cById(makeRequest(agent), CREDENTIAL_RECORD_ID)
 
+    expect(agent.__findAllByQuery).toHaveBeenCalledWith({ credentialIds: [CREDENTIAL_RECORD_ID] })
     expect(agent.__removeCredentialRecord).toHaveBeenCalledWith(agent.context, CREDENTIAL_RECORD_ID)
-    expect(result).toEqual({ message: 'W3C Credential Deleted Successfully' })
+    expect(result).toBeUndefined()
+  })
+
+  it('rejects deletion when a DidCommCredentialExchangeRecord still references this credential id, instead of orphaning it', async () => {
+    const agent = makeAgentForDeleteW3c({
+      findAllByQueryImpl: jest.fn(async () => [{ id: 'exchange-record-1' }]) as jest.Mock,
+    })
+    const controller = new CredentialController(undefined as never)
+
+    await expect(controller.deleteW3cById(makeRequest(agent), CREDENTIAL_RECORD_ID)).rejects.toThrow(
+      new RegExp(CREDENTIAL_RECORD_ID),
+    )
+    expect(agent.__removeCredentialRecord).not.toHaveBeenCalled()
   })
 
   it('routes a failure through ErrorHandlingService rather than throwing the raw Credo error', async () => {
-    const agent = makeAgentForDeleteW3c(
-      jest.fn(async () => {
+    const agent = makeAgentForDeleteW3c({
+      removeCredentialRecordImpl: jest.fn(async () => {
         throw new Error('w3c credential not found')
       }) as jest.Mock,
-    )
+    })
     const controller = new CredentialController(undefined as never)
 
     await expect(controller.deleteW3cById(makeRequest(agent), CREDENTIAL_RECORD_ID)).rejects.toBeDefined()

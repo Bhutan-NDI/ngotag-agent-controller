@@ -14,6 +14,7 @@ import { injectable } from 'tsyringe'
 
 import { SCOPES } from '../../../enums'
 import ErrorHandlingService from '../../../errorHandlingService'
+import { BadRequestError } from '../../../errors'
 import { PurgeRecordType } from '../../../purge/PurgeTypes'
 import { SchedulePurge } from '../../../purge/decorators/SchedulePurge'
 import { AgentType } from '../../../types'
@@ -108,9 +109,29 @@ export class CredentialController extends Controller {
   @Delete('/w3c/:id')
   public async deleteW3cById(@Request() request: Req, @Path('id') id: string) {
     try {
+      // W3cCredentialService.removeCredentialRecord is a bare delete with no reference checks --
+      // a DidCommCredentialExchangeRecord for a DIDComm-issued (not self-attested) JSON-LD
+      // credential stores { credentialRecordType: 'w3c', credentialRecordId } pointing at exactly
+      // this kind of record. Deleting out from under one would orphan its credentialRecordId with
+      // no cleanup path. credentialIds is a queryable default tag (derived from that same
+      // credentials[] array), so this is a single indexed lookup, not a full scan. See the #85
+      // review -- this endpoint is meant for self-attested credentials only; callers are expected
+      // to route DIDComm-issued ones through deleteById instead.
+      // credentialIds is stored as one flattened per-value tag per array entry (Askar's
+      // representation of an array tag), so the query side must match with an array too -- a bare
+      // string here would search a different, nonexistent flat tag key and never match anything.
+      const referencingExchangeRecords = await request.agent.modules.didcomm.credentials.findAllByQuery({
+        credentialIds: [id],
+      })
+      if (referencingExchangeRecords.length > 0) {
+        throw new BadRequestError(
+          `Cannot delete W3C credential '${id}' directly -- it is referenced by a DIDComm credential exchange record. Delete via the credential exchange record instead.`,
+        )
+      }
+
+      this.setStatus(204)
       const w3cCredentialService = await request.agent.dependencyManager.resolve(W3cCredentialService)
       await w3cCredentialService.removeCredentialRecord(request.agent.context, id)
-      return { message: 'W3C Credential Deleted Successfully' }
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }
@@ -143,8 +164,12 @@ export class CredentialController extends Controller {
   @Delete('/:credentialRecordId')
   public async deleteById(@Request() request: Req, @Path('credentialRecordId') credentialRecordId: RecordId) {
     try {
+      // 204/no-body, matching this package's other didcomm/* deletes (ConnectionController.
+      // deleteConnection, OutOfBandController.deleteOutOfBandRecord) -- previously returned
+      // 200 + { message } instead, a shape borrowed from the unrelated openid4vc module. See the
+      // #85 review.
+      this.setStatus(204)
       await request.agent.modules.didcomm.credentials.deleteById(credentialRecordId)
-      return { message: 'Credential Deleted Successfully' }
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }

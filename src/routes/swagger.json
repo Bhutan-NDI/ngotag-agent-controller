@@ -3082,9 +3082,6 @@
 					},
 					"invitationUrl": {
 						"type": "string"
-					},
-					"connectionType": {
-						"type": "string"
 					}
 				},
 				"required": [
@@ -10337,23 +10334,8 @@
 			"delete": {
 				"operationId": "DeleteW3cById",
 				"responses": {
-					"200": {
-						"description": "Ok",
-						"content": {
-							"application/json": {
-								"schema": {
-									"properties": {
-										"message": {
-											"type": "string"
-										}
-									},
-									"required": [
-										"message"
-									],
-									"type": "object"
-								}
-							}
-						}
+					"204": {
+						"description": "No content"
 					}
 				},
 				"description": "Delete a W3C credential record by id. Ported from the legacy\n`/multi-tenancy/credential/w3c/:credentialRecordId/:tenantId` endpoint -- this agent's\ncontract never had an equivalent under `/didcomm/credentials`.",
@@ -10445,23 +10427,8 @@
 			"delete": {
 				"operationId": "DeleteById",
 				"responses": {
-					"200": {
-						"description": "Ok",
-						"content": {
-							"application/json": {
-								"schema": {
-									"properties": {
-										"message": {
-											"type": "string"
-										}
-									},
-									"required": [
-										"message"
-									],
-									"type": "object"
-								}
-							}
-						}
+					"204": {
+						"description": "No content"
 					}
 				},
 				"description": "Delete a credential exchange record (and, by default, its associated stored credential) by\nid. Ported from the legacy `/multi-tenancy/credential/:credentialRecordId/:tenantId`\nendpoint -- this agent's contract never had an equivalent under `/didcomm/credentials`.",
