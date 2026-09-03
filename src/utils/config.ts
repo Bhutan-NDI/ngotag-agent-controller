@@ -20,3 +20,24 @@ export const isCustomDocumentLoaderEnabled = (): boolean => {
 
   return isCustomDocumentLoaderEnabled
 }
+
+// An empty key leaves dynamicApiKey '', which makes POST /agent/token unreachable.
+export const validateApiKey = (input: string | undefined | null): string => {
+  const apiKey = input?.trim()
+  if (!apiKey) {
+    throw new Error('API key is required: set API_KEY to at least 16 characters')
+  }
+  if (apiKey.length < 16) {
+    throw new Error('API key must be at least 16 characters long')
+  }
+  return apiKey
+}
+
+// A factory, not a const: the default has to read process.env at call time.
+export const apiKeyOptionDefinition = () => ({
+  string: true,
+  default: process.env.API_KEY,
+  // yargs prints an option's default in its generated help, which it emits on any parse failure.
+  defaultDescription: '(from API_KEY)',
+  coerce: validateApiKey,
+})
