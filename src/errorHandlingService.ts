@@ -18,7 +18,11 @@ class ErrorHandlingService {
     } catch (converted) {
       // Keep the original: BaseError re-roots its own stack at the conversion site, so this is
       // the only surviving reference to where the failure actually came from. server.ts logs it.
-      if (converted instanceof BaseError && undefined === converted.cause) {
+      //
+      // Only an Error is preserved. A non-Error rejection has no stack worth keeping and the
+      // transport cannot sanitise its contents, so carrying it forward would put an arbitrary
+      // value into the log record.
+      if (converted instanceof BaseError && undefined === converted.cause && error instanceof Error) {
         converted.cause = error
       }
       throw converted
@@ -47,7 +51,10 @@ class ErrorHandlingService {
     } else if (error instanceof Error) {
       throw convertError(error.constructor.name, error.message)
     } else {
-      throw new InternalServerError(`An unknown error occurred ${error}`)
+      // The value is deliberately not interpolated: a rejected string can be an upstream
+      // response body carrying a token or a seed, and this message reaches the log line, the
+      // OpenTelemetry body, the file sink and the HTTP response. Only its type is safe to keep.
+      throw new InternalServerError(`An unknown error occurred (${typeof error})`)
     }
   }
   private static handleIndyVdrError(error: IndyVdrError) {
