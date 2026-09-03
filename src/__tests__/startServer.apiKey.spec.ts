@@ -1,13 +1,4 @@
-/**
- * startServer must hand the API key to setupServer as its own argument, and must not leave it in the
- * object setupServer serialises to config.json.
- *
- * Both halves need asserting rather than inferring: setupServer's third parameter is optional, so
- * dropping the argument would still compile, and the key sitting in `config` would still work at
- * runtime while writing the secret to disk.
- *
- * Runs under Jest ESM mode (see jest.config.base.ts).
- */
+// setupServer's apiKey parameter is optional, so dropping the argument would still compile.
 import { jest } from '@jest/globals'
 
 const listen = jest.fn(() => ({ on: jest.fn() }))

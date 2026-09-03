@@ -43,8 +43,7 @@ export const setupServer = async (
   config: ServerConfig,
   apiKey?: string,
 ) => {
-  // Reject bad configuration before anything is started, registered or written: a caller that
-  // catches the throw and retries would otherwise be left with a half-initialised process.
+  // Before any side effect: a caught-and-retried boot would otherwise duplicate registrations.
   const validatedApiKey = validateApiKey(apiKey)
 
   if (process.env.OTEL_ENABLED === 'true') {

@@ -1,6 +1,4 @@
-// The yargs definition lives apart from cli.ts so it can be imported without pulling in cliAgent
-// and the whole agent dependency graph. cli.ts and its test then parse with the same definition,
-// rather than the test recreating one that could drift from production.
+// Kept apart from cli.ts so it can be imported without loading the agent.
 import type { AriesRestConfig } from './cliAgent.js'
 
 import yargs from 'yargs'
@@ -65,9 +63,7 @@ interface InboundTransport {
 
 type Transports = 'http' | 'ws'
 
-// Returns the configured parser rather than a parsed result, so a test can invoke this exact
-// definition while overriding only yargs' exit policy (it exits the process on failure, which is the
-// right behaviour for the CLI but not observable from a test).
+// Returns the parser itself so its exit policy can be overridden before parsing.
 export function buildParser(argv: string[] = hideBin(process.argv)) {
   return yargs(argv)
     .command('start', 'Start Credo Rest agent')
@@ -176,9 +172,6 @@ export async function parseArguments(argv?: string[]): Promise<Parsed> {
   return buildParser(argv).parseAsync() as Promise<Parsed>
 }
 
-// The parsed-to-agent mapping lives here rather than inline in runCliServer so it can be asserted
-// without loading the agent. AriesRestConfig is a type-only import, so this module stays importable
-// on its own.
 export function toAgentConfig(parsed: Parsed): AriesRestConfig {
   return {
     label: parsed.label,

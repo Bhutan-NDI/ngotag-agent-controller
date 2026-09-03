@@ -21,8 +21,7 @@ export const isCustomDocumentLoaderEnabled = (): boolean => {
   return isCustomDocumentLoaderEnabled
 }
 
-// Unset or empty leaves dynamicApiKey '', making POST /agent/token - the only route that can mint a
-// token - permanently unreachable on an agent that otherwise boots clean. Fail at boot instead.
+// An empty key leaves dynamicApiKey '', which makes POST /agent/token unreachable.
 export const validateApiKey = (input: string | undefined | null): string => {
   const apiKey = input?.trim()
   if (!apiKey) {
@@ -34,10 +33,11 @@ export const validateApiKey = (input: string | undefined | null): string => {
   return apiKey
 }
 
-// Shared by cli.ts and its test, so the test exercises the same option definition the CLI parses
-// with. A factory rather than a const because the default reads process.env at call time.
+// A factory, not a const: the default has to read process.env at call time.
 export const apiKeyOptionDefinition = () => ({
   string: true,
   default: process.env.API_KEY,
+  // yargs prints an option's default in its generated help, which it emits on any parse failure.
+  defaultDescription: '(from API_KEY)',
   coerce: validateApiKey,
 })

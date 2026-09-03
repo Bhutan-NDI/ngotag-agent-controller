@@ -1,19 +1,4 @@
-/**
- * Tests for the agent API key boot guard.
- *
- * An unset or empty API_KEY leaves dynamicApiKey '' (server.ts), which makes POST /agent/token - the
- * only apiKey-secured route, and the only way to mint an agent token - permanently unreachable on an
- * agent that otherwise boots clean and reports healthy. yargs invokes `coerce` with `null` when the
- * option is absent, so the guard has to reject falsy input as well as short input; `demandOption`
- * alone would still accept API_KEY=''.
- *
- * setupServer calls this too, so the library entry point (startServer) is covered by the same guard
- * rather than only the CLI. The wiring - that this validator is the option's coercion, and that
- * startServer forwards the key - is covered in src/__tests__/cli.parser.apiKey.spec.ts and
- * src/__tests__/startServer.apiKey.spec.ts.
- *
- * Runs under Jest ESM mode (see jest.config.base.ts).
- */
+// yargs invokes coerce with null for an absent option, so falsy input has to be rejected too.
 import yargs from 'yargs'
 
 import { toSerializableConfig } from '../ServerConfig'
@@ -47,7 +32,6 @@ describe('validateApiKey', () => {
 })
 
 describe('toSerializableConfig', () => {
-  // setupServer writes its config to config.json; the key must not reach disk.
   it('drops apiKey', () => {
     const serialized = toSerializableConfig({ port: 3000, apiKey: 'x'.repeat(16) })
 

@@ -10,7 +10,7 @@ import { setupServer } from './server'
 
 export const startServer = async (agent: Agent, config: ServerConfig) => {
   const socketServer = config.socketServer ?? new WebSocketServer({ noServer: true })
-  // Keep apiKey out of the object setupServer serializes to config.json.
+  // Kept out of the config setupServer serializes.
   const { apiKey, ...serverConfig } = config
   const app = await setupServer(agent, { ...serverConfig, socketServer }, apiKey)
   const server = app.listen(config.port)

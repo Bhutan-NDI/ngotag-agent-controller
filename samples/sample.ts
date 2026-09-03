@@ -17,7 +17,6 @@ const run = async () => {
 
   const conf: ServerConfig = {
     port: 3000,
-    // No fallback: setupServer rejects a missing or short key, which is the point of the guard.
     apiKey: process.env.API_KEY,
     cors: true,
   }

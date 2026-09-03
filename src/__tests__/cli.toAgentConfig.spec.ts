@@ -1,13 +1,4 @@
-/**
- * Covers the handoff from parsed CLI arguments to the agent config.
- *
- * Parsing the key correctly is worthless if it is then dropped on the way to runRestAgent, and that
- * assignment is a single property in a large object literal - easy to lose in a merge and invisible
- * to every other test. runCliServer is now `runRestAgent(toAgentConfig(parsed))`, so asserting this
- * mapping covers the handoff without loading the agent.
- *
- * Runs under Jest ESM mode (see jest.config.base.ts).
- */
+// Guards the apiKey assignment in the mapping, which is one property among many and easy to lose.
 import type { Parsed } from '../cli.parser'
 
 import { toAgentConfig } from '../cli.parser'

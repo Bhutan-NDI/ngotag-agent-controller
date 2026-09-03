@@ -1,17 +1,4 @@
-/**
- * Parses through the definition cli.ts actually uses, rather than one the test rebuilds.
- *
- * validateApiKey passing in isolation proves nothing about the wiring: if `coerce` were detached, or
- * registered under a different option name, a unit test of the validator alone would stay green. This
- * calls the same buildParser that cli.ts's parseArguments calls, so the registration is under test.
- *
- * Only yargs' exit policy is overridden -- on a validation failure it prints and calls process.exit,
- * which is the right behaviour for a CLI but cannot be observed from a test (its ESM shim holds its
- * own reference to process.exit, so spying does not intercept). The option definitions, including the
- * coercion under test, are production.
- *
- * Runs under Jest ESM mode (see jest.config.base.ts).
- */
+// Parses through the definition cli.ts uses, so a detached or renamed registration fails here.
 import { buildParser } from '../cli.parser'
 
 // Everything else the parser demands, so a rejection can only come from apiKey.
@@ -37,6 +24,7 @@ const parse = async (extra: string[], apiKeyEnv?: string): Promise<{ apiKey?: st
     process.env.API_KEY = apiKeyEnv
   }
   try {
+    // yargs exits via its ESM shim's own process.exit reference, which a spy cannot intercept.
     return (await buildParser([...REQUIRED, ...extra])
       .exitProcess(false)
       .fail((message, error) => {
