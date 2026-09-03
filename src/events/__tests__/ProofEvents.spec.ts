@@ -4,9 +4,9 @@
  *   1. Tenant-session-leak fix — the tenant format-data fetch goes through withTenantAgent()
  *      (session scoped to the callback and released on exit), never getTenantAgent().
  *
- *   2. #61 event refactor — the webhook/socket payload gates `proofData` on the terminal `Done`
- *      state: it is `null` (and no getFormatData call is made) for every non-Done state, and only
- *      populated on `Done`. Webhook emission is fire-and-forget (not awaited).
+ *   2. The webhook/socket payload gates `proofData` on the terminal `Done` state: it is `null`
+ *      (and no getFormatData call is made) for every non-Done state, and only populated on `Done`.
+ *      Webhook emission is fire-and-forget (not awaited).
  *
  * Runs under Jest ESM mode (see jest.config.base.ts) because the event module's dependency graph
  * is native ESM. WebhookEvent and WebSocketEvents are stubbed so no network I/O occurs.

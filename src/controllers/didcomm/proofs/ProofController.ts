@@ -27,9 +27,8 @@ import {
 
 // A human-readable DIDComm problem-report reason has no business being large -- the field
 // otherwise accepts an unbounded string (up to the application-wide 5 MB body limit) that gets
-// encrypted, stored, and delivered to the verifier's agent. An authenticated caller could
-// otherwise repeatedly make this agent build and send multi-megabyte reports. 500 is generous for
-// a real explanation, far below anything that could be mistaken for a payload. See the #76 review.
+// encrypted, stored, and delivered to the verifier's agent. 500 is generous for a real
+// explanation, far below anything that could be mistaken for a payload.
 const MAX_PROBLEM_REPORT_DESCRIPTION_LENGTH = 500
 
 @Tags('DIDComm - Proofs')
@@ -435,11 +434,10 @@ export class ProofController extends Controller {
     @Body() body: { sendProblemReport?: boolean; problemReportDescription?: string },
   ) {
     try {
-      // Trimmed, and checked with a length comparison rather than truthiness -- the previous
-      // `if (body.problemReportDescription && ...)` guard let an empty string ("") through
-      // unvalidated, which also defeats Credo's own `?? 'Request declined'` default (`??` only
-      // fires on null/undefined, not ""), so the verifier received a reasonless problem report
-      // instead of the intended default text. See the #76 review.
+      // Trimmed, and checked with a length comparison rather than truthiness -- a bare truthiness
+      // check would let an empty string ("") through unvalidated and defeat Credo's own
+      // `?? 'Request declined'` default (`??` only fires on null/undefined, not ""), sending the
+      // verifier a reasonless problem report instead of the intended default text.
       const problemReportDescription = body.problemReportDescription?.trim()
       if (problemReportDescription && problemReportDescription.length > MAX_PROBLEM_REPORT_DESCRIPTION_LENGTH) {
         throw new BadRequestError(
@@ -451,9 +449,8 @@ export class ProofController extends Controller {
       // plain CredoError for a repeat/late decline (already declined, or the record has moved
       // past request-received), which ErrorHandlingService maps to a raw 500 -- a client that
       // retries after a lost response, or double-taps Decline, can't tell "nothing to do" from a
-      // genuine failure. Narrower than the escalated P1 fix (atomic claim + outbox): this only
-      // maps the state-mismatch case to a sensible status/response, it does not close the
-      // underlying race between two concurrent callers. See the #76 review.
+      // genuine failure. This only maps the state-mismatch case to a sensible response; it does
+      // not close the underlying race between two concurrent callers.
       const existingProof = await request.agent.modules.didcomm.proofs.getById(proofRecordId)
       if (existingProof.state === DidCommProofState.Declined) {
         // Idempotent: the record is already in the terminal state this call is trying to reach.
@@ -489,7 +486,7 @@ export class ProofController extends Controller {
       // getCredentialsForRequest asserts protocol version and state (request-received only)
       // itself and throws a plain CredoError otherwise, which ErrorHandlingService maps to a raw
       // 500 -- including immediately after a successful decline, on a verifier-side record, or on
-      // a v1 record reached via this v2-only path. See the #76 review.
+      // a v1 record reached via this v2-only path.
       const existingProof = await request.agent.modules.didcomm.proofs.getById(proofRecordId)
       this.assertProofState(existingProof, 'list credentials for')
 

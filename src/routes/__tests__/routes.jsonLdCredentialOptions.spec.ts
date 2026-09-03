@@ -3,8 +3,7 @@
  * enough on its own -- the generated `src/routes/routes.ts` and `swagger.json` must be regenerated
  * (`yarn tsoa`) too, or the field is silently rejected as an "excess property" (422) at the HTTP
  * layer under this repo's `noImplicitAdditionalProperties: "throw-on-extras"` config, even though
- * the controller itself accepts it fine. Confirmed in review: `expirationDate` was added to
- * types.ts, but the generated artifacts were never regenerated to match, until this fix.
+ * the controller itself accepts it fine.
  * `AgentController.selfAttestedCredential.spec.ts` calls the controller method directly, bypassing
  * tsoa's request validation entirely, so it can't catch this class of bug on its own.
  *

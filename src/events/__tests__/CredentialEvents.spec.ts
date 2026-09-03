@@ -4,9 +4,9 @@
  *   1. Tenant-session-leak fix — the tenant format-data / connection lookup goes through
  *      withTenantAgent() (session scoped to the callback, released on exit), never getTenantAgent().
  *
- *   2. #61 event refactor — the webhook/socket payload gates `credentialData` and `outOfBandId` on
- *      the terminal `Done` state: both are `null` (and no getFormatData / findById call is made) for
- *      every non-Done state, and only populated on `Done`. Webhook emission is fire-and-forget.
+ *   2. The webhook/socket payload gates `credentialData` and `outOfBandId` on the terminal `Done`
+ *      state: both are `null` (and no getFormatData / findById call is made) for every non-Done
+ *      state, and only populated on `Done`. Webhook emission is fire-and-forget.
  *
  * Runs under Jest ESM mode (see jest.config.base.ts). WebhookEvent and WebSocketEvents are stubbed
  * so no network I/O occurs.

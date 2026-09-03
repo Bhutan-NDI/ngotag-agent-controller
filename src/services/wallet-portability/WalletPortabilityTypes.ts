@@ -31,9 +31,8 @@ export interface WalletPortabilityJobRecord {
   // was renamed to, in case it ever needs to be inspected/restored. Never deleted automatically.
   backupProfile?: string
   // Populated on Failed — a stable, sanitized code (e.g. EXPORT_FAILED, IMPORT_FAILED), never the
-  // raw Askar/filesystem/AWS error text. The real error is logged server-side with the job id at
-  // the point of failure; this field is externally readable via getJobStatus, so it must never
-  // carry operational details (paths, bucket names, stack traces). See the #72 review.
+  // raw Askar/filesystem/AWS error text, since this field is externally readable via getJobStatus.
+  // The real error is logged server-side with the job id at the point of failure.
   error?: string
 }
 

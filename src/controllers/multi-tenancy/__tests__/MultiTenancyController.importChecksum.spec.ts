@@ -1,11 +1,10 @@
 /**
- * Regression test — #73 review: importTenantWallet only checked `checksum` for truthiness. A
- * malformed digest (wrong length, non-hex) still reserved the tenant's active-job slot and
- * downloaded up to MAX_DOWNLOAD_BYTES (2 GiB) before runImport's own comparison inevitably
- * failed. Also, SHA-256 hex is conceptually case-insensitive, but WalletPortabilityService's own
+ * Regression test: importTenantWallet must validate `checksum`'s shape, not just its truthiness —
+ * a malformed digest (wrong length, non-hex) would otherwise reserve the tenant's active-job slot
+ * and download up to MAX_DOWNLOAD_BYTES (2 GiB) before runImport's own comparison inevitably
+ * fails. Also, SHA-256 hex is conceptually case-insensitive, but WalletPortabilityService's own
  * comparison (`hash.digest('hex')`, always lowercase, compared with `!==`) is case-sensitive, so
- * an uppercase-but-arithmetically-correct checksum would still fail downstream unless normalized
- * first -- matches the platform-side DTO's own identical fix.
+ * an uppercase-but-arithmetically-correct checksum must be normalized first.
  *
  * The lowercasing tests mock getWalletPortabilityService (a module-level function, deliberately
  * substitutable via jest.mock -- see its own docblock) to observe the exact value passed through

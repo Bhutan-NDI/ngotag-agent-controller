@@ -4,7 +4,7 @@
  *   1. Async job contract — exportWallet() returns immediately with a Pending job id; the actual
  *      Askar/S3 work happens in the background and is observed only via getJobStatus().
  *   2. The tenant session is never held outside withTenantAgent() — copyProfile happens fully
- *      inside the callback, matching the #65 tenant-session-release discipline elsewhere in this repo.
+ *      inside the callback, matching the tenant-session-release discipline elsewhere in this repo.
  *   3. On success: job status becomes Completed with a downloadUrl + checksum, and the temp
  *      export file + temp store are cleaned up (never left on disk).
  *   4. On failure (copyProfile throws): job status becomes Failed with the error message, and
@@ -287,11 +287,9 @@ describe('WalletPortabilityService — exportWallet', () => {
     await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
 
     // setJobStatus is private -- this models a call site outside runExport (e.g. a future
-    // job-level timeout) re-saving the job's status after it has already completed. See the
-    // #72 review: this used to rebuild the whole record from scratch and silently drop
-    // s3Key/checksum, which getJobStatus's downloadUrl requires (job.status === Completed &&
-    // job.s3Key) -- so a completed export becomes unreachable through the API after any such
-    // re-save.
+    // job-level timeout) re-saving the job's status after it has already completed. A rebuild
+    // that dropped s3Key/checksum would make getJobStatus's downloadUrl unreachable (it requires
+    // job.status === Completed && job.s3Key), stranding a completed export behind the API.
     await (
       service as unknown as {
         setJobStatus: (
@@ -311,11 +309,10 @@ describe('WalletPortabilityService — exportWallet', () => {
   })
 
   it('startHeartbeat touches an InProgress job record on HEARTBEAT_INTERVAL_MS — this is what makes the reclaim staleness bound a real lease, not just "job started more than N ago"', async () => {
-    // #73 review: a bare "InProgress record older than N" check bounds total job duration, not
+    // A bare "InProgress record older than N" check would bound total job duration, not
     // liveness -- a genuinely long-running transfer (up to MAX_DOWNLOAD_BYTES/MAX_DECOMPRESSED_BYTES,
-    // 2 GiB, no time cap of its own) could get falsely reclaimed mid-run, admitting a second
-    // concurrent job on the same tenant profile. The heartbeat re-saves the record on an interval
-    // so the reclaim bound tracks "stopped heartbeating", not "has been running a while".
+    // 2 GiB, no time cap of its own) could get falsely reclaimed mid-run. The heartbeat re-saves
+    // the record on an interval so the reclaim bound tracks "stopped heartbeating" instead.
     jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask'] })
     try {
       const service = new WalletPortabilityService(makeLogger() as never)
@@ -394,8 +391,8 @@ describe('WalletPortabilityService — exportWallet', () => {
   })
 
   it('on failure: reaches Failed with a sanitized error code (not the raw exception), logs the real error server-side, and never uploads a partial artifact', async () => {
-    // #72 review: the job record is externally readable via getJobStatus, so it must never carry
-    // raw Askar/filesystem/AWS error text (paths, bucket names, stack traces) — only a stable
+    // The job record is externally readable via getJobStatus, so it must never carry raw
+    // Askar/filesystem/AWS error text (paths, bucket names, stack traces) — only a stable
     // sanitized code. The real error must still reach the server-side log, just not the caller.
     const copyProfile = jest.fn(async () => {
       throw new Error('simulated Askar failure')
@@ -502,8 +499,8 @@ describe('WalletPortabilityService — importWallet', () => {
     )
     const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
 
-    // #72 review: the job record is externally readable, so it carries a sanitized code, not the
-    // raw error text — the real error still reaches the server-side log.
+    // The job record is externally readable, so it carries a sanitized code, not the raw error
+    // text — the real error still reaches the server-side log.
     expect(job.error).toBe('IMPORT_FAILED')
     expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('Checksum mismatch'))
     expect(renameProfile).not.toHaveBeenCalled()
@@ -621,15 +618,13 @@ describe('WalletPortabilityService — importWallet', () => {
   })
 
   it("a stalled download body eventually rejects instead of hanging forever — node-fetch@2's own timeout only covers time-to-first-byte", async () => {
-    // #73 review, verified against the installed node-fetch@2.7.0 source: the `timeout` option
-    // passed to fetch() is armed on the request's 'socket' event and cleared the instant response
-    // headers arrive -- it does not cover a stall in the response *body* (an S3/LB connection
-    // that delivers headers, then goes half-open). downloadAndChecksum streams the body directly
-    // rather than using node-fetch's own buffered .text()/.json() (the only path with a body-level
-    // timer), so without its own inactivity timer, a stalled body left runImport hanging forever:
-    // no catch, no finally, no released reservation, and now (see the heartbeat fix above) a
-    // second job admitted on the same tenant once the lease expired while this one still held its
-    // handles.
+    // Verified against the installed node-fetch@2.7.0 source: the `timeout` option passed to
+    // fetch() is armed on the request's 'socket' event and cleared the instant response headers
+    // arrive -- it does not cover a stall in the response *body* (an S3/LB connection that
+    // delivers headers, then goes half-open). downloadAndChecksum streams the body directly rather
+    // than using node-fetch's own buffered .text()/.json() (the only path with a body-level
+    // timer), so without its own inactivity timer, a stalled body would leave runImport hanging
+    // forever: no catch, no finally, no released reservation.
     jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask'] })
     try {
       // Delivers one chunk, then never pushes more and never ends -- models the socket going
@@ -662,11 +657,10 @@ describe('WalletPortabilityService — importWallet', () => {
   })
 
   it('drains/destroys the response body before throwing on an HTTP-error response, instead of abandoning it unread', async () => {
-    // #73 review: an HTTP-error response (a 403/404 from S3, typically with a small XML error
-    // body) still has bytes to consume. Throwing without draining or destroying that body can
-    // leave its underlying keep-alive socket stuck open rather than freed back to node-fetch's
-    // connection pool, since the pool doesn't consider a socket free for reuse until the body is
-    // fully consumed or explicitly destroyed.
+    // An HTTP-error response (a 403/404 from S3, typically with a small XML error body) still has
+    // bytes to consume. Throwing without draining or destroying that body can leave its underlying
+    // keep-alive socket stuck open rather than freed back to node-fetch's connection pool, since
+    // the pool doesn't consider a socket free for reuse until the body is consumed or destroyed.
     const errorBody = new Readable({ read() {} })
     errorBody.push(Buffer.from('<Error><Code>AccessDenied</Code></Error>'))
     errorBody.push(null)
@@ -830,12 +824,10 @@ describe('WalletPortabilityService — importWallet', () => {
   })
 
   it('renameProfile itself fails (the rename-aside never lands): no backupProfile is reported, since no profile was ever created', async () => {
-    // #73 review: the earlier reporting logic only checked "did rollback succeed", which
-    // correctly covered the case above (rollback attempted and failed, real data still at
-    // backupProfile) but missed this mirror -- when the very first renameProfile call throws,
-    // no backup profile is ever created at all, no rollback is attempted (renamedAway never
-    // becomes true), and reporting backupProfile here would hand an operator a recovery pointer
-    // to a profile that was never created.
+    // Mirrors the case above (rollback attempted and failed, real data still at backupProfile):
+    // when the very first renameProfile call throws, no backup profile is ever created at all, no
+    // rollback is attempted (renamedAway never becomes true), and reporting backupProfile here
+    // would hand an operator a recovery pointer to a profile that was never created.
     const copyProfile = jest.fn(async () => undefined)
     const renameProfile = jest.fn(async () => {
       throw new Error('simulated rename-aside failure')
@@ -854,14 +846,12 @@ describe('WalletPortabilityService — importWallet', () => {
   })
 
   it('a failure after copyProfile succeeds reports no backupProfile and never attempts a rollback — the import already landed', async () => {
-    // #73 review: backupExists was set true right after the rename-aside and never cleared again
-    // until a *successful rollback*. renamedAway (which gates the rollback attempt) is correctly
-    // cleared the instant copyProfile succeeds, but backupExists previously was not -- so a later,
-    // unrelated failure in this same try (here: the job-store write for the Completed status)
-    // still reported this Failed record with a backupProfile pointer. An operator following that
-    // pointer ("the tenant's real data may still be at profile X") would rename the stale
-    // pre-import backup back over the profile that had, in fact, already been successfully
-    // imported into, destroying it.
+    // backupExists must be cleared the instant copyProfile succeeds, same as renamedAway (which
+    // gates the rollback attempt) — otherwise a later, unrelated failure in this same try (here:
+    // the job-store write for the Completed status) would still report this Failed record with a
+    // backupProfile pointer. An operator following that pointer ("the tenant's real data may
+    // still be at profile X") would rename the stale pre-import backup back over the profile that
+    // had, in fact, already been successfully imported into, destroying it.
     // Import's copyProfile is called on the *downloaded* store (importedStoreCopyProfile), not
     // baseStore.copyProfile -- that one is only ever used by export. See the sibling
     // "copyProfile failure after the rename" test's identical comment.
@@ -951,11 +941,11 @@ describe('WalletPortabilityService — importWallet', () => {
 })
 
 describe('WalletPortabilityService — export → import round trip', () => {
-  // The bug this closes: export's gzipAndChecksum and import's downloadAndChecksum each hashed
-  // different bytes (plaintext vs. gzip) before the #72/#73 review fixes, so any real export's
-  // checksum could never match what a real import verified — 100% failure, undetected by either
-  // side's own unit tests because each minted its *own* expected checksum locally instead of
-  // consuming the other's actual output. This test never computes an expected checksum itself:
+  // Guards against export's gzipAndChecksum and import's downloadAndChecksum hashing different
+  // bytes (plaintext vs. gzip) — a mismatch there would make any real export's checksum unable to
+  // ever match what a real import verifies, undetected by either side's own unit tests if each
+  // minted its own expected checksum locally instead of consuming the other's actual output. This
+  // test never computes an expected checksum itself:
   // it takes whatever exportWallet() actually returns and feeds it straight into importWallet(),
   // through the real (unmocked) gzip/hash code in both gzipAndChecksum and downloadAndChecksum —
   // only Askar, S3, and node-fetch are mocked, exactly as in the suites above.
