@@ -1,6 +1,8 @@
 // The yargs definition lives apart from cli.ts so it can be imported without pulling in cliAgent
 // and the whole agent dependency graph. cli.ts and its test then parse with the same definition,
 // rather than the test recreating one that could drift from production.
+import type { AriesRestConfig } from './cliAgent.js'
+
 import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 
@@ -172,4 +174,56 @@ export function buildParser(argv: string[] = hideBin(process.argv)) {
 
 export async function parseArguments(argv?: string[]): Promise<Parsed> {
   return buildParser(argv).parseAsync() as Promise<Parsed>
+}
+
+// The parsed-to-agent mapping lives here rather than inline in runCliServer so it can be asserted
+// without loading the agent. AriesRestConfig is a type-only import, so this module stays importable
+// on its own.
+export function toAgentConfig(parsed: Parsed): AriesRestConfig {
+  return {
+    label: parsed.label,
+    walletConfig: {
+      id: parsed['wallet-id'],
+      key: parsed['wallet-key'],
+      database: {
+        type: parsed['wallet-type'],
+        config: {
+          host: parsed['wallet-url'],
+          connectTimeout: parsed['wallet-connect-timeout'] || Number(process.env.CONNECT_TIMEOUT),
+          maxConnections: parsed['wallet-max-connections'] || Number(process.env.MAX_CONNECTIONS),
+          idleTimeout: parsed['wallet-idle-timeout'] || Number(process.env.IDLE_TIMEOUT),
+        },
+        credentials: {
+          account: parsed['wallet-account'],
+          password: parsed['wallet-password'],
+          adminAccount: parsed['wallet-admin-account'],
+          adminPassword: parsed['wallet-admin-password'],
+        },
+      },
+    },
+    indyLedger: parsed['indy-ledger'],
+    endpoints: parsed.endpoint,
+    autoAcceptConnections: parsed['auto-accept-connections'],
+    autoAcceptCredentials: parsed['auto-accept-credentials'],
+    autoAcceptProofs: parsed['auto-accept-proofs'],
+    logLevel: parsed['log-level'],
+    inboundTransports: parsed['inbound-transport'],
+    outboundTransports: parsed['outbound-transport'],
+    webhookUrl: parsed['webhook-url'],
+    adminPort: parsed['admin-port'],
+    tenancy: parsed.tenancy,
+    schemaFileServerURL: parsed.schemaFileServerURL,
+    didRegistryContractAddress: parsed.didRegistryContractAddress,
+    schemaManagerContractAddress: parsed.schemaManagerContractAddress,
+    rpcUrl: parsed.rpcUrl,
+    fileServerUrl: parsed.fileServerUrl,
+    fileServerToken: parsed.fileServerToken,
+    ethereumNetworkName: parsed.ethereumNetworkName || parsed.chainName,
+    ethereumChainId: parsed.ethereumChainId || parsed.chainId,
+    ethereumRegistry: parsed.ethereumRegistry || parsed.registry,
+    ethereumSchemaManagerContractAddress: parsed.ethereumSchemaManagerContractAddress,
+    ethereumRpcUrl: parsed.ethereumRpcUrl,
+    apiKey: parsed['apiKey'],
+    updateJwtSecret: parsed['updateJwtSecret'],
+  } as unknown as AriesRestConfig
 }
