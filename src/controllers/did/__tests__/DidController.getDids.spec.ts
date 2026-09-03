@@ -1,9 +1,7 @@
 /**
- * Regression tests for GET /dids' isDefault query filter — the #75 review's follow-up finding
- * (kinxa0, 2026-08-17) that this repo had no read path at all for the tenant's default DID:
- * @Route('/dids') exposed only /:did, /write, and an unfiltered / (getDids, returning every
- * created DID). Combined with platform #71 not forwarding isDefault either, "fetch my default
- * DID" was broken end to end.
+ * Regression tests for GET /dids' isDefault query filter. This repo had no read path at all for
+ * the tenant's default DID: @Route('/dids') exposed only /:did, /write, and an unfiltered /
+ * (getDids, returning every created DID).
  *
  * Fix: getDids takes an optional isDefault query param; when true, it queries the DidRepository
  * for the isDefault-tagged DidRecord(s) directly (the same tag DidController.writeDid sets)
@@ -82,8 +80,8 @@ describe('DidController.getDids', () => {
   })
 
   it('sorts multiple isDefault-tagged records by createdAt descending — not an arbitrary unordered pick that could disagree with issuance', async () => {
-    // #75 review: findByQuery applies no ordering of its own (a plain Askar scan). A wallet
-    // migrated from the legacy stack can carry more than one isDefault-tagged DID, and
+    // findByQuery applies no ordering of its own (a plain Askar scan). A wallet migrated from the
+    // legacy stack can carry more than one isDefault-tagged DID, and
     // AgentController.createW3cSelfAttestedCredential already sorts this identical query by
     // createdAt descending before picking one. Without the same sort here, this endpoint could
     // return the unsorted list with the superseded, earliest-tagged DID first -- the obvious way

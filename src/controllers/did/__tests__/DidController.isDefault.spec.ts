@@ -1,24 +1,19 @@
 /**
- * Regression tests for writeDid's isDefault handling — specifically the #75 review finding that
- * handleIndicio's non-endorser branch (role !== 'endorser', an endorserDid supplied instead)
- * returns the raw registrar result (`{ didState: { did, didDocument, state }, ... }`), not a
- * normalized `{ did, didDocument }` like every other handler branch (handleBcovrin's equivalent
- * branch included). A plain `didRes.did` read is therefore undefined for this one path, so
- * `isDefault: true` was silently dropped: the request still returned 200, but the tag was never
- * written, and the caller had no way to know their isDefault flag was ignored.
+ * Regression tests for writeDid's isDefault handling. handleIndicio's non-endorser branch
+ * (role !== 'endorser', an endorserDid supplied instead) returns the raw registrar result
+ * (`{ didState: { did, didDocument, state }, ... }`), not a normalized `{ did, didDocument }` like
+ * every other handler branch. A plain `didRes.did` read is therefore undefined for this one path,
+ * so `isDefault: true` was silently dropped: the request still returned 200, but the tag was never
+ * written, with no way for the caller to know.
  *
  * Fix: writeDid falls back to `didRes.didState?.did` when `didRes.did` is absent.
  *
- * Also covers the #75 follow-up findings (kinxa0, 2026-08-17): isDefault is tracked as a tag on
- * the DID's own DidRecord (via DidRepository), not a separate GenericRecord pointer — verified
- * directly against the installed @credo-ts/core/@credo-ts/askar packages that arbitrary DidRecord
- * tags round-trip through save and query. This suite exercises: the didState.did fallback, the
- * previous-default-clearing behavior (fixing the legacy bug where the old default was never
- * cleared), the self-clearing no-op guard, that both writes now go through updateByIdWithLock
- * (Askar's atomic read-modify-write with forUpdate: true, not a plain get+update), and the same
- * "never 500 an already-successful DID creation over bookkeeping" contract as before (the
- * bookkeeping is wrapped in its own try/catch and only logs a warning on failure; writeDid still
- * returns the real created DID either way).
+ * isDefault is tracked as a tag on the DID's own DidRecord (via DidRepository), not a separate
+ * GenericRecord pointer. This suite exercises: the didState.did fallback, previous-default-clearing,
+ * the self-clearing no-op guard, that both writes go through updateByIdWithLock (Askar's atomic
+ * read-modify-write with forUpdate: true), and the "never 500 an already-successful DID creation
+ * over bookkeeping" contract (the bookkeeping is wrapped in its own try/catch and only logs a
+ * warning on failure; writeDid still returns the real created DID either way).
  *
  * Runs under Jest's ESM mode, mirroring DidController.polygon.spec.ts / DidController.ethereum
  * .spec.ts: tsyringe and cliAgent are mocked so constructing the controller doesn't require a real
@@ -133,9 +128,9 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
   })
 
   it('reports isDefaultSet: true on the response when the bookkeeping actually succeeds', async () => {
-    // #75 review: the response must distinguish "isDefault was requested and actually recorded"
-    // from "isDefault was requested but the bookkeeping silently failed" -- see the isDefaultSet:
-    // false cases below for the failure side of this same contract.
+    // The response must distinguish "isDefault was requested and actually recorded" from
+    // "isDefault was requested but the bookkeeping silently failed" -- see the isDefaultSet: false
+    // cases below for the failure side of this same contract.
     const agent = makeAgent({
       didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
     })
@@ -182,10 +177,10 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
   })
 
   it('tags the new default BEFORE clearing the previous one — not the other order', async () => {
-    // #73 review: the previous order (clear old defaults, then tag the new one) made the worst
-    // case of a failure on that final write "zero tagged defaults" -- the self-attested-issuance
-    // endpoint 404s where it worked a moment before. Tagging first makes the worst case "two
-    // tagged defaults" instead, which the read path already tolerates by design.
+    // Clearing old defaults before tagging the new one makes the worst case of a failure on that
+    // final write "zero tagged defaults" -- the self-attested-issuance endpoint 404s where it
+    // worked a moment before. Tagging first makes the worst case "two tagged defaults" instead,
+    // which the read path already tolerates by design.
     const agent = makeAgent({
       didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
     })
@@ -236,11 +231,10 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
   })
 
   it('reports isDefaultSet: true even when the clearing loop itself fails — the tag write already succeeded and is what issuance actually uses', async () => {
-    // #75 review: isDefaultSet was only set true after the *whole* tag+clear sequence completed,
-    // so a failure in the clearing loop alone reported isDefaultSet: false even though the new
-    // DID was already tagged and, being the newest by createdAt, is exactly what
-    // AgentController's sorted read path picks. A client told "not set" for a request that was
-    // in fact honored has one recourse -- retry -- which anchors a second, orphaned ledger DID.
+    // isDefaultSet must be true once the tag write itself succeeded, independent of the clearing
+    // loop -- the new DID is already tagged and, being the newest by createdAt, is what
+    // AgentController's sorted read path picks. Reporting "not set" for a request that was in
+    // fact honored has one recourse -- retry -- which anchors a second, orphaned ledger DID.
     const agent = makeAgent({
       didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
     })
@@ -268,13 +262,11 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
   })
 
   it('snapshots previousDefaults BEFORE tagging the new default, not after — the after-tagging order let two concurrent isDefault writes each clear the other and converge on zero defaults', async () => {
-    // #75 review, reviewer confirming and owning it: reading previousDefaults *after* the tag
-    // write (the shape the #73 fix landed in) let two concurrent isDefault:true requests for two
-    // different DIDs each observe the other's freshly-tagged record as "previous" and clear it --
-    // both converging on ZERO tagged defaults, worse than the pre-#73 order (which at least
-    // converged on a single winner). Snapshotting first keeps the #73 fix's "worst case is two
-    // defaults, never zero" property while closing this race: this request's own view of
-    // "previous" can no longer include a default a concurrent request tags after this read.
+    // Reading previousDefaults after the tag write let two concurrent isDefault:true requests for
+    // two different DIDs each observe the other's freshly-tagged record as "previous" and clear
+    // it -- both converging on ZERO tagged defaults. Snapshotting first keeps "worst case is two
+    // defaults, never zero" while closing this race: this request's own view of "previous" can no
+    // longer include a default a concurrent request tags after this read.
     const agent = makeAgent({
       didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
     })
@@ -325,9 +317,9 @@ describe("writeDid — isDefault via handleIndicio's non-endorser branch", () =>
 
     const result = await controller.writeDid(makeRequest(agent), indicioNonEndorserOptions())
 
-    // isDefaultSet: false -- #75 review: isDefault was explicitly requested but the bookkeeping
-    // couldn't happen, so the response must say so rather than silently looking identical to a
-    // request that succeeded.
+    // isDefaultSet: false -- isDefault was explicitly requested but the bookkeeping couldn't
+    // happen, so the response must say so rather than silently looking identical to a request
+    // that succeeded.
     expect(result).toEqual({
       didState: { state: 'finished', did: CREATED_DID, didDocument: { id: CREATED_DID } },
       isDefaultSet: false,

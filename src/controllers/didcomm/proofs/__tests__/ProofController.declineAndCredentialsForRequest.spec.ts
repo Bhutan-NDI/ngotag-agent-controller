@@ -5,8 +5,7 @@
  * decline-request/:tenantId and /multi-tenancy/credentialsForRequest/:tenantId/:proofRecordId) but
  * had no equivalent anywhere on this repo's /didcomm/proofs family. Both APIs are still present on
  * this repo's installed Credo 0.6.2 (@credo-ts/didcomm), and both have live production consumers
- * via cloud-wallet-service's /proofs/decline-request and /credentialsForRequest/:proofRecordId —
- * see the ngotag-platform #71 review's port-completeness sweep.
+ * via cloud-wallet-service's /proofs/decline-request and /credentialsForRequest/:proofRecordId.
  *
  * declineRequest optionally sends a problem-report message to the verifier; getCredentialsForRequest
  * is the "let the holder choose among matching credentials" read path, complementing acceptRequest's
@@ -55,7 +54,7 @@ const makeAgent = (
       proofs: {
         // Defaults to a record in request-received -- the only state declineRequest/
         // getCredentialsForRequest actually accept -- so every test below exercises the happy
-        // path unless it explicitly overrides this. See the #76 review's state-guard finding.
+        // path unless it explicitly overrides this.
         getById:
           overrides.getByIdImpl ??
           (jest.fn(async () => ({
@@ -122,9 +121,8 @@ describe('ProofController.declineRequest', () => {
   })
 
   it('rejects an oversized problemReportDescription before it ever reaches declineRequest/the DIDComm send', async () => {
-    // #76 review: the field otherwise accepts an unbounded string (up to the app-wide 5 MB body
-    // limit) that gets encrypted, stored, and delivered to the verifier -- an authenticated caller
-    // could repeatedly make the agent build and send multi-megabyte reports.
+    // The field otherwise accepts an unbounded string (up to the app-wide 5 MB body limit) that
+    // gets encrypted, stored, and delivered to the verifier.
     const agent = makeAgent()
     const controller = new ProofController()
 
@@ -150,9 +148,9 @@ describe('ProofController.declineRequest', () => {
   })
 
   it('forwards an empty-string problemReportDescription as undefined, not "" — an empty string defeats Credo\'s own default reason', async () => {
-    // #76 review: the previous truthiness guard let "" through unvalidated, and Credo's
+    // A bare truthiness guard would let "" through unvalidated, and Credo's
     // `description: options.problemReportDescription ?? 'Request declined'` does not treat ""
-    // as nullish, so the verifier received a reasonless problem report instead of the default.
+    // as nullish, so the verifier would receive a reasonless problem report instead of the default.
     const agent = makeAgent()
     const controller = new ProofController()
 
@@ -167,9 +165,9 @@ describe('ProofController.declineRequest', () => {
   })
 
   it('is idempotent when the record is already declined — returns the existing record instead of erroring', async () => {
-    // #76 review: Credo's own assertState throws a plain CredoError for a repeat decline (e.g. a
-    // retry after a lost response, or a double-tap), which ErrorHandlingService maps to a raw
-    // 500. A caller retrying can't distinguish "nothing to do" from a genuine failure.
+    // Credo's own assertState throws a plain CredoError for a repeat decline (e.g. a retry after
+    // a lost response, or a double-tap), which ErrorHandlingService maps to a raw 500. A caller
+    // retrying can't distinguish "nothing to do" from a genuine failure.
     const agent = makeAgent({
       getByIdImpl: jest.fn(async () => ({
         state: 'declined',
@@ -214,10 +212,8 @@ describe('ProofController.getCredentialsForRequest', () => {
   })
 
   it('does not call acceptRequest/selectCredentialsForRequest — this is a read-only lookup', async () => {
-    // #76 review: the previous version of this test asserted on declineRequest, a method that
-    // was never reachable from getCredentialsForRequest in the first place (and isn't even
-    // defined on this test's own agent mock at the time) -- the assertion was vacuous. Asserting
-    // on the two methods the title actually names makes this test protect the invariant it claims to.
+    // Asserts on the two methods this test's title actually names, so the test protects the
+    // invariant it claims to rather than a vacuous check.
     const agent = makeAgent()
     const controller = new ProofController()
 
@@ -228,8 +224,8 @@ describe('ProofController.getCredentialsForRequest', () => {
   })
 
   it('rejects listing credentials for a record that is not in request-received with a 4xx, not a raw 500 from Credo', async () => {
-    // #76 review: DidCommProofV2Protocol.getCredentialsForRequest asserts protocol version and
-    // state (request-received only) itself and throws a plain CredoError otherwise -- including
+    // DidCommProofV2Protocol.getCredentialsForRequest asserts protocol version and state
+    // (request-received only) itself and throws a plain CredoError otherwise -- including
     // immediately after a successful decline, on a verifier-side record, or a v1 record reached
     // via this v2-only path.
     const agent = makeAgent({

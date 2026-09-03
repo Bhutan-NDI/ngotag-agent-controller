@@ -6,7 +6,7 @@ import type { ApiError } from './errors'
 import type { ServerConfig } from './utils/ServerConfig'
 import type { Response as ExResponse, Request as ExRequest, NextFunction, ErrorRequestHandler } from 'express'
 
-import { Agent } from '@credo-ts/core'
+import { Agent, type Logger } from '@credo-ts/core'
 import { TenantAgent } from '@credo-ts/tenants'
 import bodyParser from 'body-parser'
 import cors from 'cors'
@@ -20,6 +20,7 @@ import { container } from 'tsyringe'
 
 import { setDynamicApiKey } from './authentication'
 import { ErrorMessages } from './enums'
+import { createErrorHandler } from './errorHandler'
 import { BaseError } from './errors/errors'
 import { basicMessageEvents } from './events/BasicMessageEvents'
 import { connectionEvents } from './events/ConnectionEvents'
@@ -124,34 +125,7 @@ export const setupServer = async (
   app.use(securityMiddleware.use)
   RegisterRoutes(app)
 
-  app.use((async (err: unknown, req: ExRequest, res: ExResponse, next: NextFunction): Promise<ExResponse | void> => {
-    // End tenant session if active
-    if (err instanceof ValidateError) {
-      agent.config.logger.warn(`Caught Validation Error for ${req.path}:`, err.fields)
-      return res.status(422).json({
-        message: 'Validation Failed',
-        details: err?.fields,
-      })
-    } else if (err instanceof BaseError) {
-      return res.status(err.statusCode).json({
-        message: err.message,
-      })
-    } else if (err instanceof Error) {
-      // Extend the Error type with custom properties
-      const error = err as Error & { statusCode?: number; status?: number; stack?: string }
-      if (error.status === 401) {
-        return res.status(401).json({
-          message: `Unauthorized`,
-          details: err.message !== ErrorMessages.Unauthorized ? err.message : undefined,
-        } satisfies ApiError)
-      }
-      const statusCode = error.statusCode || error.status || 500
-      return res.status(statusCode).json({
-        message: error.message || 'Internal Server Error',
-      })
-    }
-    next()
-  }) as ErrorRequestHandler)
+  app.use(createErrorHandler(agent.config.logger))
 
   return app
 }

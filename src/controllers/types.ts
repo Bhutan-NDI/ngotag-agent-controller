@@ -236,6 +236,10 @@ export interface ReceiveInvitationProps extends ReceiveOutOfBandInvitationProps 
 
 export interface ReceiveInvitationByUrlProps extends ReceiveOutOfBandInvitationProps {
   invitationUrl: string
+  // Not part of ReceiveOutOfBandInvitationConfig -- pulled out of the config before it reaches
+  // Credo's own receiveInvitationFromUrl, then used only to tag the resulting connection
+  // afterward (addConnectionType). See receiveInvitationFromUrl below.
+  connectionType?: string
 }
 
 export interface AcceptInvitationConfig {
