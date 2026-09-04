@@ -9,11 +9,16 @@ import { sendWebhookEvent } from './WebhookEvent'
 
 export const reuseConnectionEvents = async (agent: Agent, config: ServerConfig) => {
   agent.events.on(DidCommOutOfBandEventTypes.HandshakeReused, async (event: DidCommHandshakeReusedEvent) => {
+    const tenantId =
+      !event.metadata.contextCorrelationId || event.metadata.contextCorrelationId === 'default'
+        ? event.metadata.contextCorrelationId
+        : event.metadata.contextCorrelationId.split('tenant-')[1]
     const body = {
       ...event.payload.connectionRecord.toJSON(),
       outOfBandRecord: event.payload.outOfBandRecord.toJSON(),
       reuseThreadId: event.payload.reuseThreadId,
       ...event.metadata,
+      contextCorrelationId: tenantId,
     }
 
     // Only send webhook if webhook url is configured

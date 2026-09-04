@@ -12,7 +12,11 @@ export const connectionEvents = async (agent: Agent, config: ServerConfig) => {
     DidCommConnectionEventTypes.DidCommConnectionStateChanged,
     async (event: DidCommConnectionStateChangedEvent) => {
       const record = event.payload.connectionRecord
-      const body = { ...record.toJSON(), ...event.metadata }
+      const tenantId =
+        !event.metadata.contextCorrelationId || event.metadata.contextCorrelationId === 'default'
+          ? event.metadata.contextCorrelationId
+          : event.metadata.contextCorrelationId.split('tenant-')[1]
+      const body = { ...record.toJSON(), ...event.metadata, contextCorrelationId: tenantId }
 
       // Only send webhook if webhook url is configured
       if (config.webhookUrl) {
