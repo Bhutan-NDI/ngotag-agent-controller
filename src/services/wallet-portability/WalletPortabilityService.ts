@@ -209,16 +209,33 @@ export class WalletPortabilityService {
         })
 
         await baseStore.copyProfile({ toStore: tempStore, fromProfile: profile, toProfile: packagedProfile })
+
+        // walletID also selects the mobile-compat artifact: flatten W3C records to the shape
+        // Credo 0.5.18 can read (nested credentialInstances -> flat credential).
+        if (walletID) {
+          await this.flattenW3cRecords(tempStore, packagedProfile)
+        }
       })
 
       await tempStore?.close()
       tempStore = undefined
 
-      gzipPath = `${tempDbPath}.gz`
-      const checksum = await this.gzipAndChecksum(tempDbPath, gzipPath)
-
-      const s3Key = `wallet-exports/${tenantId}/${jobId}.db.gz`
-      await this.uploadToS3(gzipPath, s3Key)
+      let uploadPath: string
+      let checksum: string
+      let s3Key: string
+      if (walletID) {
+        // Mobile's Credo 0.5.18 never decompresses a downloaded artifact -- ship the plain
+        // file it can open directly instead of the native (gzipped) one.
+        checksum = await this.checksumFile(tempDbPath)
+        uploadPath = tempDbPath
+        s3Key = `wallet-exports/${tenantId}/${jobId}.db`
+      } else {
+        gzipPath = `${tempDbPath}.gz`
+        checksum = await this.gzipAndChecksum(tempDbPath, gzipPath)
+        uploadPath = gzipPath
+        s3Key = `wallet-exports/${tenantId}/${jobId}.db.gz`
+      }
+      await this.uploadToS3(uploadPath, s3Key)
 
       // s3Key is persisted, not a downloadUrl — getJobStatus mints a fresh short-lived URL on
       // every read so a job read long after completion still returns a live link.
@@ -268,6 +285,40 @@ export class WalletPortabilityService {
     gzip.on('data', (chunk) => hash.update(chunk))
     await pipeline(source, gzip, dest)
     return hash.digest('hex')
+  }
+
+  // Hashes the plain (uncompressed) artifact — the mobile-compat upload path uploads this same
+  // file as-is, so the checksum must cover it directly, not a gzipped copy.
+  private async checksumFile(filePath: string): Promise<string> {
+    const hash = createHash('sha256')
+    await pipeline(createReadStream(filePath), hash)
+    return hash.digest('hex')
+  }
+
+  // Rewrites each W3C record from 0.6.2's credentialInstances[0].credential back to the flat
+  // credential field Credo 0.5.18 (the mobile app's pinned version) can read. multiInstanceState
+  // is left in place -- 0.5.18 ignores the unknown tag, and a 0.6.2 reader recovers it as-is.
+  private async flattenW3cRecords(store: Store, profile: string): Promise<void> {
+    const session = await store.transaction(profile).open()
+    try {
+      const entries = await session.fetchAll({ category: 'W3cCredentialRecord', forUpdate: true, isJson: true })
+
+      for (const entry of entries) {
+        const value = entry.value as Record<string, unknown>
+        const instances = value.credentialInstances as Array<{ credential: unknown }> | undefined
+        if (!instances?.length) continue
+
+        value.credential = instances[0].credential
+        delete value.credentialInstances
+
+        await session.replace({ category: entry.category, name: entry.name, value, tags: entry.tags })
+      }
+
+      await session.commit()
+    } catch (error) {
+      await session.rollback()
+      throw error
+    }
   }
 
   private getExportBucket(): string {
