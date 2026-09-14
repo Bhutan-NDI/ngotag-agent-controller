@@ -8401,6 +8401,26 @@
 						"schema": {
 							"$ref": "#/components/schemas/RecordId"
 						}
+					},
+					{
+						"description": "Opt into live pagination (1–1000). Omit both paging parameters for the complete legacy list.",
+						"in": "query",
+						"name": "limit",
+						"required": false,
+						"schema": {
+							"format": "double",
+							"type": "number"
+						}
+					},
+					{
+						"description": "Zero-based offset, used with limit. Read X-Has-More and X-Next-Offset headers.\nPages use internal insertion order. Concurrent deletion or insertion can change traversal;\nuse the complete-list endpoint when a single-query view is required. Deep offsets cost more.",
+						"in": "query",
+						"name": "offset",
+						"required": false,
+						"schema": {
+							"format": "double",
+							"type": "number"
+						}
 					}
 				]
 			}
@@ -11007,6 +11027,26 @@
 						"required": false,
 						"schema": {
 							"type": "string"
+						}
+					},
+					{
+						"description": "Opt into live pagination (1–1000). Omit both paging parameters for the complete legacy list.",
+						"in": "query",
+						"name": "limit",
+						"required": false,
+						"schema": {
+							"format": "double",
+							"type": "number"
+						}
+					},
+					{
+						"description": "Zero-based offset, used with limit. Read X-Has-More and X-Next-Offset headers.\nPages use internal insertion order. Concurrent deletion or insertion can change traversal;\nuse the complete-list endpoint when a single-query view is required. Deep offsets cost more.",
+						"in": "query",
+						"name": "offset",
+						"required": false,
+						"schema": {
+							"format": "double",
+							"type": "number"
 						}
 					}
 				]

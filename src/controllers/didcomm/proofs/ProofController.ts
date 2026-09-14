@@ -2,6 +2,7 @@ import type { PeerDidNumAlgo2CreateOptions, DifPexInputDescriptorToCredentials }
 
 import { PeerDidNumAlgo, createPeerDidDocumentFromServices } from '@credo-ts/core'
 import {
+  DidCommProofExchangeRepository,
   AcceptProofRequestOptions,
   DidCommProofExchangeRecordProps,
   DidCommProofState,
@@ -17,6 +18,7 @@ import ErrorHandlingService from '../../../errorHandlingService'
 import { BadRequestError } from '../../../errors'
 import { PurgeRecordType } from '../../../purge/PurgeTypes'
 import { SchedulePurge } from '../../../purge/decorators/SchedulePurge'
+import { recordPageOptions, recordPage } from '../../../utils/recordPagination'
 import { ProofRecordExample, RecordId } from '../../examples'
 import {
   AcceptProofProposal,
@@ -40,14 +42,29 @@ export class ProofController extends Controller {
    * Retrieve all proof records
    *
    * @param threadId
+   * @param limit Opt into live pagination (1–1000). Omit both paging parameters for the complete legacy list.
+   * @param offset Zero-based offset, used with limit. Read X-Has-More and X-Next-Offset headers.
+   * Pages use internal insertion order. Concurrent deletion or insertion can change traversal;
+   * use the complete-list endpoint when a single-query view is required. Deep offsets cost more.
    * @returns ProofRecord[]
    */
   @Example<DidCommProofExchangeRecordProps[]>([ProofRecordExample])
   @Get('/')
-  public async getAllProofs(@Request() request: Req, @Query('threadId') threadId?: string) {
+  public async getAllProofs(
+    @Request() request: Req,
+    @Query('threadId') threadId?: string,
+    @Query('limit') limit?: number,
+    @Query('offset') offset?: number,
+  ) {
+    const page = recordPageOptions(limit, offset)
     try {
       const query = threadId ? { threadId } : {}
-      const proofs = await request.agent.modules.didcomm.proofs.findAllByQuery(query)
+      const records = page
+        ? await request.agent.context.dependencyManager
+            .resolve(DidCommProofExchangeRepository)
+            .findByQuery(request.agent.context, query, page)
+        : await request.agent.modules.didcomm.proofs.findAllByQuery(query)
+      const proofs = page ? recordPage(this, records, page) : records
 
       return proofs.map((proof) => proof.toJSON())
     } catch (error) {
