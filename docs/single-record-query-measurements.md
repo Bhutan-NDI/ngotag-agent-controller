@@ -6,8 +6,11 @@ corrected. The refreshed matrix completed **21 of 21 processes**, including
 [native lifecycle investigation](native-callback-lifecycle.md) for the cause,
 negative control and installation requirements.
 
-This resolves the observed benchmark lifecycle failure. It does **not** establish
-a general latency improvement or justify a smaller database instance.
+This resolves the observed benchmark lifecycle failure. These original measurements
+alone do **not** establish a general latency improvement or justify a smaller
+database instance. The subsequent [opt-in PostgreSQL planning experiment](postgres-query-planning.md)
+establishes mixed-read latency and CPU gains on a larger synthetic fixture,
+including a half-CPU comparison; production sizing still requires rollout evidence.
 
 ## Method
 

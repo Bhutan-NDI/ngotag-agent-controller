@@ -38,6 +38,7 @@ export interface Parsed {
   'wallet-connect-timeout'?: number
   'wallet-max-connections'?: number
   'wallet-idle-timeout'?: number
+  'wallet-postgres-statement-cache-capacity'?: number
   schemaFileServerURL?: string
   didRegistryContractAddress?: string
   schemaManagerContractAddress?: string
@@ -159,6 +160,11 @@ export function buildParser(argv: string[] = hideBin(process.argv)) {
     .option('wallet-connect-timeout', { number: true })
     .option('wallet-max-connections', { number: true })
     .option('wallet-idle-timeout', { number: true })
+    .option('wallet-postgres-statement-cache-capacity', {
+      number: true,
+      description: 'PostgreSQL prepared-statement cache entries per connection; 0 replans each execution',
+      coerce: validateStatementCacheCapacity,
+    })
     .option('apiKey', apiKeyOptionDefinition())
     .option('updateJwtSecret', {
       boolean: true,
@@ -172,6 +178,13 @@ export async function parseArguments(argv?: string[]): Promise<Parsed> {
   return buildParser(argv).parseAsync() as Promise<Parsed>
 }
 
+function validateStatementCacheCapacity(value: number | undefined): number | undefined {
+  if (value !== undefined && (!Number.isInteger(value) || value < 0 || value > 10000)) {
+    throw new Error('wallet-postgres-statement-cache-capacity must be an integer from 0 through 10000')
+  }
+  return value
+}
+
 export function toAgentConfig(parsed: Parsed): AriesRestConfig {
   return {
     label: parsed.label,
@@ -182,6 +195,7 @@ export function toAgentConfig(parsed: Parsed): AriesRestConfig {
         type: parsed['wallet-type'],
         config: {
           host: parsed['wallet-url'],
+          statementCacheCapacity: validateStatementCacheCapacity(parsed['wallet-postgres-statement-cache-capacity']),
           connectTimeout: parsed['wallet-connect-timeout'] || Number(process.env.CONNECT_TIMEOUT),
           maxConnections: parsed['wallet-max-connections'] || Number(process.env.MAX_CONNECTIONS),
           idleTimeout: parsed['wallet-idle-timeout'] || Number(process.env.IDLE_TIMEOUT),

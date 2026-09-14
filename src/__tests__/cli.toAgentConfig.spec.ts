@@ -60,3 +60,19 @@ describe('toAgentConfig', () => {
     })
   })
 })
+
+describe('PostgreSQL statement-cache mapping', () => {
+  it.each([undefined, 0, 100, 10000])('preserves capacity %s', (capacity) => {
+    expect(
+      toAgentConfig({ ...parsed, 'wallet-postgres-statement-cache-capacity': capacity }).walletConfig,
+    ).toMatchObject({
+      database: { config: { statementCacheCapacity: capacity } },
+    })
+  })
+
+  it.each([-1, 0.5, NaN, Infinity, 10001])('rejects invalid capacity %s', (capacity) => {
+    expect(() => toAgentConfig({ ...parsed, 'wallet-postgres-statement-cache-capacity': capacity })).toThrow(
+      'wallet-postgres-statement-cache-capacity must be an integer from 0 through 10000',
+    )
+  })
+})
