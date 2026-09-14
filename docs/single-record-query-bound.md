@@ -98,9 +98,12 @@ buffer metrics. Database execution time is not a direct CPU measurement. Peak
 RSS includes module loading and warm-up. A warm-cache, single-client fixture is
 not a production capacity test.
 
-A watchdog rejects hung runs. Successful output is emitted only after the native
-store closes; a timeout, native abort, or nonzero exit must not be counted as a
-completed benchmark. Keep failures visible when assessing stability and latency.
+A JavaScript watchdog detects hangs only while the event loop remains responsive.
+Use an outer process timeout as well (for example, `timeout 100s node` in place of
+`node` for the short runs above), since a native stall can prevent that watchdog
+from firing. Successful output is emitted only after the native store closes; a
+timeout, native abort, or nonzero exit must not be counted as a completed
+benchmark. Keep failures visible when assessing stability and latency.
 
 Remove only this disposable fixture after testing:
 
