@@ -1,0 +1,11 @@
+diff --git a/node_modules/@credo-ts/askar/build/storage/AskarStorageService.mjs b/node_modules/@credo-ts/askar/build/storage/AskarStorageService.mjs
+--- a/node_modules/@credo-ts/askar/build/storage/AskarStorageService.mjs
++++ b/node_modules/@credo-ts/askar/build/storage/AskarStorageService.mjs
+@@ -150,6 +150,7 @@
+ 			tagFilter: askarQuery,
+ 			profile,
+ 			offset: queryOptions?.offset,
++			orderBy: queryOptions?.orderBy,
+ 			limit: queryOptions?.limit
+ 		});
+ 		const instances = [];

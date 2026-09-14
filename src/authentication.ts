@@ -10,6 +10,7 @@ import { container } from 'tsyringe'
 import { AgentRole, ErrorMessages, SCOPES } from './enums'
 import { StatusException } from './errors'
 import { TsLogger } from './utils/logger'
+import { isTenantAdmissionError } from './utils/tenantSessionConfig'
 
 // export type AgentType = Agent<RestAgentModules> | Agent<RestMultiTenantAgentModules> | TenantAgent<RestAgentModules>
 
@@ -103,7 +104,12 @@ export async function expressAuthentication(request: Request, securityName: stri
           if (!tenantId) {
             return Promise.reject(new StatusException(ErrorMessages.Unauthorized, 401))
           }
-          const tenantAgent = await agent.modules.tenants.getTenantAgent({ tenantId })
+          const tenantAgent = await agent.modules.tenants.getTenantAgent({ tenantId }).catch((error: unknown) => {
+            if (isTenantAdmissionError(error)) {
+              throw new StatusException('Tenant capacity unavailable; retry later', 503)
+            }
+            throw error
+          })
           if (!tenantAgent) {
             return Promise.reject(new StatusException(ErrorMessages.Unauthorized, 401))
           }

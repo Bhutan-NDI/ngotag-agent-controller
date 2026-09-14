@@ -87,6 +87,7 @@ import {
   getX509CertsByClientToken,
   getX509CertsByUrl,
 } from './utils/oid4vc-agent'
+import { tenantSessionConfig } from './utils/tenantSessionConfig'
 
 export type Transports = 'ws' | 'http'
 export type InboundTransport = {
@@ -409,8 +410,7 @@ const getWithTenantModules = (
   )
   return {
     tenants: new TenantsModule<typeof modules>({
-      sessionAcquireTimeout: Number(process.env.SESSION_ACQUIRE_TIMEOUT) || Infinity,
-      sessionLimit: Number(process.env.SESSION_LIMIT) || Infinity,
+      ...tenantSessionConfig(),
     }),
     ...modules,
   }
