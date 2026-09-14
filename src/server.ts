@@ -70,26 +70,11 @@ export const setupServer = async (
     reuseConnectionEvents(agent, config)
   }
 
-  // Use body parser to read sent json payloads
-  app.use(
-    bodyParser.urlencoded({
-      extended: true,
-      limit: process.env.APP_URL_ENCODED_BODY_SIZE ?? '5mb',
-    }),
-  )
-
   setDynamicApiKey(validatedApiKey)
 
-  app.use(bodyParser.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
-  app.use('/docs', serve, (_req: ExRequest, res: ExResponse, next: NextFunction) => {
-    import('./routes/swagger.json')
-      .then((swaggerJson) => {
-        res.send(generateHTML(swaggerJson))
-      })
-      .catch(next)
-  })
   // Deliberately unauthenticated and unthrottled: used only by the load balancer
-  // to determine whether the initialized HTTP server is available.
+  // to determine whether the initialized HTTP server is available. Ahead of the limiter so a
+  // flood elsewhere cannot make healthy instances look unhealthy.
   app.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok' })
   })
@@ -101,8 +86,25 @@ export const setupServer = async (
     max: maxRateLimit, // max 800 requests per second
   })
 
-  // apply rate limiter to all remaining requests
+  // Ahead of the body parsers: a request that fails to parse never reaches what is mounted after them.
   app.use(limiter)
+
+  // Use body parser to read sent json payloads
+  app.use(
+    bodyParser.urlencoded({
+      extended: true,
+      limit: process.env.APP_URL_ENCODED_BODY_SIZE ?? '5mb',
+    }),
+  )
+
+  app.use(bodyParser.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
+  app.use('/docs', serve, (_req: ExRequest, res: ExResponse, next: NextFunction) => {
+    import('./routes/swagger.json')
+      .then((swaggerJson) => {
+        res.send(generateHTML(swaggerJson))
+      })
+      .catch(next)
+  })
 
   // Note: Having used it above, redirects accordingly
   app.use((req, res, next) => {

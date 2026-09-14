@@ -181,8 +181,8 @@ function requireEnv(name: string): string {
 }
 const expressApp = express()
 expressApp.disable('x-powered-by')
-expressApp.use(express.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
-expressApp.use(express.urlencoded({ limit: process.env.APP_URL_ENCODED_BODY_SIZE ?? '5mb', extended: true }))
+// No body parser here: setupServer mounts them behind the rate limiter, and one mounted first
+// would answer malformed payloads 400 without the limiter ever counting them.
 // TODO: add object
 const getModules = (
   networkConfig: [IndyVdrPoolConfig, ...IndyVdrPoolConfig[]],
