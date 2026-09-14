@@ -9,8 +9,8 @@ describe('PostgreSQL statement-cache configuration', () => {
       [path.resolve('src/storage/fixtures/postgresStatementCache.native.mjs')],
       { timeout: 30000, maxBuffer: 1024 * 1024 },
     )
-    expect(stdout).toMatch(/tests 5\b/)
-    expect(stdout).toMatch(/pass 5\b/)
+    expect(stdout).toMatch(/tests 6\b/)
+    expect(stdout).toMatch(/pass 6\b/)
     expect(stdout).toMatch(/fail 0\b/)
   })
 })

@@ -185,6 +185,13 @@ function validateStatementCacheCapacity(value: number | undefined): number | und
   return value
 }
 
+// An absent or malformed environment fallback must not become a NaN URI parameter.
+function numberFromEnv(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === '') return undefined
+  const number = Number(value)
+  return Number.isFinite(number) ? number : undefined
+}
+
 export function toAgentConfig(parsed: Parsed): AriesRestConfig {
   return {
     label: parsed.label,
@@ -196,9 +203,9 @@ export function toAgentConfig(parsed: Parsed): AriesRestConfig {
         config: {
           host: parsed['wallet-url'],
           statementCacheCapacity: validateStatementCacheCapacity(parsed['wallet-postgres-statement-cache-capacity']),
-          connectTimeout: parsed['wallet-connect-timeout'] || Number(process.env.CONNECT_TIMEOUT),
-          maxConnections: parsed['wallet-max-connections'] || Number(process.env.MAX_CONNECTIONS),
-          idleTimeout: parsed['wallet-idle-timeout'] || Number(process.env.IDLE_TIMEOUT),
+          connectTimeout: parsed['wallet-connect-timeout'] ?? numberFromEnv(process.env.CONNECT_TIMEOUT),
+          maxConnections: parsed['wallet-max-connections'] ?? numberFromEnv(process.env.MAX_CONNECTIONS),
+          idleTimeout: parsed['wallet-idle-timeout'] ?? numberFromEnv(process.env.IDLE_TIMEOUT),
         },
         credentials: {
           account: parsed['wallet-account'],

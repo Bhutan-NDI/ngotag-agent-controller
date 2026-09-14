@@ -48,3 +48,25 @@ test('SQLite URI behavior is unchanged', () => {
     'sqlite://:memory:',
   )
 })
+
+test('undefined pool and timeout options are omitted from the native URI', () => {
+  const uri = new URL(
+    uriFromStoreConfig(
+      {
+        ...config,
+        database: {
+          ...config.database,
+          config: {
+            host: 'localhost:5432',
+            connectTimeout: undefined,
+            maxConnections: undefined,
+            idleTimeout: undefined,
+            statementCacheCapacity: undefined,
+          },
+        },
+      },
+      '/tmp/synthetic',
+    ).uri,
+  )
+  assert.equal(uri.search, '')
+})

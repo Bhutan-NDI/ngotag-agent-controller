@@ -76,3 +76,43 @@ describe('PostgreSQL statement-cache mapping', () => {
     )
   })
 })
+
+describe('PostgreSQL environment fallbacks', () => {
+  const settings = [
+    ['CONNECT_TIMEOUT', 'wallet-connect-timeout', 'connectTimeout'],
+    ['MAX_CONNECTIONS', 'wallet-max-connections', 'maxConnections'],
+    ['IDLE_TIMEOUT', 'wallet-idle-timeout', 'idleTimeout'],
+  ] as const
+  const original = Object.fromEntries(settings.map(([env]) => [env, process.env[env]]))
+
+  afterEach(() => {
+    for (const [env] of settings) {
+      if (original[env] === undefined) delete process.env[env]
+      else process.env[env] = original[env]
+    }
+  })
+
+  it.each(settings)('omits unset or malformed %s instead of producing a NaN URI value', (env, _flag, property) => {
+    for (const value of [undefined, '', '  ', 'not-a-number', 'NaN', 'Infinity', '-Infinity']) {
+      if (value === undefined) delete process.env[env]
+      else process.env[env] = value
+      expect(toAgentConfig(parsed).walletConfig).toMatchObject({ database: { config: { [property]: undefined } } })
+    }
+  })
+
+  it.each(settings)('uses numeric %s when the CLI option is absent', (env, _flag, property) => {
+    for (const value of ['0', '12', ' 12 ']) {
+      process.env[env] = value
+      expect(toAgentConfig(parsed).walletConfig).toMatchObject({ database: { config: { [property]: Number(value) } } })
+    }
+  })
+
+  it.each(settings)('gives explicit CLI values precedence over %s, including zero', (env, flag, property) => {
+    process.env[env] = '12'
+    for (const value of [0, 5]) {
+      expect(toAgentConfig({ ...parsed, [flag]: value }).walletConfig).toMatchObject({
+        database: { config: { [property]: value } },
+      })
+    }
+  })
+})
