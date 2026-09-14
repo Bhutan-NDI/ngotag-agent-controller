@@ -1,6 +1,8 @@
 # Wallet query bounds and native result cleanup
 
 Two version-pinned dependency patches improve the existing wallet query path.
+A third patch fixes the shared native callback dispatcher race exposed by the
+benchmarks; see [cause, lifecycle contract and installation](native-callback-lifecycle.md).
 They do not change API responses, query predicates, tenant/profile selection,
 indexes, schemas, caches, issuance concurrency, or session configuration.
 
@@ -64,7 +66,9 @@ records, five tags per record and roughly 1 KiB of content per record. There are
 10,000 unique exchange IDs and one deliberately duplicated ID matching 1,000
 records. No application data or database URL is accepted.
 
-With a **local** Docker context, create the disposable fixture:
+Use Node **22.22.2**, matching the Dockerfile, and install dependencies under
+that runtime. The postinstall hook must rebuild the patched FFI addon. With a
+**local** Docker context, create the disposable fixture:
 
 ```sh
 docker run --rm -d --name codex-credo-priority1-pg16 \
@@ -112,5 +116,7 @@ docker stop codex-credo-priority1-pg16
 ```
 
 See [measurement results and limitations](single-record-query-measurements.md)
-for the observed results. Production sizing requires separate representative
+for the observed results. To run the full matrix with enforced child-process
+completion, use `node scripts/benchmark-single-record-query-suite.mjs`.
+Production sizing requires separate representative
 query-plan, throughput, tail-latency and peak-load validation.
