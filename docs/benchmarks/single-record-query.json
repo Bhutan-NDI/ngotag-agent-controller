@@ -1,0 +1,329 @@
+{
+  "scope": "Synthetic local PostgreSQL fixture only; not production or a capacity benchmark",
+  "runtime": {
+    "node": "20.19.4",
+    "credo": "0.6.2",
+    "askar_shared": "0.4.3",
+    "native_askar": "0.4.6",
+    "postgresql": "16.15"
+  },
+  "fixture": {
+    "records": 11000,
+    "unique_records": 10000,
+    "duplicate_matches": 1000,
+    "tags_per_record": 5,
+    "content_bytes_approx": 1024
+  },
+  "method": {
+    "operations_per_run": 200,
+    "warmup_operations": 20,
+    "repeats": 2,
+    "ordering": "before/after in repeat 1; after/before in repeat 2",
+    "before_mode": "omit the single-record limit and bypass native result-list freeing to reproduce original scan behavior"
+  },
+  "results": [
+    {
+      "mode": "before",
+      "scenario": "unique",
+      "operations": 200,
+      "returned": 200,
+      "acquiredLists": 200,
+      "releasedLists": 0,
+      "elapsedMs": 183.78353500000003,
+      "opsPerSecond": 1088.236767238153,
+      "p50Ms": 0.7861619999999903,
+      "p95Ms": 1.4791810000000396,
+      "p99Ms": 2.558086000000003,
+      "applicationCpuMs": 244.879,
+      "maxRssKiB": 168408,
+      "statements": [
+        {
+          "calls": 200,
+          "rows": 200,
+          "total_exec_time": 8.294683000000008,
+          "shared_blks_hit": 4445,
+          "shared_blks_read": 0,
+          "temp_blks_read": 0,
+          "temp_blks_written": 0,
+          "blk_read_time": 0,
+          "blk_write_time": 0
+        }
+      ],
+      "repeat": 1
+    },
+    {
+      "mode": "after",
+      "scenario": "unique",
+      "operations": 200,
+      "returned": 200,
+      "acquiredLists": 200,
+      "releasedLists": 200,
+      "elapsedMs": 226.10903100000007,
+      "opsPerSecond": 884.5290217532264,
+      "p50Ms": 0.9230660000000626,
+      "p95Ms": 1.8265309999999317,
+      "p99Ms": 2.7374500000000808,
+      "applicationCpuMs": 312.066,
+      "maxRssKiB": 174828,
+      "statements": [
+        {
+          "calls": 200,
+          "rows": 200,
+          "total_exec_time": 11.638297000000001,
+          "shared_blks_hit": 4445,
+          "shared_blks_read": 0,
+          "temp_blks_read": 0,
+          "temp_blks_written": 0,
+          "blk_read_time": 0,
+          "blk_write_time": 0
+        }
+      ],
+      "repeat": 1
+    },
+    {
+      "mode": "before",
+      "scenario": "missing",
+      "error": "native benchmark did not complete",
+      "exit": 13,
+      "repeat": 1
+    },
+    {
+      "mode": "after",
+      "scenario": "missing",
+      "operations": 200,
+      "returned": 0,
+      "acquiredLists": 0,
+      "releasedLists": 0,
+      "elapsedMs": 154.88690399999996,
+      "opsPerSecond": 1291.2647540556434,
+      "p50Ms": 0.7197740000001431,
+      "p95Ms": 1.48365600000011,
+      "p99Ms": 1.9539559999998346,
+      "applicationCpuMs": 198.554,
+      "maxRssKiB": 160648,
+      "statements": [
+        {
+          "calls": 200,
+          "rows": 0,
+          "total_exec_time": 2.4697280000000013,
+          "shared_blks_hit": 600,
+          "shared_blks_read": 0,
+          "temp_blks_read": 0,
+          "temp_blks_written": 0,
+          "blk_read_time": 0,
+          "blk_write_time": 0
+        }
+      ],
+      "repeat": 1
+    },
+    {
+      "mode": "before",
+      "scenario": "duplicate",
+      "operations": 200,
+      "returned": 200000,
+      "acquiredLists": 6400,
+      "releasedLists": 0,
+      "elapsedMs": 48932.436323,
+      "opsPerSecond": 4.0872683853265,
+      "p50Ms": 214.04391900000337,
+      "p95Ms": 339.91107700000066,
+      "p99Ms": 818.9436309999946,
+      "applicationCpuMs": 53614.658,
+      "maxRssKiB": 1544036,
+      "statements": [
+        {
+          "calls": 200,
+          "rows": 200000,
+          "total_exec_time": 2797.1049229999994,
+          "shared_blks_hit": 3663800,
+          "shared_blks_read": 0,
+          "temp_blks_read": 0,
+          "temp_blks_written": 0,
+          "blk_read_time": 0,
+          "blk_write_time": 0
+        }
+      ],
+      "repeat": 1
+    },
+    {
+      "mode": "after",
+      "scenario": "duplicate",
+      "operations": 200,
+      "returned": 400,
+      "acquiredLists": 200,
+      "releasedLists": 200,
+      "elapsedMs": 459.458486,
+      "opsPerSecond": 435.29503990922046,
+      "p50Ms": 2.059297000000015,
+      "p95Ms": 4.179333000000042,
+      "p99Ms": 7.47444100000007,
+      "applicationCpuMs": 465.716,
+      "maxRssKiB": 174736,
+      "statements": [
+        {
+          "calls": 200,
+          "rows": 400,
+          "total_exec_time": 111.81067399999998,
+          "shared_blks_hit": 26200,
+          "shared_blks_read": 0,
+          "temp_blks_read": 0,
+          "temp_blks_written": 0,
+          "blk_read_time": 0,
+          "blk_write_time": 0
+        }
+      ],
+      "repeat": 1
+    },
+    {
+      "mode": "after",
+      "scenario": "unique",
+      "operations": 200,
+      "returned": 200,
+      "acquiredLists": 200,
+      "releasedLists": 200,
+      "elapsedMs": 235.297781,
+      "opsPerSecond": 849.9867663435382,
+      "p50Ms": 1.0341960000000654,
+      "p95Ms": 1.7621750000000702,
+      "p99Ms": 3.4210030000000415,
+      "applicationCpuMs": 315.649,
+      "maxRssKiB": 175064,
+      "statements": [
+        {
+          "calls": 200,
+          "rows": 200,
+          "total_exec_time": 9.967767000000007,
+          "shared_blks_hit": 4445,
+          "shared_blks_read": 0,
+          "temp_blks_read": 0,
+          "temp_blks_written": 0,
+          "blk_read_time": 0,
+          "blk_write_time": 0
+        }
+      ],
+      "repeat": 2
+    },
+    {
+      "mode": "before",
+      "scenario": "unique",
+      "operations": 200,
+      "returned": 200,
+      "acquiredLists": 200,
+      "releasedLists": 0,
+      "elapsedMs": 225.7559440000001,
+      "opsPerSecond": 885.9124435722495,
+      "p50Ms": 0.9583459999998922,
+      "p95Ms": 1.8447449999998753,
+      "p99Ms": 2.5123889999999847,
+      "applicationCpuMs": 319.487,
+      "maxRssKiB": 172484,
+      "statements": [
+        {
+          "calls": 200,
+          "rows": 200,
+          "total_exec_time": 9.048772,
+          "shared_blks_hit": 4445,
+          "shared_blks_read": 0,
+          "temp_blks_read": 0,
+          "temp_blks_written": 0,
+          "blk_read_time": 0,
+          "blk_write_time": 0
+        }
+      ],
+      "repeat": 2
+    },
+    {
+      "mode": "after",
+      "scenario": "missing",
+      "operations": 200,
+      "returned": 0,
+      "acquiredLists": 0,
+      "releasedLists": 0,
+      "elapsedMs": 99.12482399999988,
+      "opsPerSecond": 2017.6580590952701,
+      "p50Ms": 0.39414399999986927,
+      "p95Ms": 0.9907479999999396,
+      "p99Ms": 1.2792750000000979,
+      "applicationCpuMs": 121.957,
+      "maxRssKiB": 166968,
+      "statements": [
+        {
+          "calls": 200,
+          "rows": 0,
+          "total_exec_time": 1.4349889999999998,
+          "shared_blks_hit": 600,
+          "shared_blks_read": 0,
+          "temp_blks_read": 0,
+          "temp_blks_written": 0,
+          "blk_read_time": 0,
+          "blk_write_time": 0
+        }
+      ],
+      "repeat": 2
+    },
+    {
+      "repeat": 2,
+      "mode": "before",
+      "scenario": "missing",
+      "error": "outer 100 second timeout; no completed result"
+    },
+    {
+      "mode": "after",
+      "scenario": "duplicate",
+      "operations": 200,
+      "returned": 400,
+      "acquiredLists": 200,
+      "releasedLists": 200,
+      "elapsedMs": 559.8610209999999,
+      "opsPerSecond": 357.231513711686,
+      "p50Ms": 2.4724699999999302,
+      "p95Ms": 4.647954999999911,
+      "p99Ms": 12.489356000000043,
+      "applicationCpuMs": 538.572,
+      "maxRssKiB": 180544,
+      "statements": [
+        {
+          "calls": 200,
+          "rows": 400,
+          "total_exec_time": 138.27155399999992,
+          "shared_blks_hit": 26200,
+          "shared_blks_read": 0,
+          "temp_blks_read": 0,
+          "temp_blks_written": 0,
+          "blk_read_time": 0,
+          "blk_write_time": 0
+        }
+      ],
+      "repeat": 2
+    },
+    {
+      "mode": "before",
+      "scenario": "duplicate",
+      "operations": 200,
+      "returned": 200000,
+      "acquiredLists": 6400,
+      "releasedLists": 0,
+      "elapsedMs": 50859.054447,
+      "opsPerSecond": 3.9324364594394714,
+      "p50Ms": 224.92748800000118,
+      "p95Ms": 349.61050599999726,
+      "p99Ms": 836.078969000002,
+      "applicationCpuMs": 55496.787,
+      "maxRssKiB": 1491924,
+      "statements": [
+        {
+          "calls": 200,
+          "rows": 200000,
+          "total_exec_time": 2904.8067709999996,
+          "shared_blks_hit": 3663800,
+          "shared_blks_read": 0,
+          "temp_blks_read": 0,
+          "temp_blks_written": 0,
+          "blk_read_time": 0,
+          "blk_write_time": 0
+        }
+      ],
+      "repeat": 2
+    }
+  ]
+}
