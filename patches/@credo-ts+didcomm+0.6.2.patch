@@ -58,3 +58,74 @@ index 864ac89..ac26260 100644
  		agentContext.config.logger.debug(`Saving record and emitting state changed for credential exchange record ${credentialExchangeRecord.id}`);
  		await credentialRepository.save(agentContext, credentialExchangeRecord);
  		this.emitStateChangedEvent(agentContext, credentialExchangeRecord, null);
+diff --git a/node_modules/@credo-ts/didcomm/build/modules/proofs/protocol/v2/DidCommProofV2Protocol.mjs b/node_modules/@credo-ts/didcomm/build/modules/proofs/protocol/v2/DidCommProofV2Protocol.mjs
+--- a/node_modules/@credo-ts/didcomm/build/modules/proofs/protocol/v2/DidCommProofV2Protocol.mjs
++++ b/node_modules/@credo-ts/didcomm/build/modules/proofs/protocol/v2/DidCommProofV2Protocol.mjs
+@@ -33,7 +33,7 @@
+ import { DidCommPresentationV2ProblemReportHandler } from "./handlers/DidCommPresentationV2ProblemReportHandler.mjs";
+ import { DidCommProposePresentationV2Handler } from "./handlers/DidCommProposePresentationV2Handler.mjs";
+ import { DidCommRequestPresentationV2Handler } from "./handlers/DidCommRequestPresentationV2Handler.mjs";
+-import { CredoError, utils } from "@credo-ts/core";
++import { CredoError, RecordDuplicateError, utils } from "@credo-ts/core";
+ 
+ //#region src/modules/proofs/protocol/v2/DidCommProofV2Protocol.ts
+ var DidCommProofV2Protocol = class extends DidCommBaseProofProtocol {
+@@ -617,11 +617,53 @@
+ 		});
+ 	}
+ 	async getFormatData(agentContext, proofExchangeRecordId) {
+-		const [proposalMessage, requestMessage, presentationMessage] = await Promise.all([
+-			this.findProposalMessage(agentContext, proofExchangeRecordId),
+-			this.findRequestMessage(agentContext, proofExchangeRecordId),
+-			this.findPresentationMessage(agentContext, proofExchangeRecordId)
+-		]);
++		const repository = agentContext.dependencyManager.resolve(DidCommMessageRepository);
++		const prototype = DidCommProofV2Protocol.prototype;
++		let proposalMessage, requestMessage, presentationMessage;
++		// Preserve custom protocol/repository lookup overrides. The stock path can
++		// retrieve all three message kinds in one fresh, tenant-scoped query.
++		if (this.findProposalMessage !== prototype.findProposalMessage ||
++			this.findRequestMessage !== prototype.findRequestMessage ||
++			this.findPresentationMessage !== prototype.findPresentationMessage ||
++			repository.findAgentMessage !== DidCommMessageRepository.prototype.findAgentMessage) {
++			[proposalMessage, requestMessage, presentationMessage] = await Promise.all([
++				this.findProposalMessage(agentContext, proofExchangeRecordId),
++				this.findRequestMessage(agentContext, proofExchangeRecordId),
++				this.findPresentationMessage(agentContext, proofExchangeRecordId)
++			]);
++		} else {
++			const messageClasses = [DidCommProposePresentationV2Message, DidCommRequestPresentationV2Message, DidCommPresentationV2Message];
++			const queries = messageClasses.map((messageClass) => ({
++				associatedRecordId: proofExchangeRecordId,
++				messageName: messageClass.type.messageName,
++				protocolName: messageClass.type.protocolName,
++				protocolMajorVersion: String(messageClass.type.protocolMajorVersion)
++			}));
++			// The association predicate is selective without a multi-branch tag OR.
++			// Only use this complete small set; on overflow retain the old lookups.
++			const records = await repository.findByQuery(agentContext, {
++				associatedRecordId: proofExchangeRecordId,
++				protocolName: queries[0].protocolName,
++				protocolMajorVersion: queries[0].protocolMajorVersion
++			}, { limit: 16 });
++			if (records.length >= 16) {
++				[proposalMessage, requestMessage, presentationMessage] = await Promise.all([
++					this.findProposalMessage(agentContext, proofExchangeRecordId),
++					this.findRequestMessage(agentContext, proofExchangeRecordId),
++					this.findPresentationMessage(agentContext, proofExchangeRecordId)
++				]);
++			} else {
++				[proposalMessage, requestMessage, presentationMessage] = messageClasses.map((messageClass, index) => {
++					const query = queries[index];
++					const matches = records.filter((record) => {
++						const tags = record.getTags();
++						return Object.entries(query).every(([key, value]) => tags[key] === value);
++					});
++					if (matches.length > 1) throw new RecordDuplicateError(`Multiple records found for given query '${JSON.stringify(query)}'`, { recordType: repository.recordClass.type });
++					return matches[0]?.getMessageInstance(messageClass) ?? null;
++				});
++			}
++		}
+ 		const messages = {
+ 			proposal: [proposalMessage?.formats, proposalMessage?.proposalAttachments],
+ 			request: [requestMessage?.formats, requestMessage?.requestAttachments],
