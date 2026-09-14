@@ -29,6 +29,10 @@ const config: Config.InitialOptions = {
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
+  // Workers inherit the parent's --max-old-space-size, so the cap bounds total heap, not just concurrency.
+  maxWorkers: 2,
+  workerIdleMemoryLimit: '1GB',
+  testPathIgnorePatterns: ['/node_modules/', '/build/', '/\\.claude/worktrees/'],
   coveragePathIgnorePatterns: ['/build/', '/node_modules/', '/__tests__/', 'tests'],
   coverageDirectory: '<rootDir>/coverage/',
   verbose: true,
