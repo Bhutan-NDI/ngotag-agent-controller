@@ -44,6 +44,22 @@ const MAX_DECOMPRESSED_BYTES = MAX_DOWNLOAD_BYTES
 // downloadAndChecksum's inactivity timer for that case.
 const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000
 
+// Gzip magic number — used to detect a mobile-compat (uncompressed) artifact on import without
+// trusting the job's own metadata to say so.
+const GZIP_MAGIC_BYTES = Buffer.from([0x1f, 0x8b])
+
+// Holder-credential record categories Credo 0.6.2 restructured into the multi-instance model,
+// and the flat field each has a back-compat setter for (verified directly against
+// @credo-ts/core: W3cCredentialRecord/W3cV2CredentialRecord's `set credential`, SdJwtVcRecord's
+// `set compactSdJwtVc`, MdocRecord's `set base64Url`). Mdoc's instance field name differs from
+// its flat setter name; the others match.
+const FLATTENABLE_RECORD_CATEGORIES: Array<{ category: string; flatField: string; instanceField: string }> = [
+  { category: 'W3cCredentialRecord', flatField: 'credential', instanceField: 'credential' },
+  { category: 'W3cV2CredentialRecord', flatField: 'credential', instanceField: 'credential' },
+  { category: 'SdJwtVcRecord', flatField: 'compactSdJwtVc', instanceField: 'compactSdJwtVc' },
+  { category: 'MdocRecord', flatField: 'base64Url', instanceField: 'issuerSignedBase64Url' },
+]
+
 // Deliberately not typed as the real AWS.S3 class — its full type declarations OOM ts-jest's
 // type-aware transform when type-checking this file. See WalletPortabilityService.spec.ts.
 interface S3Client {
@@ -210,10 +226,10 @@ export class WalletPortabilityService {
 
         await baseStore.copyProfile({ toStore: tempStore, fromProfile: profile, toProfile: packagedProfile })
 
-        // walletID also selects the mobile-compat artifact: flatten W3C records to the shape
-        // Credo 0.5.18 can read (nested credentialInstances -> flat credential).
+        // walletID also selects the mobile-compat artifact: flatten holder-credential records to
+        // the shape Credo 0.5.18 can read (nested credentialInstances -> flat field).
         if (walletID) {
-          await this.flattenW3cRecords(tempStore, packagedProfile)
+          await this.flattenCredentialRecords(tempStore, packagedProfile)
         }
       })
 
@@ -295,28 +311,34 @@ export class WalletPortabilityService {
     return hash.digest('hex')
   }
 
-  // Rewrites each W3C record from 0.6.2's credentialInstances[0].credential back to the flat
-  // credential field Credo 0.5.18 (the mobile app's pinned version) can read. multiInstanceState
-  // is left in place -- 0.5.18 ignores the unknown tag, and a 0.6.2 reader recovers it as-is.
-  private async flattenW3cRecords(store: Store, profile: string): Promise<void> {
+  // Rewrites each holder-credential record from 0.6.2's credentialInstances[0] back to the flat
+  // field Credo 0.5.18 (the mobile app's pinned version) reads, via the same back-compat setter
+  // each record class already exposes for this. Records with more than one instance are left
+  // untouched -- cloud wallet doesn't issue batched credentials, and collapsing one would drop
+  // instances 1..n permanently while leaving multiInstanceState claiming there's still more than one.
+  private async flattenCredentialRecords(store: Store, profile: string): Promise<void> {
     const session = await store.transaction(profile).open()
     try {
-      const entries = await session.fetchAll({ category: 'W3cCredentialRecord', forUpdate: true, isJson: true })
+      for (const { category, flatField, instanceField } of FLATTENABLE_RECORD_CATEGORIES) {
+        const entries = await session.fetchAll({ category, forUpdate: true, isJson: true })
 
-      for (const entry of entries) {
-        const value = entry.value as Record<string, unknown>
-        const instances = value.credentialInstances as Array<{ credential: unknown }> | undefined
-        if (!instances?.length) continue
+        for (const entry of entries) {
+          const value = entry.value as Record<string, unknown>
+          const instances = value.credentialInstances as Array<Record<string, unknown>> | undefined
+          if (!instances || 1 !== instances.length) continue
 
-        value.credential = instances[0].credential
-        delete value.credentialInstances
+          value[flatField] = instances[0][instanceField]
+          delete value.credentialInstances
 
-        await session.replace({ category: entry.category, name: entry.name, value, tags: entry.tags })
+          await session.replace({ category: entry.category, name: entry.name, value, tags: entry.tags })
+        }
       }
 
       await session.commit()
     } catch (error) {
-      await session.rollback()
+      // If commit() itself is what threw, the native handle is already closing/closed --
+      // rollback() would double-close and mask the real error with its own failure.
+      await session.rollback().catch(() => undefined)
       throw error
     }
   }
@@ -500,7 +522,7 @@ export class WalletPortabilityService {
     heartbeat: NodeJS.Timeout,
   ): Promise<void> {
     let importedStore: Store | undefined
-    let gzipPath: string | undefined
+    let downloadedPath: string | undefined
     let importedDbPath: string | undefined
     let backupProfile: string | undefined
     let renamedAway = false
@@ -519,17 +541,23 @@ export class WalletPortabilityService {
       await this.setJobStatus(jobId, tenantId, WalletPortabilityJobType.Import, WalletPortabilityJobStatus.InProgress)
 
       workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-import-'))
-      gzipPath = path.join(workDir, `${jobId}.db.gz`)
+      // Extension-less: a mobile-compat export (see runExport) uploads a plain .db, not a gzipped
+      // one, so the format isn't known from the job's own metadata — sniffed below instead.
+      downloadedPath = path.join(workDir, `${jobId}.download`)
       importedDbPath = path.join(workDir, `${jobId}.db`)
 
       // Verify the checksum BEFORE touching anything live — a corrupt/tampered artifact must
       // never reach the point of renaming the tenant's real profile aside.
-      const actualChecksum = await this.downloadAndChecksum(exportUrl, gzipPath)
+      const actualChecksum = await this.downloadAndChecksum(exportUrl, downloadedPath)
       if (actualChecksum !== checksum) {
         throw new Error(`Checksum mismatch: expected ${checksum}, got ${actualChecksum}`)
       }
 
-      await this.gunzip(gzipPath, importedDbPath)
+      if (await this.isGzip(downloadedPath)) {
+        await this.gunzip(downloadedPath, importedDbPath)
+      } else {
+        await fs.rename(downloadedPath, importedDbPath)
+      }
 
       importedStore = await Store.open({
         uri: `sqlite://${importedDbPath}`,
@@ -759,6 +787,18 @@ export class WalletPortabilityService {
       if (inactivityTimer) clearTimeout(inactivityTimer)
     }
     return hash.digest('hex')
+  }
+
+  // Reads just the first two bytes rather than trusting a file extension or the job's own
+  // metadata — a mobile-compat export (see runExport) uploads a plain, unwrapped .db.
+  private async isGzip(filePath: string): Promise<boolean> {
+    const handle = await fs.open(filePath, 'r')
+    try {
+      const { buffer, bytesRead } = await handle.read(Buffer.alloc(2), 0, 2, 0)
+      return 2 === bytesRead && 0 === buffer.compare(GZIP_MAGIC_BYTES)
+    } finally {
+      await handle.close()
+    }
   }
 
   // maxBytes defaults to the real cap; runImport never overrides it — the parameter exists so

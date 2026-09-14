@@ -18,8 +18,9 @@ export interface WalletPortabilityJobRecord {
   createdAt: string
   updatedAt: string
   // Populated on Completed (export only): the S3 object key of the uploaded artifact, and its
-  // SHA-256 checksum (computed over the *uploaded* .gz bytes, not the plaintext — see
-  // gzipAndChecksum). s3Key is the persisted, stable reference; downloadUrl (below) is NOT
+  // SHA-256 checksum, always computed over the same bytes that were uploaded -- gzip for a native
+  // export (s3Key ends .db.gz, see gzipAndChecksum), plain for a mobile-compat one (s3Key ends
+  // .db, see checksumFile). s3Key is the persisted, stable reference; downloadUrl (below) is NOT
   // persisted from this field — it's minted fresh, short-lived, on every read of the job record
   // (see WalletPortabilityService#getJobStatus), so a job polled hours after completion still
   // gets a live URL instead of one that expired long before the 24h job TTL did.
