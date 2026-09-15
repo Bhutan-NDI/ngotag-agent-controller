@@ -589,10 +589,11 @@ describe('WalletPortabilityService — exportWallet', () => {
     )
   })
 
-  it('skips flattening a record with more than one credential instance, rather than silently dropping instances 1..n', async () => {
+  it('skips flattening a record with more than one credential instance, rather than silently dropping instances 1..n, and warns so it is traceable', async () => {
     const copyProfile = jest.fn(async () => undefined)
     const { agent } = makeAgent(copyProfile)
-    const service = new WalletPortabilityService(makeLogger() as never)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
     mockFetchAllForCategory('W3cCredentialRecord', [
       {
         category: 'W3cCredentialRecord',
@@ -610,6 +611,30 @@ describe('WalletPortabilityService — exportWallet', () => {
 
     expect(tempStoreSessionReplace).not.toHaveBeenCalled()
     expect(tempStoreSessionCommit).toHaveBeenCalledTimes(1)
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('1 multi-instance record'))
+  })
+
+  it('warns when a flattened record had an explicit kmsKeyId, since the flat 0.5.18 shape has no field for it', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+    mockFetchAllForCategory('SdJwtVcRecord', [
+      {
+        category: 'SdJwtVcRecord',
+        name: 'kms-backed',
+        tags: {},
+        value: { credentialInstances: [{ compactSdJwtVc: 'header.payload.sig~kbjwt', kmsKeyId: 'kms-key-1' }] },
+      },
+    ])
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(tempStoreSessionReplace).toHaveBeenCalledWith(
+      expect.objectContaining({ value: expect.objectContaining({ compactSdJwtVc: 'header.payload.sig~kbjwt' }) }),
+    )
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('1 record(s) had an explicit kmsKeyId'))
   })
 
   it('leaves a record with no credentialInstances untouched', async () => {

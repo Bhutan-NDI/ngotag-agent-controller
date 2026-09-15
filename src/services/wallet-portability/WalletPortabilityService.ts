@@ -182,7 +182,6 @@ export class WalletPortabilityService {
   ): Promise<void> {
     let tempStore: Store | undefined
     let tempDbPath: string | undefined
-    let gzipPath: string | undefined
     // Hoisted so cleanup can remove the whole temp directory — Askar's sqlite backend leaves
     // -shm/-wal sidecars next to the .db file, which removing only the explicit .db/.db.gz paths
     // would leave behind.
@@ -226,7 +225,20 @@ export class WalletPortabilityService {
         // walletID also selects the mobile-compat artifact: flatten holder-credential records to
         // the shape Credo 0.5.18 can read (nested credentialInstances -> flat field).
         if (walletID) {
-          await this.flattenCredentialRecords(tempStore, packagedProfile)
+          const { skippedMultiInstance, droppedKmsKeyId } = await this.flattenCredentialRecords(
+            tempStore,
+            packagedProfile,
+          )
+          if (skippedMultiInstance > 0) {
+            this.logger.warn(
+              `[WalletPortabilityService] export job ${jobId}: ${skippedMultiInstance} multi-instance record(s) left unflattened -- not readable by Credo 0.5.18`,
+            )
+          }
+          if (droppedKmsKeyId > 0) {
+            this.logger.warn(
+              `[WalletPortabilityService] export job ${jobId}: ${droppedKmsKeyId} record(s) had an explicit kmsKeyId with no home in the flat 0.5.18 shape -- presentation may fail if the key isn't otherwise derivable`,
+            )
+          }
         }
       })
 
@@ -243,7 +255,7 @@ export class WalletPortabilityService {
         uploadPath = tempDbPath
         s3Key = `wallet-exports/${tenantId}/${jobId}.db`
       } else {
-        gzipPath = `${tempDbPath}.gz`
+        const gzipPath = `${tempDbPath}.gz`
         checksum = await this.gzipAndChecksum(tempDbPath, gzipPath)
         uploadPath = gzipPath
         s3Key = `wallet-exports/${tenantId}/${jobId}.db.gz`
@@ -309,9 +321,16 @@ export class WalletPortabilityService {
   }
 
   // Records with more than one instance are skipped, not collapsed -- cloud wallet doesn't issue
-  // batched credentials, and collapsing one would drop instances 1..n permanently.
-  private async flattenCredentialRecords(store: Store, profile: string): Promise<void> {
+  // batched credentials, and collapsing one would drop instances 1..n permanently. Counts (not
+  // per-record logs) are returned so the caller can flag an unexpected occurrence without this
+  // method needing job context of its own.
+  private async flattenCredentialRecords(
+    store: Store,
+    profile: string,
+  ): Promise<{ skippedMultiInstance: number; droppedKmsKeyId: number }> {
     const session = await store.transaction(profile).open()
+    let skippedMultiInstance = 0
+    let droppedKmsKeyId = 0
     try {
       for (const { category, flatField, instanceField } of FLATTENABLE_RECORD_CATEGORIES) {
         const entries = await session.fetchAll({ category, forUpdate: true, isJson: true })
@@ -319,7 +338,16 @@ export class WalletPortabilityService {
         for (const entry of entries) {
           const value = entry.value as Record<string, unknown>
           const instances = value.credentialInstances as Array<Record<string, unknown>> | undefined
-          if (!instances || 1 !== instances.length) continue
+          if (!instances) continue
+          if (1 !== instances.length) {
+            skippedMultiInstance += 1
+            continue
+          }
+
+          // kmsKeyId (SdJwtVcRecord/MdocRecord only) has no field in the flat 0.5.18 shape --
+          // a credential relying on it, rather than a legacy-derivable or DID-bound key, can't
+          // be presented after import regardless of how this method packages it.
+          if (instances[0].kmsKeyId) droppedKmsKeyId += 1
 
           value[flatField] = instances[0][instanceField]
           delete value.credentialInstances
@@ -329,6 +357,7 @@ export class WalletPortabilityService {
       }
 
       await session.commit()
+      return { skippedMultiInstance, droppedKmsKeyId }
     } catch (error) {
       // If commit() itself is what threw, the native handle is already closing/closed --
       // rollback() would double-close and mask the real error with its own failure.
