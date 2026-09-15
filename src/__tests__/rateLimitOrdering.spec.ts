@@ -80,8 +80,8 @@ describe('rate limiter placement', () => {
   })
 })
 
-describe('server.ts middleware order', () => {
-  const source = readFileSync(join(here, '..', 'server.ts'), 'utf8')
+describe('baseMiddleware.ts mount order', () => {
+  const source = readFileSync(join(here, '..', 'baseMiddleware.ts'), 'utf8')
   const indexOf = (needle: string) => {
     const at = source.indexOf(needle)
     expect(at).toBeGreaterThan(-1)
@@ -101,11 +101,20 @@ describe('server.ts middleware order', () => {
 
 describe('cliAgent.ts app composition', () => {
   const source = readFileSync(join(here, '..', 'cliAgent.ts'), 'utf8')
+  const indexOf = (needle: string) => {
+    const at = source.indexOf(needle)
+    expect(at).toBeGreaterThan(-1)
+    return at
+  }
 
-  // server.ts can only keep the limiter ahead of the parsers for parsers it mounts itself. The app
-  // it is handed is built here first, so a parser mounted on it here runs before the limiter and
-  // reclaims the bypass -- which is invisible to the server.ts assertions above.
-  it('mounts no body parser on the app it hands to setupServer', () => {
+  // A parser mounted on the app here would run before the limiter and reclaim the bypass, which is
+  // invisible to the source assertions above.
+  it('mounts no body parser of its own on the app it hands to setupServer', () => {
     expect(source).not.toMatch(/expressApp\.use\(\s*(express\.(json|urlencoded)|bodyParser)/)
+  })
+
+  // initialize() registers Credo's OID4VC routers, which mount their own 100 KiB json().
+  it('mounts the base middleware before agent.initialize()', () => {
+    expect(indexOf('mountBaseMiddleware(expressApp)')).toBeLessThan(indexOf('await agent.initialize()'))
   })
 })
