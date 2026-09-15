@@ -1376,11 +1376,6 @@ const models: TsoaRoute.Models = {
         "enums": ["start","invitation-sent","invitation-received","request-sent","request-received","response-sent","response-received","abandoned","completed"],
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DidCommConnectionRecord": {
-        "dataType": "refAlias",
-        "type": {"ref":"Record_string.unknown_","validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "DidResolutionMetadata": {
         "dataType": "refObject",
         "properties": {
@@ -4704,6 +4699,7 @@ export function RegisterRoutes(app: Router) {
                 invitationId: {"in":"path","name":"invitationId","required":true,"dataType":"string"},
         };
         app.get('/didcomm/url/:invitationId',
+            authenticateMiddleware([{"jwt":["skip"]}]),
             ...(fetchMiddlewares<RequestHandler>(ConnectionController)),
             ...(fetchMiddlewares<RequestHandler>(ConnectionController.prototype.getInvitation)),
 
@@ -4852,6 +4848,7 @@ export function RegisterRoutes(app: Router) {
                 body: {"in":"body","name":"body","required":true,"ref":"OrgTokenRequest"},
         };
         app.post('/v1/orgs/:orgId/token',
+            authenticateMiddleware([{"jwt":["skip"]}]),
             ...(fetchMiddlewares<RequestHandler>(AuthController)),
             ...(fetchMiddlewares<RequestHandler>(AuthController.prototype.getOrgToken)),
 

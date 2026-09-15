@@ -19,6 +19,7 @@ import { ValidateError } from 'tsoa'
 import { container } from 'tsyringe'
 
 import { setDynamicApiKey } from './authentication'
+import { mountBaseMiddleware } from './baseMiddleware'
 import { ErrorMessages } from './enums'
 import { createErrorHandler } from './errorHandler'
 import { BaseError } from './errors/errors'
@@ -70,17 +71,9 @@ export const setupServer = async (
     reuseConnectionEvents(agent, config)
   }
 
-  // Use body parser to read sent json payloads
-  app.use(
-    bodyParser.urlencoded({
-      extended: true,
-      limit: process.env.APP_URL_ENCODED_BODY_SIZE ?? '5mb',
-    }),
-  )
-
   setDynamicApiKey(validatedApiKey)
 
-  app.use(bodyParser.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
+  mountBaseMiddleware(app)
   app.use('/docs', serve, (_req: ExRequest, res: ExResponse, next: NextFunction) => {
     import('./routes/swagger.json')
       .then((swaggerJson) => {
@@ -88,21 +81,6 @@ export const setupServer = async (
       })
       .catch(next)
   })
-  // Deliberately unauthenticated and unthrottled: used only by the load balancer
-  // to determine whether the initialized HTTP server is available.
-  app.get('/health', (_req, res) => {
-    res.status(200).json({ status: 'ok' })
-  })
-
-  const windowMs = Number(process.env.windowMs)
-  const maxRateLimit = Number(process.env.maxRateLimit)
-  const limiter = rateLimit({
-    windowMs, // 1 second
-    max: maxRateLimit, // max 800 requests per second
-  })
-
-  // apply rate limiter to all remaining requests
-  app.use(limiter)
 
   // Note: Having used it above, redirects accordingly
   app.use((req, res, next) => {
