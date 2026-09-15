@@ -198,6 +198,12 @@ export class MultiTenancyController extends Controller {
     if (!passKey || passKey.length < MIN_PASSKEY_LENGTH) {
       return badRequestError(400, { reason: `passKey must be at least ${MIN_PASSKEY_LENGTH} characters.` })
     }
+    // Rejected, not silently normalized to "absent" -- an empty walletID would otherwise fall
+    // through to the native artifact instead of the mobile-compat one the caller asked for, with
+    // no error pointing at why.
+    if (undefined !== walletID && '' === walletID.trim()) {
+      return badRequestError(400, { reason: 'walletID must not be empty.' })
+    }
     const agent = request.agent as Agent<RestMultiTenantAgentModules>
     try {
       // Fail fast with a 404 for a bad/deleted tenantId instead of enqueueing a job that can

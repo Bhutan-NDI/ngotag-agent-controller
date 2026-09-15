@@ -1243,10 +1243,8 @@ describe('WalletPortabilityService — export → import round trip', () => {
     expect(importJob.error).toBeUndefined()
   })
 
-  // Regression test: a mobile-compat (walletID) export uploads a plain, uncompressed .db (see
-  // runExport) -- runImport must not assume every download is gzipped. Before the isGzip sniff,
-  // this round-trip failed with gunzip's "incorrect header check" against real (non-mocked) gzip
-  // code, the same failure mode the review comment described.
+  // Exercises the real (non-mocked) gzip/plain-artifact path end-to-end: a mobile-compat export's
+  // plain .db must still import cleanly, not just a gzipped native one.
   it('a mobile-compat (walletID) export round-trips through import too, without gunzip choking on the plain artifact', async () => {
     const service = new WalletPortabilityService(makeLogger() as never)
 

@@ -48,11 +48,8 @@ const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000
 // trusting the job's own metadata to say so.
 const GZIP_MAGIC_BYTES = Buffer.from([0x1f, 0x8b])
 
-// Holder-credential record categories Credo 0.6.2 restructured into the multi-instance model,
-// and the flat field each has a back-compat setter for (verified directly against
-// @credo-ts/core: W3cCredentialRecord/W3cV2CredentialRecord's `set credential`, SdJwtVcRecord's
-// `set compactSdJwtVc`, MdocRecord's `set base64Url`). Mdoc's instance field name differs from
-// its flat setter name; the others match.
+// Holder-credential record categories with a flat<->credentialInstances back-compat setter,
+// verified against @credo-ts/core's own source.
 const FLATTENABLE_RECORD_CATEGORIES: Array<{ category: string; flatField: string; instanceField: string }> = [
   { category: 'W3cCredentialRecord', flatField: 'credential', instanceField: 'credential' },
   { category: 'W3cV2CredentialRecord', flatField: 'credential', instanceField: 'credential' },
@@ -311,11 +308,8 @@ export class WalletPortabilityService {
     return hash.digest('hex')
   }
 
-  // Rewrites each holder-credential record from 0.6.2's credentialInstances[0] back to the flat
-  // field Credo 0.5.18 (the mobile app's pinned version) reads, via the same back-compat setter
-  // each record class already exposes for this. Records with more than one instance are left
-  // untouched -- cloud wallet doesn't issue batched credentials, and collapsing one would drop
-  // instances 1..n permanently while leaving multiInstanceState claiming there's still more than one.
+  // Records with more than one instance are skipped, not collapsed -- cloud wallet doesn't issue
+  // batched credentials, and collapsing one would drop instances 1..n permanently.
   private async flattenCredentialRecords(store: Store, profile: string): Promise<void> {
     const session = await store.transaction(profile).open()
     try {
