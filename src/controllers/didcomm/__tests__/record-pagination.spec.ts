@@ -2,6 +2,7 @@ import 'reflect-metadata'
 import { DidCommOutOfBandRepository, DidCommProofExchangeRepository } from '@credo-ts/didcomm'
 import { jest } from '@jest/globals'
 
+import { BadRequestError } from '../../../errors'
 import { recordPageOptions } from '../../../utils/recordPagination'
 import { OutOfBandController } from '../outofband/OutOfBandController'
 import { ProofController } from '../proofs/ProofController'
@@ -65,7 +66,10 @@ describe.each([
   })
   it('validates before touching the agent', async () => {
     const f = fixture()
-    await expect(f.call(undefined, undefined, 3)).rejects.toMatchObject({ statusCode: 400 })
+    await expect(f.call(undefined, undefined, 3)).rejects.toMatchObject({
+      statusCode: 400,
+      cause: expect.any(BadRequestError),
+    })
     expect(f.resolve).not.toHaveBeenCalled()
     expect(f.legacy).not.toHaveBeenCalled()
   })

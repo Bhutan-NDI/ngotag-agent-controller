@@ -1,5 +1,6 @@
 import 'reflect-metadata'
 import { CredoError } from '@credo-ts/core'
+import { readFileSync } from 'node:fs'
 import { performance } from 'node:perf_hooks'
 
 import ErrorHandlingService from '../../../errorHandlingService'
@@ -125,5 +126,33 @@ describe('tenant session configuration', () => {
     expect(() => tenantSessionConfig({ SESSION_LIMIT: '10001' })).toThrow()
     expect(() => tenantSessionConfig({ SESSION_PENDING_LIMIT: '10001' })).toThrow()
     expect(() => tenantSessionConfig({ SESSION_ACQUIRE_TIMEOUT: '600001' })).toThrow()
+  })
+})
+
+it('reports effective budgets and distinguishes defaults from explicit values', () => {
+  const entries: unknown[] = []
+  const config = tenantSessionConfig({ SESSION_LIMIT: '12' }, { info: (...args) => entries.push(args) })
+  expect(entries).toEqual([
+    [
+      'Tenant session admission budgets (per process)',
+      {
+        ...config,
+        sources: { sessionLimit: 'explicit', sessionAcquireTimeout: 'default', sessionPendingLimit: 'default' },
+      },
+    ],
+  ])
+})
+
+it('accepts the shipped demo session settings', () => {
+  const env = Object.fromEntries(
+    readFileSync('.env.demo', 'utf8')
+      .split('\n')
+      .filter((line) => /^SESSION_(LIMIT|ACQUIRE_TIMEOUT|PENDING_LIMIT)=/.test(line))
+      .map((line) => line.split('=')),
+  )
+  expect(tenantSessionConfig(env)).toEqual({
+    sessionLimit: 10,
+    sessionAcquireTimeout: 10000,
+    sessionPendingLimit: 1000,
   })
 })

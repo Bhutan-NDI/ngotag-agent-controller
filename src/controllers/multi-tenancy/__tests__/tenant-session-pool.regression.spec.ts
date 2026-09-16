@@ -1,9 +1,4 @@
-/**
- * Session ownership regression tests against the actual vendored tenant admission gate.
- * Patch 002 preserves release on tenant initialization failure. Patch 003 replaces the
- * contended mutex with FIFO admission. Balanced and failing work must release their slots;
- * the negative control deliberately omits release to prove that occupancy still matters.
- */
+/** Tenant sessions release their slots after completed or failed work. */
 import 'reflect-metadata'
 
 // The package "exports" map does not expose build/* subpaths, so import the vendored file directly

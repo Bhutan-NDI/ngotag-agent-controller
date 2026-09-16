@@ -18,7 +18,7 @@ import ErrorHandlingService from '../../../errorHandlingService'
 import { BadRequestError } from '../../../errors'
 import { PurgeRecordType } from '../../../purge/PurgeTypes'
 import { SchedulePurge } from '../../../purge/decorators/SchedulePurge'
-import { recordPageOptions, recordPage } from '../../../utils/recordPagination'
+import { recordPageOptions, fetchRecordPage } from '../../../utils/recordPagination'
 import { ProofRecordExample, RecordId } from '../../examples'
 import {
   AcceptProofProposal,
@@ -56,15 +56,18 @@ export class ProofController extends Controller {
     @Query('limit') limit?: number,
     @Query('offset') offset?: number,
   ) {
-    const page = recordPageOptions(limit, offset)
     try {
+      const page = recordPageOptions(limit, offset)
       const query = threadId ? { threadId } : {}
-      const records = page
-        ? await request.agent.context.dependencyManager
+      const proofs = await fetchRecordPage(
+        this,
+        page,
+        (options) =>
+          request.agent.context.dependencyManager
             .resolve(DidCommProofExchangeRepository)
-            .findByQuery(request.agent.context, query, page)
-        : await request.agent.modules.didcomm.proofs.findAllByQuery(query)
-      const proofs = page ? recordPage(this, records, page) : records
+            .findByQuery(request.agent.context, query, options),
+        () => request.agent.modules.didcomm.proofs.findAllByQuery(query),
+      )
 
       return proofs.map((proof) => proof.toJSON())
     } catch (error) {

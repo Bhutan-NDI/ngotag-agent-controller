@@ -10,7 +10,7 @@ import {
   InternalServerError,
 } from './errors/errors'
 import convertError from './utils/errorConverter'
-import { isTenantAdmissionError } from './utils/tenantSessionConfig'
+import { isTenantAdmissionError, tenantCapacityResponse } from './utils/tenantSessionConfig'
 
 class ErrorHandlingService {
   public static handle(error: unknown): never {
@@ -32,7 +32,7 @@ class ErrorHandlingService {
 
   private static convert(error: unknown): never {
     if (isTenantAdmissionError(error)) {
-      throw new BaseError('Tenant capacity unavailable; retry later', 503)
+      throw new BaseError(tenantCapacityResponse.message, tenantCapacityResponse.status)
     } else if (error instanceof RecordDuplicateError) {
       throw this.handleRecordDuplicateError(error)
     } else if (error instanceof ClassValidationError) {

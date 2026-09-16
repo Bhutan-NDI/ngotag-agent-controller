@@ -17,7 +17,7 @@ import { injectable } from 'tsyringe'
 import { SCOPES } from '../../../enums'
 import ErrorHandlingService from '../../../errorHandlingService'
 import { InternalServerError, NotFoundError } from '../../../errors'
-import { recordPageOptions, recordPage } from '../../../utils/recordPagination'
+import { recordPageOptions, fetchRecordPage } from '../../../utils/recordPagination'
 import { ConnectionRecordExample, outOfBandInvitationExample, outOfBandRecordExample, RecordId } from '../../examples'
 import { AcceptInvitationConfig, ReceiveInvitationByUrlProps, ReceiveInvitationProps } from '../../types'
 
@@ -43,19 +43,22 @@ export class OutOfBandController extends Controller {
     @Query('limit') limit?: number,
     @Query('offset') offset?: number,
   ) {
-    const page = recordPageOptions(limit, offset)
     try {
+      const page = recordPageOptions(limit, offset)
       const query = invitationId
         ? {
             invitationId: invitationId,
           }
         : {}
-      const records = page
-        ? await request.agent.context.dependencyManager
+      const outOfBandRecords = await fetchRecordPage(
+        this,
+        page,
+        (options) =>
+          request.agent.context.dependencyManager
             .resolve(DidCommOutOfBandRepository)
-            .findByQuery(request.agent.context, query, page)
-        : await request.agent.modules.didcomm.oob.findAllByQuery(query)
-      const outOfBandRecords = page ? recordPage(this, records, page) : records
+            .findByQuery(request.agent.context, query, options),
+        () => request.agent.modules.didcomm.oob.findAllByQuery(query),
+      )
 
       return outOfBandRecords.map((c: { toJSON: () => any }) => c.toJSON())
     } catch (error) {

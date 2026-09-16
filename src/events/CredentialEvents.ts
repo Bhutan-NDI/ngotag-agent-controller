@@ -5,6 +5,8 @@ import type { DidCommCredentialStateChangedEvent } from '@credo-ts/didcomm'
 
 import { DidCommCredentialEventTypes, DidCommCredentialState } from '@credo-ts/didcomm'
 
+import { isTenantAdmissionError } from '../utils/tenantSessionConfig'
+
 import { sendWebSocketEvent } from './WebSocketEvents'
 import { sendWebhookEvent } from './WebhookEvent'
 
@@ -53,10 +55,16 @@ export const credentialEvents = async (agent: Agent, config: ServerConfig) => {
             body.outOfBandId = connectionRecord?.outOfBandId ?? null
           }
         } catch (error) {
-          agent.config.logger.error(
-            `Failed to get credential format data for record ${record.id}, continuing with base record`,
-            { cause: error },
-          )
+          if (isTenantAdmissionError(error)) {
+            agent.config.logger.warn(
+              'Tenant capacity unavailable; delivering credential event without format enrichment',
+            )
+          } else {
+            agent.config.logger.error(
+              `Failed to get credential format data for record ${record.id}, continuing with base record`,
+              { cause: error },
+            )
+          }
           body.credentialData = null
           body.outOfBandId = null
         }

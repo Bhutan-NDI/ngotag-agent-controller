@@ -410,7 +410,7 @@ const getWithTenantModules = (
   )
   return {
     tenants: new TenantsModule<typeof modules>({
-      ...tenantSessionConfig(),
+      ...tenantSessionConfig(process.env, logger),
     }),
     ...modules,
   }

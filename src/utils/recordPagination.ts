@@ -28,3 +28,13 @@ export function recordPage<T>(
   if (hasMore) controller.setHeader('X-Next-Offset', String(options.offset + limit))
   return records.slice(0, limit)
 }
+
+export async function fetchRecordPage<T>(
+  controller: Controller,
+  options: ReturnType<typeof recordPageOptions>,
+  fetchPage: (options: NonNullable<ReturnType<typeof recordPageOptions>>) => Promise<T[]>,
+  fetchAll: () => Promise<T[]>,
+): Promise<T[]> {
+  if (!options) return fetchAll()
+  return recordPage(controller, await fetchPage(options), options)
+}

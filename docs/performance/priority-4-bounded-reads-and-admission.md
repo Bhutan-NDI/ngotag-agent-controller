@@ -47,6 +47,44 @@ Queue overflow and admission expiry produce a tagged internal error. HTTP authen
 
 HTTP cleanup releases a tenant session once after the response ends, including `end()` after a client disconnect. A `close` event alone does not release it while controller work is still running. Cleanup rejection is handled with a fixed log message. A real localhost HTTP test exercises disconnect followed by completed work. Existing initialization/callback failure cleanup remains intact. Work that never settles can still occupy its slot; admission does not forcibly terminate it or close its wallet.
 
+## Background consumers and wrapper evaluation
+
+The startup log reports all three effective admission budgets and whether each was
+explicitly configured or defaulted. The shipped demo settings use the same finite
+defaults. This makes the change from implicit unlimited admission visible.
+
+Background consumers share the process budget:
+
+- Cron purge records capacity rejection as a deferred tenant and retries naturally
+  on the next scheduled scan, while continuing with other tenants.
+- The optional, deprecated NATS purge worker uses the existing 5s/30s backoff values
+  for admission rejection. At the delivery limit it logs an operator-recovery error
+  and leaves the unprocessed message unacknowledged, rather than acknowledging it
+  as a dropped job. MaxDeliver still stops automatic redelivery; this is not an
+  unlimited retry policy or durable dead-letter queue. Operators must monitor this
+  error and the broker's maximum-delivery advisories and recover affected jobs
+  before stream retention expires. No broker settings or retention are changed.
+- Proof/credential events explicitly warn on capacity rejection and retain their
+  existing best-effort base-event delivery with null enrichment. Consumers requiring
+  full format data must retrieve it later; this PR does not add webhook retries.
+- Wallet export/import jobs log capacity rejection distinctly and retain their
+  existing Failed status, cleanup and import rollback policy. There is no automatic
+  replay of wallet mutations or new public job-status contract.
+
+A controller-only admission wrapper would miss internal tenant consumers.
+`TenantSessionCoordinator` directly constructs `TenantSessionMutex`, with no mutex
+injection option. Wrapping acquisition alone also leaves the broken internal mutex
+in place; replacing the coordinator would duplicate its context lifecycle. The
+version-pinned tenant patch repairs that shared internal admission point.
+
+For ordered pages, a public query wrapper cannot forward `orderBy` through the
+unpatched Askar adapter: `findByQuery` constructs its own native Scan and drops the
+option. The core patch adds the option to `QueryOptions`; the one-line Askar patch
+forwards it. Replacing the storage service is technically possible but would duplicate
+query translation, profile selection and record decoding. These narrow patches
+retain that implementation. Sorting a truncated result in a wrapper cannot provide
+stable ordering across pages; fetching everything first defeats bounded reads.
+
 ## Validation and reproduction
 
 The tests cover legacy results above the maximum page size, lookahead/continuation, rejected inputs, native repository ordering/filtering/isolation, live mutation semantics, concurrent admission, FIFO transfer, overflow, timeout removal, delayed timers, failure recovery and HTTP disconnect cleanup.
