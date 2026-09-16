@@ -24,12 +24,17 @@ For the stock protocol/repository it:
    A bounded prefix is never treated as a complete result.
 
 Custom protocol message-lookup overrides and custom repository `findAgentMessage`
-overrides use the existing path. The optimization is specifically for stock proof-v2
-format retrieval; other protocol operations are unchanged.
+overrides use the existing path. Instance and message-repository prototype overrides
+of `findSingleByQuery` and `findByQuery` also retain the three exact queries. The
+optimization is specifically for stock proof-v2 format retrieval; other protocol
+operations are unchanged.
 
 Missing messages still produce the same omitted fields, unknown formats retain their
 existing behavior, and duplicate message kinds still raise `RecordDuplicateError`
-with the corresponding query. Both sender and receiver roles remain eligible.
+with the corresponding query. If multiple kinds contain duplicates, the bounded
+path reports proposal before request before presentation; the concurrent original
+path has no guaranteed first-error order. Both paths reject corrupted histories.
+Both sender and receiver roles remain eligible.
 There is no cache, expiry, invalidation mechanism or cross-replica shared state.
 Updates/deletions are visible on the next read. Each replica reads through its own
 current tenant context.
@@ -42,9 +47,24 @@ searches within each eligible call from three to one. Overflow cases use four
 searches (the prefetch plus the original three). Existing exact-lookup behavior on
 overflow is preserved; this PR does not globally bound those existing lookups.
 
+## Why retain the dependency patch
+
+A local wrapper was evaluated against Credo 0.6.2's declarations. The suggested
+`DidCommProofsApi.getProtocol`, `DidCommProofV2Protocol.getFormatServicesFromMessage`
+and `proofFormatCoordinator` are private TypeScript members. A wrapper cannot reuse
+that implementation through the supported public API; it would need private-member
+access or duplicate protocol selection and format extraction logic. Calling the
+public `getFormatData` from a wrapper retains the three searches.
+
+The existing version-pinned patch changes only retrieval inside the protocol and
+keeps its format extraction plus the public API's record validation and protocol
+selection. This is a deliberate maintenance tradeoff, not a claim that a wrapper
+is impossible in JavaScript. Revisit a wrapper if Credo exposes a public batching
+or extraction extension point.
+
 ## Correctness tests
 
-Twelve native Askar/SQLite cases exercise the actual patched protocol/repository:
+Seventeen native Askar/SQLite cases exercise the actual patched protocol/repository:
 
 - All eight subsets of present/missing messages, compared with the original lookup path.
 - Duplicate kinds, including differing sender/receiver roles, and matching error details.
@@ -52,10 +72,12 @@ Twelve native Askar/SQLite cases exercise the actual patched protocol/repository
 - Concurrent same-ID reads in separate profiles.
 - Updates, deletion, unrelated IDs/protocols/versions/kinds, malformed attachments,
   unsupported formats, custom overrides and storage failures.
+- Instance/prototype overrides at both repository query layers and simultaneous
+  duplicate message kinds.
 
-The standalone run passes 35 suites / 354 tests on Node 22.22.2, including this
-12-case native fixture. Lint (warnings only), source/test type checks and formatting
-also pass.
+The original PR validation passed 35 suites / 354 tests on Node 22.22.2, including
+the original 12-case native fixture. Lint (warnings only), source/test type checks
+and formatting also passed for that revision.
 
 The suite wrapper checks the native test count and successful completion, so an
 empty or premature child-process exit cannot count as a passing regression run.

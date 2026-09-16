@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test } from 'node:test'
 import { RecordDuplicateError } from '@credo-ts/core'
-import { DidCommMessageRole } from '@credo-ts/didcomm'
+import { DidCommMessageRepository, DidCommMessageRole } from '@credo-ts/didcomm'
 import { fixture, protocol, baselineProtocol, kinds, message } from './proofFormat.helpers.mjs'
 
 let f
@@ -156,4 +156,47 @@ test('the boundary is conservative at exactly 16 associated records', async () =
   f.queries.length = 0
   assert.deepEqual(await protocol().getFormatData(f.context(), 'proof'), { request: { fixture: { expected: true } } })
   assert.equal(f.queries.length, 4)
+})
+
+for (const method of ['findSingleByQuery', 'findByQuery']) {
+  for (const targetName of ['instance', 'prototype']) {
+    test(`custom ${targetName} ${method} retains exact lookup queries`, async () => {
+      await f.save('request', { custom: true })
+      const target = targetName === 'instance' ? f.repository : DidCommMessageRepository.prototype
+      const descriptor = Object.getOwnPropertyDescriptor(target, method)
+      const original = target[method]
+      const calls = []
+      target[method] = async function (context, query, options) {
+        calls.push({ query, options })
+        return original.call(this, context, query, options)
+      }
+      try {
+        assert.deepEqual(await protocol().getFormatData(f.context(), 'proof'), {
+          request: { fixture: { custom: true } },
+        })
+        assert.equal(calls.length, 3)
+        assert.deepEqual(
+          calls.map(({ query }) => query.messageName).sort(),
+          kinds.map(([, Message]) => Message.type.messageName).sort(),
+        )
+        assert.ok(calls.every(({ options }) => options === undefined))
+      } finally {
+        if (descriptor) Object.defineProperty(target, method, descriptor)
+        else delete target[method]
+      }
+    })
+  }
+}
+
+test('simultaneous duplicate kinds reject without promising baseline error ordering', async () => {
+  for (const [kind] of kinds) {
+    await f.save(kind, {})
+    await f.save(kind, {}, 'proof', 'tenant-a', DidCommMessageRole.Sender)
+  }
+  await assert.rejects(baselineProtocol().getFormatData(f.context(), 'proof'), RecordDuplicateError)
+  await assert.rejects(protocol().getFormatData(f.context(), 'proof'), (error) => {
+    assert.ok(error instanceof RecordDuplicateError)
+    assert.match(error.message, /propose-presentation/)
+    return true
+  })
 })

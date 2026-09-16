@@ -9,8 +9,8 @@ describe('bounded proof format queries with native Askar', () => {
       [path.resolve('src/storage/fixtures/proofFormat.native.mjs')],
       { timeout: 60000, maxBuffer: 1024 * 1024 },
     )
-    expect(stdout).toMatch(/tests 12\b/)
-    expect(stdout).toMatch(/pass 12\b/)
+    expect(stdout).toMatch(/tests 17\b/)
+    expect(stdout).toMatch(/pass 17\b/)
     expect(stdout).toMatch(/fail 0\b/)
   })
 })
