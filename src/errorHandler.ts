@@ -6,6 +6,7 @@ import { ValidateError } from 'tsoa'
 
 import { ErrorMessages } from './enums'
 import { BaseError } from './errors/errors'
+import { isTenantAdmissionError } from './utils/tenantSessionConfig'
 
 /**
  * The single place a failed request is turned into a response, and the only place the resolved
@@ -14,6 +15,9 @@ import { BaseError } from './errors/errors'
  */
 export const createErrorHandler = (logger: Logger): ErrorRequestHandler =>
   (async (err: unknown, req: ExRequest, res: ExResponse, _next: NextFunction): Promise<ExResponse | void> => {
+    if (err instanceof Error && 'cause' in err && isTenantAdmissionError(err.cause)) {
+      res.setHeader('Retry-After', '1')
+    }
     if (err instanceof ValidateError) {
       logger.warn(`${req.method} ${req.path} -> 422: validation failed`, { fields: err.fields })
       return res.status(422).json({

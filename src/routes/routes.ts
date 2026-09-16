@@ -4215,6 +4215,8 @@ export function RegisterRoutes(app: Router) {
         const argsOutOfBandController_getAllOutOfBandRecords: Record<string, TsoaRoute.ParameterSchema> = {
                 request: {"in":"request","name":"request","required":true,"dataType":"object"},
                 invitationId: {"in":"query","name":"invitationId","ref":"RecordId"},
+                limit: {"in":"query","name":"limit","dataType":"double"},
+                offset: {"in":"query","name":"offset","dataType":"double"},
         };
         app.get('/didcomm/oob',
             authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
@@ -5738,6 +5740,8 @@ export function RegisterRoutes(app: Router) {
         const argsProofController_getAllProofs: Record<string, TsoaRoute.ParameterSchema> = {
                 request: {"in":"request","name":"request","required":true,"dataType":"object"},
                 threadId: {"in":"query","name":"threadId","dataType":"string"},
+                limit: {"in":"query","name":"limit","dataType":"double"},
+                offset: {"in":"query","name":"offset","dataType":"double"},
         };
         app.get('/didcomm/proofs',
             authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),

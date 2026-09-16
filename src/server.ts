@@ -7,7 +7,6 @@ import type { ServerConfig } from './utils/ServerConfig'
 import type { Response as ExResponse, Request as ExRequest, NextFunction, ErrorRequestHandler } from 'express'
 
 import { Agent, type Logger } from '@credo-ts/core'
-import { TenantAgent } from '@credo-ts/tenants'
 import bodyParser from 'body-parser'
 import cors from 'cors'
 import dotenv from 'dotenv'
@@ -35,6 +34,7 @@ import { SecurityMiddleware } from './securityMiddleware'
 import { toSerializableConfig } from './utils/ServerConfig'
 import { validateAuthConfig } from './utils/auth'
 import { validateApiKey } from './utils/config'
+import { tenantSessionLifecycle } from './utils/tenantSessionLifecycle'
 
 dotenv.config()
 
@@ -57,7 +57,9 @@ export const setupServer = async (
   fs.writeFileSync('config.json', JSON.stringify(toSerializableConfig(config), null, 2))
 
   const app = config.app ?? express()
-  if (config.cors) app.use(cors())
+  if (config.cors) {
+    app.use(cors({ exposedHeaders: ['X-Has-More', 'X-Page-Limit', 'X-Page-Offset', 'X-Next-Offset', 'Retry-After'] }))
+  }
 
   if (config.socketServer || config.webhookUrl) {
     questionAnswerEvents(agent, config)
@@ -113,12 +115,7 @@ export const setupServer = async (
     next()
   })
 
-  app.use(async (req: ExRequest, res: ExResponse, next: NextFunction) => {
-    res.on('finish', async () => {
-      await endTenantSessionIfActive(req)
-    })
-    next()
-  })
+  app.use(tenantSessionLifecycle)
 
   const securityMiddleware = new SecurityMiddleware()
   app.use(securityMiddleware.use)
@@ -127,16 +124,4 @@ export const setupServer = async (
   app.use(createErrorHandler(agent.config.logger))
 
   return app
-}
-
-async function endTenantSessionIfActive(request: ExRequest) {
-  if ('agent' in request) {
-    const agent = request?.agent
-    if (agent instanceof TenantAgent) {
-      agent.config.logger.debug(`Ending tenant session for tenant:: ${agent.context.contextCorrelationId}`)
-      // TODO: we can also not wait for the ending of session
-      // This can further imporve the response time
-      await agent.endSession()
-    }
-  }
 }

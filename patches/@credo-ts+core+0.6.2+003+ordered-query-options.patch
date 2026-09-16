@@ -1,0 +1,12 @@
+diff --git a/node_modules/@credo-ts/core/build/storage/StorageService.d.mts b/node_modules/@credo-ts/core/build/storage/StorageService.d.mts
+--- a/node_modules/@credo-ts/core/build/storage/StorageService.d.mts
++++ b/node_modules/@credo-ts/core/build/storage/StorageService.d.mts
+@@ -11,6 +11,8 @@
+   $not?: Query<T>;
+ }
+ type QueryOptions = {
++  /** Stable internal insertion order for live offset pages (Askar storage). */
++  orderBy?: "id";
+   limit?: number;
+   offset?: number;
+ };

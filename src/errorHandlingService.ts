@@ -10,6 +10,7 @@ import {
   InternalServerError,
 } from './errors/errors'
 import convertError from './utils/errorConverter'
+import { isTenantAdmissionError, tenantCapacityResponse } from './utils/tenantSessionConfig'
 
 class ErrorHandlingService {
   public static handle(error: unknown): never {
@@ -30,7 +31,9 @@ class ErrorHandlingService {
   }
 
   private static convert(error: unknown): never {
-    if (error instanceof RecordDuplicateError) {
+    if (isTenantAdmissionError(error)) {
+      throw new BaseError(tenantCapacityResponse.message, tenantCapacityResponse.status)
+    } else if (error instanceof RecordDuplicateError) {
       throw this.handleRecordDuplicateError(error)
     } else if (error instanceof ClassValidationError) {
       throw this.handleClassValidationError(error)

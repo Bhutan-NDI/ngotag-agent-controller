@@ -14,6 +14,8 @@
  */
 import { jest } from '@jest/globals'
 
+const { CredoError } = await import('@credo-ts/core')
+const { StatusException } = await import('../errors')
 const { createErrorHandler } = await import('../errorHandler')
 const ErrorHandlingService = (await import('../errorHandlingService')).default
 const { BaseError, NotFoundError, InternalServerError, RecordDuplicateError } = await import('../errors/errors')
@@ -40,8 +42,12 @@ function makeLogger(sink: Logged[]) {
 }
 
 function makeRes() {
-  const captured: { status?: number; body?: unknown } = {}
+  const captured: { status?: number; body?: unknown; headers: Record<string, string> } = { headers: {} }
   const res = {
+    setHeader(name: string, value: string) {
+      captured.headers[name] = value
+      return this
+    },
     status(code: number) {
       captured.status = code
       return this
@@ -154,5 +160,30 @@ describe('createErrorHandler', () => {
 
     expect(captured.status).toBe(500)
     expect(logged).toHaveLength(1)
+  })
+})
+
+describe('tenant admission backpressure', () => {
+  it.each(['authentication', 'controller'])('adds retry pacing for %s admission rejection', async (path) => {
+    const original = Object.assign(new CredoError('capacity'), { code: 'TENANT_SESSION_CAPACITY_UNAVAILABLE' })
+    const error =
+      path === 'authentication'
+        ? Object.assign(new StatusException('Tenant capacity unavailable; retry later', 503), { cause: original })
+        : Object.assign(new BaseError('Tenant capacity unavailable; retry later', 503), { cause: original })
+    const { res, captured } = makeRes()
+    await createErrorHandler(makeLogger([]) as never)(error, req as never, res as never, jest.fn())
+    expect(captured.status).toBe(503)
+    expect(captured.headers['Retry-After']).toBe('1')
+  })
+
+  it('does not mark unrelated service failures as retryable admission errors', async () => {
+    const { res, captured } = makeRes()
+    await createErrorHandler(makeLogger([]) as never)(
+      new BaseError('unknown outcome', 503),
+      req as never,
+      res as never,
+      jest.fn(),
+    )
+    expect(captured.headers).toEqual({})
   })
 })

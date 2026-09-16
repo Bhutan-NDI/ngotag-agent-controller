@@ -6,7 +6,9 @@ import type { Consumer } from 'nats'
 import { RecordNotFoundError } from '@credo-ts/core'
 import { StringCodec } from 'nats'
 
-import { PURGE_CONSUMER_MAX_DELIVER, PURGE_WORKER_RESTART_DELAY_MS } from './PurgeConstants'
+import { isTenantAdmissionError } from '../utils/tenantSessionConfig'
+
+import { PURGE_CONSUMER_BACKOFF_NS, PURGE_CONSUMER_MAX_DELIVER, PURGE_WORKER_RESTART_DELAY_MS } from './PurgeConstants'
 import {
   RECORD_TYPES_WITH_DIDCOMM_MESSAGE_CHILDREN,
   deleteDidCommMessageChildren,
@@ -135,6 +137,21 @@ export class PurgeWorker {
         }
       }
     } catch (err: any) {
+      if (isTenantAdmissionError(err)) {
+        if (deliveryCount >= PURGE_CONSUMER_MAX_DELIVER) {
+          logger.error('[Purge] Tenant capacity retries exhausted; job left unacknowledged for operator recovery', {
+            recordId,
+            recordType,
+            tenantId,
+            deliveryCount,
+          })
+        } else {
+          const delayMs = PURGE_CONSUMER_BACKOFF_NS[Math.max(0, deliveryCount - 1)] / 1_000_000
+          logger.warn('[Purge] Tenant capacity unavailable; delaying job', { recordId, recordType, delayMs })
+          msg.nak(delayMs)
+        }
+        return
+      }
       if (err instanceof RecordNotFoundError) {
         logger.warn('[Purge] Record already absent — treating as success', { recordId, recordType })
         msg.ack()
