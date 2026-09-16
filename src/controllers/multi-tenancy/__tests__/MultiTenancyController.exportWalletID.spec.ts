@@ -40,6 +40,23 @@ describe('MultiTenancyController.exportTenantWallet — walletID must not be emp
     )
   })
 
+  it('rejects a walletID with leading/trailing whitespace -- it becomes the literal Askar profile name, and padding would silently mismatch what mobile sends', async () => {
+    const controller = new MultiTenancyController()
+    const badRequestError = jest.fn((status: number, body: unknown) => ({ status, body })) as never
+
+    await controller.exportTenantWallet(
+      makeRequest(),
+      'tenant-1',
+      { passKey: PASS_KEY, walletID: ' JigmeDorji ' },
+      badRequestError,
+    )
+
+    expect(badRequestError).toHaveBeenCalledWith(
+      400,
+      expect.objectContaining({ reason: expect.stringContaining('whitespace') }),
+    )
+  })
+
   it('does not reject a request with no walletID at all -- native export stays optional-field, not required', async () => {
     const controller = new MultiTenancyController()
     const badRequestError = jest.fn((status: number, body: unknown) => ({ status, body })) as never

@@ -511,8 +511,8 @@ describe('WalletPortabilityService — exportWallet', () => {
   // flattenCredentialRecords loops over multiple categories in one transaction, so a test for one
   // category doesn't also (accidentally) feed its fixture to the others.
   function mockFetchAllForCategory(category: string, entries: unknown[]) {
-    tempStoreFetchAllHolder.impl = jest.fn(async (options: { category: string }) =>
-      options.category === category ? entries : [],
+    tempStoreFetchAllHolder.impl = jest.fn(async (options: unknown) =>
+      (options as { category: string }).category === category ? entries : [],
     )
   }
 
