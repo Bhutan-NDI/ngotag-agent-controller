@@ -43,7 +43,7 @@ Unset settings receive defaults. Blank, zero, fractional, non-finite, exponent-f
 
 Budgets are **per process**, shared by tenant-session consumers in that process. Sessions are not database connections, and this is not a global cap across replicas. The per-tenant initialization/shutdown mutex retains its existing timeout behavior; the acquisition budget is not an end-to-end request deadline. Set the pending limit using request memory, arrival rate and acceptable waiting time, rather than treating its maximum as a target.
 
-Queue overflow and admission expiry produce a tagged internal error. HTTP authentication and controller error conversion map that error to a fixed **503** response. Other authentication and Credo errors retain their handling. There are no automatic retries of issuance, verification or other side effects. Callers must use an appropriate bounded retry/idempotency policy.
+Queue overflow and admission expiry produce a tagged internal error. HTTP authentication and controller error conversion map that error to a fixed **503** response. Tagged admission failures include `Retry-After: 1` (also exposed through CORS) so clients can pace retries rather than spin immediately. This is a minimum pacing hint, not a capacity reservation or permission to replay a side-effecting request with an uncertain outcome. Other authentication and Credo errors retain their handling. There are no automatic retries of issuance, verification or other side effects. Callers must use an appropriate bounded retry/idempotency policy.
 
 HTTP cleanup releases a tenant session once after the response ends, including `end()` after a client disconnect. A `close` event alone does not release it while controller work is still running. Cleanup rejection is handled with a fixed log message. A real localhost HTTP test exercises disconnect followed by completed work. Existing initialization/callback failure cleanup remains intact. Work that never settles can still occupy its slot; admission does not forcibly terminate it or close its wallet.
 
@@ -149,3 +149,14 @@ Before an authorized rollout, integrate the native safety prerequisites, validat
 Adopt pagination only for page-sized product needs. Complete-result callers keep the single-search path. If overload or acceptable throughput worsens, review the configured limits and roll back the application release or configuration through the approved deployment process. No database rollback or data migration is needed for this code.
 
 These measurements do not establish a universal latency improvement, a safe smaller database instance, or a percentage cost saving. A later database resize requires sustained representative-load headroom and a tested rollback; a session limit cannot be converted directly into an instance-size reduction.
+
+## Latency target and overload limits
+
+Admission already queues bounded bursts in FIFO order and transfers released slots
+immediately. A sustained arrival rate above completion capacity cannot have both
+bounded memory and zero rejection: increasing the queue merely increases wait time.
+Keep finite limits and the overload response; test arrival rate, service time and
+p95/p99 queue delay together. No 99.9% latency reduction is established by this PR.
+The platform's narrower offer-permit scope reduces upstream waiting without raising
+the number of concurrent offers. It must be measured alongside this per-process gate
+under representative traffic before claiming a combined service latency gain.

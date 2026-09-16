@@ -106,7 +106,9 @@ export async function expressAuthentication(request: Request, securityName: stri
           }
           const tenantAgent = await agent.modules.tenants.getTenantAgent({ tenantId }).catch((error: unknown) => {
             if (isTenantAdmissionError(error)) {
-              throw new StatusException(tenantCapacityResponse.message, tenantCapacityResponse.status)
+              throw Object.assign(new StatusException(tenantCapacityResponse.message, tenantCapacityResponse.status), {
+                cause: error,
+              })
             }
             throw error
           })

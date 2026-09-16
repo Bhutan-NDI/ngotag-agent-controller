@@ -58,7 +58,7 @@ export const setupServer = async (
 
   const app = config.app ?? express()
   if (config.cors) {
-    app.use(cors({ exposedHeaders: ['X-Has-More', 'X-Page-Limit', 'X-Page-Offset', 'X-Next-Offset'] }))
+    app.use(cors({ exposedHeaders: ['X-Has-More', 'X-Page-Limit', 'X-Page-Offset', 'X-Next-Offset', 'Retry-After'] }))
   }
 
   if (config.socketServer || config.webhookUrl) {
