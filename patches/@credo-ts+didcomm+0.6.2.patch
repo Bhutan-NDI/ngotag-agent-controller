@@ -58,3 +58,38 @@ index 864ac89..ac26260 100644
  		agentContext.config.logger.debug(`Saving record and emitting state changed for credential exchange record ${credentialExchangeRecord.id}`);
  		await credentialRepository.save(agentContext, credentialExchangeRecord);
  		this.emitStateChangedEvent(agentContext, credentialExchangeRecord, null);
+diff --git a/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommMediatorService.mjs b/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommMediatorService.mjs
+index b7343bf..e430a26 100644
+--- a/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommMediatorService.mjs
++++ b/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommMediatorService.mjs
+@@ -172,7 +172,11 @@ let DidCommMediatorService = class DidCommMediatorService {
+ 		});
+ 		try {
+ 			await this.mediatorRoutingRepository.save(agentContext, routingRecord);
+-			this.eventEmitter.emit(agentContext, {
++			// Awaited (emitAsync, not emit) for the same reason as DidCommRoutingService.getRouting:
++			// when this runs in a tenant context, the tenants module's recipient-key-to-tenant mapping
++			// must be persisted before this call returns, or a fast inbound message can arrive before
++			// the mapping exists.
++			await this.eventEmitter.emitAsync(agentContext, {
+ 				type: DidCommRoutingEventTypes.RoutingCreatedEvent,
+ 				payload: { routing: {
+ 					endpoints: didcommConfig.endpoints,
+diff --git a/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommRoutingService.mjs b/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommRoutingService.mjs
+index 9d7ac7b..13da301 100644
+--- a/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommRoutingService.mjs
++++ b/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommRoutingService.mjs
+@@ -28,7 +28,12 @@ let DidCommRoutingService = class DidCommRoutingService {
+ 			mediatorId,
+ 			useDefaultMediator
+ 		});
+-		this.eventEmitter.emit(agentContext, {
++		// Awaited (emitAsync, not emit) so that routing is only handed back to the caller once the
++		// tenants module's recipient-key-to-tenant mapping (registered via an onAsync listener) is
++		// guaranteed to be persisted - otherwise a fast-responding counterparty can reply before the
++		// mapping exists, and the inbound message gets dropped with "Couldn't determine tenant id for
++		// inbound message".
++		await this.eventEmitter.emitAsync(agentContext, {
+ 			type: DidCommRoutingEventTypes.RoutingCreatedEvent,
+ 			payload: { routing }
+ 		});
