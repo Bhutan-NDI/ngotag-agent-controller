@@ -1,0 +1,16 @@
+diff --git a/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.js b/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.js
+index 8b86b7a..f8b6e25 100644
+--- a/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.js
++++ b/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.js
+@@ -152,7 +152,10 @@ let TenantAgentContextProvider = class TenantAgentContextProvider {
+     }
+     listenForRoutingKeyCreatedEvents() {
+         this.logger.debug('Listening for routing key created events in tenant agent context provider');
+-        this.eventEmitter.on(core_1.RoutingEventTypes.RoutingCreatedEvent, async (event) => {
++        // Registered via `onAsync` (not `on`) so that `RoutingService.getRouting` awaits this handler
++        // and the recipient-key-to-tenant mapping is guaranteed to be persisted before the invitation
++        // is returned to the caller, closing the race where a fast reply arrives before the mapping exists.
++        this.eventEmitter.onAsync(core_1.RoutingEventTypes.RoutingCreatedEvent, async (event) => {
+             const contextCorrelationId = event.metadata.contextCorrelationId;
+             const recipientKey = event.payload.routing.recipientKey;
+             // We don't want to register the key if it's for the root agent context
