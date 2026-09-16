@@ -1,0 +1,89 @@
+diff --git a/node_modules/@credo-ts/tenants/build/TenantsApi.d.ts b/node_modules/@credo-ts/tenants/build/TenantsApi.d.ts
+index 34febc4..db9e070 100644
+--- a/node_modules/@credo-ts/tenants/build/TenantsApi.d.ts
++++ b/node_modules/@credo-ts/tenants/build/TenantsApi.d.ts
+@@ -1,7 +1,7 @@
+ import type { CreateTenantOptions, GetTenantAgentOptions, UpdateTenantStorageOptions, WithTenantAgentCallback } from './TenantsApiOptions';
+-import type { TenantRecord } from './repository';
++import type { TenantRecord, TenantRoutingRecord } from './repository';
+ import type { DefaultAgentModules, ModulesMap, Query } from '@credo-ts/core';
+-import { AgentContext, Logger } from '@credo-ts/core';
++import { AgentContext, Key, Logger } from '@credo-ts/core';
+ import { TenantAgent } from './TenantAgent';
+ import { TenantAgentContextProvider } from './context/TenantAgentContextProvider';
+ import { TenantRecordService } from './services';
+@@ -22,4 +22,8 @@ export declare class TenantsApi<AgentModules extends ModulesMap = DefaultAgentMo
+     getAllTenants(): Promise<TenantRecord[]>;
+     updateTenantStorage({ tenantId, updateOptions }: UpdateTenantStorageOptions): Promise<void>;
+     getTenantsWithOutdatedStorage(): Promise<TenantRecord[]>;
++    ensureRoutingKeyRegistered(options: {
++        tenantId: string;
++        recipientKey: Key;
++    }): Promise<TenantRoutingRecord>;
+ }
+diff --git a/node_modules/@credo-ts/tenants/build/TenantsApi.js b/node_modules/@credo-ts/tenants/build/TenantsApi.js
+index ae71bc1..899dd86 100644
+--- a/node_modules/@credo-ts/tenants/build/TenantsApi.js
++++ b/node_modules/@credo-ts/tenants/build/TenantsApi.js
+@@ -117,6 +117,44 @@ let TenantsApi = class TenantsApi {
+         });
+         return outdatedTenants;
+     }
++    // Idempotently ensures a recipient key is registered to a tenant in the root wallet's
++    // TenantRoutingRecord table. Needed for call sites that hand back or reuse a recipient key
++    // without going through RoutingService.getRouting (which registers the mapping as a side
++    // effect of RoutingCreatedEvent) - e.g. a caller-supplied `recipientKey` used to reuse an
++    // existing connection's key in a new invitation instead of minting a new one. Without this,
++    // that key's TenantRoutingRecord may never exist at all (not late - never), and every inbound
++    // message encrypted to it fails with "Couldn't determine tenant id for inbound message".
++    //
++    // Insert-first, not check-then-insert: a find-then-add would leave a race window where two
++    // concurrent calls for the same key (e.g. a client retry) both see "not found" and both insert,
++    // creating two records for one recipientKeyFingerprint - and findTenantRoutingRecordByRecipientKey
++    // (used on every inbound message) throws RecordDuplicateError as soon as more than one exists,
++    // permanently breaking that key. addTenantRoutingRecord now gives the record a deterministic id
++    // (the recipient key's fingerprint), so a concurrent or repeat registration collides atomically
++    // at the storage layer instead - the same idiom MediatorService.createMediatorRoutingRecord
++    // already uses for MEDIATOR_ROUTING_RECORD_ID.
++    async ensureRoutingKeyRegistered({ tenantId, recipientKey }) {
++        this.logger.debug(`Ensuring recipient key ${recipientKey.fingerprint} is registered for tenant '${tenantId}'`);
++        try {
++            return await this.tenantRecordService.addTenantRoutingRecord(this.rootAgentContext, tenantId, recipientKey);
++        }
++        catch (error) {
++            if (!(error instanceof core_1.RecordDuplicateError)) {
++                throw error;
++            }
++            const existingRecord = await this.tenantRecordService.findTenantRoutingRecordByRecipientKey(this.rootAgentContext, recipientKey);
++            if (!existingRecord) {
++                // Shouldn't happen - the insert only fails this way because a record with this id
++                // already exists - but don't paper over an unexpected inconsistency.
++                throw error;
++            }
++            if (existingRecord.tenantId !== tenantId) {
++                throw new core_1.CredoError(`Recipient key ${recipientKey.fingerprint} is already registered to a different tenant`);
++            }
++            this.logger.debug(`Recipient key ${recipientKey.fingerprint} already registered for tenant '${tenantId}', skipping`);
++            return existingRecord;
++        }
++    }
+ };
+ TenantsApi = __decorate([
+     (0, core_1.injectable)(),
+diff --git a/node_modules/@credo-ts/tenants/build/services/TenantRecordService.js b/node_modules/@credo-ts/tenants/build/services/TenantRecordService.js
+index 7c391a9..445e4dd 100644
+--- a/node_modules/@credo-ts/tenants/build/services/TenantRecordService.js
++++ b/node_modules/@credo-ts/tenants/build/services/TenantRecordService.js
+@@ -63,6 +63,12 @@ let TenantRecordService = class TenantRecordService {
+     }
+     async addTenantRoutingRecord(agentContext, tenantId, recipientKey) {
+         const tenantRoutingRecord = new repository_1.TenantRoutingRecord({
++            // Deterministic (not the default random uuid) so that saving the same recipient key twice
++            // collides at the storage layer (Askar's insert is atomic per category+id) instead of
++            // silently creating two records for one key - the same id-collision-as-guard idiom
++            // MediatorService.createMediatorRoutingRecord already uses via MEDIATOR_ROUTING_RECORD_ID.
++            // This is what lets TenantsApi.ensureRoutingKeyRegistered be safely concurrent.
++            id: recipientKey.fingerprint,
+             tenantId,
+             recipientKeyFingerprint: recipientKey.fingerprint,
+         });

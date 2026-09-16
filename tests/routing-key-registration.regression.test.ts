@@ -122,6 +122,69 @@ describe('tenant routing key registration — race regression', () => {
   })
 })
 
+describe('EventEmitter.emitAsync/onAsync — review follow-up (@kinxa0)', () => {
+  // kinxa0 flagged two gaps in the first version of this fix:
+  // 1. emitAsync's `Promise.all` meant one onAsync listener throwing could, in principle, stop
+  //    other listeners for the same event from being awaited/observed as failed - it should isolate
+  //    listeners from each other while still failing closed overall (a registration failure must
+  //    not be swallowed, since the entire point of emitAsync is "don't proceed until this
+  //    persisted").
+  // 2. `emit()` never reached onAsync listeners at all, so any RoutingCreatedEvent publisher that
+  //    (today or in the future) calls plain emit() instead of emitAsync silently skips
+  //    registration with no error - as MediatorService did before the previous commit.
+
+  it('isolates onAsync listeners from each other: one throwing does not stop another from running', async () => {
+    const emitter = new EventEmitter(agentDependencies as any, {} as any)
+    let secondListenerRan = false
+
+    emitter.onAsync('RoutingCreatedEvent' as any, async () => {
+      throw new Error('first listener failed')
+    })
+    emitter.onAsync('RoutingCreatedEvent' as any, async () => {
+      secondListenerRan = true
+    })
+
+    await expect(getRouting(emitter, 'key-one-of-two-listeners-fails')).rejects.toThrow('first listener failed')
+    expect(secondListenerRan).toBe(true)
+  })
+
+  it('fails closed with an AggregateError when more than one onAsync listener rejects', async () => {
+    const emitter = new EventEmitter(agentDependencies as any, {} as any)
+
+    emitter.onAsync('RoutingCreatedEvent' as any, async () => {
+      throw new Error('listener A failed')
+    })
+    emitter.onAsync('RoutingCreatedEvent' as any, async () => {
+      throw new Error('listener B failed')
+    })
+
+    let caught: any
+    try {
+      await getRouting(emitter, 'key-two-listeners-fail')
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBeInstanceOf(AggregateError)
+    expect(caught.errors.map((e: Error) => e.message)).toEqual(['listener A failed', 'listener B failed'])
+  })
+
+  it('emit() (not just emitAsync) also fires onAsync listeners, so no publisher can bypass registration', async () => {
+    const emitter = new EventEmitter(agentDependencies as any, {} as any)
+    const recordStore = new Map<string, string>()
+    registerTenantRoutingListener(emitter, recordStore)
+
+    // Mirrors a hypothetical publisher that (mistakenly, or on an older Credo version) still calls
+    // plain emit() for RoutingCreatedEvent instead of emitAsync.
+    emitter.emit(fakeAgentContext, { type: 'RoutingCreatedEvent' as any, payload: { routing: { recipientKey: 'key-via-plain-emit' } } })
+
+    // emit() is synchronous and does not await onAsync listeners, so poll briefly for the
+    // fire-and-forget registration to land instead of asserting immediately.
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(recordStore.get('key-via-plain-emit')).toBe(fakeAgentContext.contextCorrelationId)
+  })
+})
+
 describe('tenant routing key registration — patched publishers stay wired up (source guard)', () => {
   // These guard against exactly the regression @devdgna caught in review: the tenants module's
   // listener moved to onAsync-only, but one of the two RoutingCreatedEvent publishers
