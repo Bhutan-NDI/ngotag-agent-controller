@@ -25,7 +25,7 @@ diff --git a/node_modules/@credo-ts/tenants/build/TenantsApi.js b/node_modules/@
 index ae71bc1..899dd86 100644
 --- a/node_modules/@credo-ts/tenants/build/TenantsApi.js
 +++ b/node_modules/@credo-ts/tenants/build/TenantsApi.js
-@@ -117,6 +117,44 @@ let TenantsApi = class TenantsApi {
+@@ -117,6 +117,62 @@ let TenantsApi = class TenantsApi {
          });
          return outdatedTenants;
      }
@@ -47,6 +47,18 @@ index ae71bc1..899dd86 100644
 +    // already uses for MEDIATOR_ROUTING_RECORD_ID.
 +    async ensureRoutingKeyRegistered({ tenantId, recipientKey }) {
 +        this.logger.debug(`Ensuring recipient key ${recipientKey.fingerprint} is registered for tenant '${tenantId}'`);
++        // Query by fingerprint first, not insert-first: records created before the deterministic-id
++        // change (below) have random uuid ids, so a blind insert-first approach would not collide
++        // with them - it would succeed and leave two records tagged with the same
++        // recipientKeyFingerprint, which findTenantRoutingRecordByRecipientKey then rejects with
++        // RecordDuplicateError on every subsequent inbound message, breaking a previously-working key.
++        // This also restores the cross-tenant ownership check for those legacy records, which the
++        // old catch-only check never ran for (it only fired after a duplicate-id error, which a
++        // uuid-id record never produces).
++        const existingRecord = await this.tenantRecordService.findTenantRoutingRecordByRecipientKey(this.rootAgentContext, recipientKey);
++        if (existingRecord) {
++            return this.resolveExistingRoutingRecordOwnership(existingRecord, tenantId, recipientKey);
++        }
 +        try {
 +            return await this.tenantRecordService.addTenantRoutingRecord(this.rootAgentContext, tenantId, recipientKey);
 +        }
@@ -54,18 +66,24 @@ index ae71bc1..899dd86 100644
 +            if (!(error instanceof core_1.RecordDuplicateError)) {
 +                throw error;
 +            }
-+            const existingRecord = await this.tenantRecordService.findTenantRoutingRecordByRecipientKey(this.rootAgentContext, recipientKey);
-+            if (!existingRecord) {
++            // Two concurrent callers for the same brand-new key can both see "not found" above and
++            // both reach this insert; the deterministic id (fingerprint) makes the storage layer the
++            // arbiter, so the loser lands here and re-reads the winner's now-persisted record.
++            const raceWinnerRecord = await this.tenantRecordService.findTenantRoutingRecordByRecipientKey(this.rootAgentContext, recipientKey);
++            if (!raceWinnerRecord) {
 +                // Shouldn't happen - the insert only fails this way because a record with this id
 +                // already exists - but don't paper over an unexpected inconsistency.
 +                throw error;
 +            }
-+            if (existingRecord.tenantId !== tenantId) {
-+                throw new core_1.CredoError(`Recipient key ${recipientKey.fingerprint} is already registered to a different tenant`);
-+            }
-+            this.logger.debug(`Recipient key ${recipientKey.fingerprint} already registered for tenant '${tenantId}', skipping`);
-+            return existingRecord;
++            return this.resolveExistingRoutingRecordOwnership(raceWinnerRecord, tenantId, recipientKey);
 +        }
++    }
++    resolveExistingRoutingRecordOwnership(existingRecord, tenantId, recipientKey) {
++        if (existingRecord.tenantId !== tenantId) {
++            throw new core_1.CredoError(`Recipient key ${recipientKey.fingerprint} is already registered to a different tenant`);
++        }
++        this.logger.debug(`Recipient key ${recipientKey.fingerprint} already registered for tenant '${tenantId}', skipping`);
++        return existingRecord;
 +    }
  };
  TenantsApi = __decorate([

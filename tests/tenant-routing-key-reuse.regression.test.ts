@@ -20,13 +20,26 @@
  * as soon as more than one record matches - permanently breaking that key, via a different
  * mechanism than the original bug but with the same symptom.
  *
- * Fix v2 (this version): insert-first instead of check-then-insert. addTenantRoutingRecord now
- * gives the record a deterministic id (the recipient key's fingerprint) instead of a random uuid,
- * so a concurrent or repeat registration of the same key collides atomically at the storage layer
- * (Askar's insert is atomic per category+id) and surfaces as RecordDuplicateError, which
- * ensureRoutingKeyRegistered catches and resolves by fetching the (now guaranteed-to-exist) record
- * - the same id-collision-as-guard idiom MediatorService.createMediatorRoutingRecord already uses
- * for MEDIATOR_ROUTING_RECORD_ID.
+ * Fix v2: insert-first instead of check-then-insert. addTenantRoutingRecord now gives the record a
+ * deterministic id (the recipient key's fingerprint) instead of a random uuid, so a concurrent or
+ * repeat registration of the same key collides atomically at the storage layer (Askar's insert is
+ * atomic per category+id) and surfaces as RecordDuplicateError, which ensureRoutingKeyRegistered
+ * catches and resolves by fetching the (now guaranteed-to-exist) record - the same
+ * id-collision-as-guard idiom MediatorService.createMediatorRoutingRecord already uses for
+ * MEDIATOR_ROUTING_RECORD_ID.
+ *
+ * Fix v3 (this version) - @devdgna review follow-up: v2's insert-first approach only collides
+ * correctly for keys registered *after* the deterministic-id change. A TenantRoutingRecord created
+ * before it has a random uuid id, not a fingerprint id, so inserting a fingerprint-id record for a
+ * key that already has a uuid-id record does NOT collide - it succeeds, leaving two records tagged
+ * with the same recipientKeyFingerprint. findTenantRoutingRecordByRecipientKey then throws
+ * RecordDuplicateError on every subsequent inbound message for that key, breaking a
+ * previously-working key. The cross-tenant ownership check was also silently skipped for legacy
+ * records, since it only ran inside the duplicate-id catch block, which a uuid-id record never
+ * triggers. Fixed by querying by recipientKeyFingerprint *before* inserting - same-tenant match
+ * short-circuits to the existing record (uuid-id or fingerprint-id, doesn't matter), a
+ * different-tenant match is rejected immediately, and the deterministic-id insert + duplicate
+ * recovery is retained purely for the concurrent-brand-new-key race that v2 was written for.
  *
  * These tests exercise the REAL vendored TenantsApi.ensureRoutingKeyRegistered.
  */
@@ -46,26 +59,36 @@ const fakeAgentContextProvider: any = {}
 
 const fakeRecipientKey = (fingerprint: string): any => ({ fingerprint })
 
-// Mirrors the real (patched) TenantRecordService.addTenantRoutingRecord + storage backend: an
-// in-memory map keyed by recipientKeyFingerprint (standing in for the deterministic record id),
-// with Askar's atomic-insert-collides-on-duplicate-id behavior.
+// Mirrors the real (patched) TenantRecordService.addTenantRoutingRecord + storage backend: records
+// are keyed by `id` (Askar's atomic-insert-collides-on-duplicate-id behavior applies to `id`, not
+// to the recipientKeyFingerprint tag), and addTenantRoutingRecord always inserts using the
+// recipient key's fingerprint as the id - matching the deterministic-id fix. seedLegacyRecord lets
+// a test plant a record with a random uuid id (as every TenantRoutingRecord had before that fix),
+// to exercise the case where the id and the fingerprint tag are NOT the same value.
 const makeFakeTenantRecordService = () => {
-  const recordsByFingerprint = new Map<string, { tenantId: string; recipientKeyFingerprint: string }>()
+  const recordsById = new Map<string, { id: string; tenantId: string; recipientKeyFingerprint: string }>()
   let addCallCount = 0
   return {
     addCallCount: () => addCallCount,
+    recordCountForFingerprint: (fingerprint: string) =>
+      [...recordsById.values()].filter((record) => record.recipientKeyFingerprint === fingerprint).length,
+    seedLegacyRecord: (record: { id: string; tenantId: string; recipientKeyFingerprint: string }) => {
+      recordsById.set(record.id, record)
+    },
     tenantRecordService: {
       findTenantRoutingRecordByRecipientKey: async (_ctx: any, recipientKey: any) =>
-        recordsByFingerprint.get(recipientKey.fingerprint) ?? null,
+        [...recordsById.values()].find((record) => record.recipientKeyFingerprint === recipientKey.fingerprint) ??
+        null,
       addTenantRoutingRecord: async (_ctx: any, tenantId: string, recipientKey: any) => {
         addCallCount++
-        if (recordsByFingerprint.has(recipientKey.fingerprint)) {
-          throw new RecordDuplicateError(`Record with id ${recipientKey.fingerprint} already exists`, {
+        const id = recipientKey.fingerprint
+        if (recordsById.has(id)) {
+          throw new RecordDuplicateError(`Record with id ${id} already exists`, {
             recordType: 'TenantRoutingRecord',
           })
         }
-        const record = { tenantId, recipientKeyFingerprint: recipientKey.fingerprint }
-        recordsByFingerprint.set(recipientKey.fingerprint, record)
+        const record = { id, tenantId, recipientKeyFingerprint: recipientKey.fingerprint }
+        recordsById.set(id, record)
         return record
       },
     },
@@ -90,7 +113,7 @@ describe('TenantsApi.ensureRoutingKeyRegistered — reused-key registration regr
 
     const result = await api.ensureRoutingKeyRegistered({ tenantId: 'tenant-a', recipientKey: fakeRecipientKey('fp-existing') })
 
-    expect(result).toEqual({ tenantId: 'tenant-a', recipientKeyFingerprint: 'fp-existing' })
+    expect(result).toEqual({ id: 'fp-existing', tenantId: 'tenant-a', recipientKeyFingerprint: 'fp-existing' })
   })
 
   it('refuses to silently reassign a key already registered to a different tenant', async () => {
@@ -133,6 +156,37 @@ describe('TenantsApi.ensureRoutingKeyRegistered — reused-key registration regr
     await expect(
       api.ensureRoutingKeyRegistered({ tenantId: 'tenant-a', recipientKey: fakeRecipientKey('fp-inconsistent') })
     ).rejects.toThrow(RecordDuplicateError)
+  })
+
+  it('@devdgna regression: recognizes a pre-change uuid-id record for the same tenant instead of inserting a duplicate', async () => {
+    const { tenantRecordService, seedLegacyRecord, addCallCount, recordCountForFingerprint } =
+      makeFakeTenantRecordService()
+    // A TenantRoutingRecord created before the deterministic-id fix - random uuid id, id !== fingerprint.
+    seedLegacyRecord({ id: 'legacy-uuid-1234', tenantId: 'tenant-a', recipientKeyFingerprint: 'fp-legacy-same-tenant' })
+    const api = new (TenantsApi as any)(tenantRecordService, fakeRootAgentContext, fakeAgentContextProvider, logger)
+
+    const result = await api.ensureRoutingKeyRegistered({
+      tenantId: 'tenant-a',
+      recipientKey: fakeRecipientKey('fp-legacy-same-tenant'),
+    })
+
+    expect(result).toEqual({ id: 'legacy-uuid-1234', tenantId: 'tenant-a', recipientKeyFingerprint: 'fp-legacy-same-tenant' })
+    // Must resolve via the fingerprint lookup, not attempt a fingerprint-id insert - an insert-first
+    // approach would succeed here (different id, no collision) and create a second record.
+    expect(addCallCount()).toBe(0)
+    expect(recordCountForFingerprint('fp-legacy-same-tenant')).toBe(1)
+  })
+
+  it('@devdgna regression: rejects a pre-change uuid-id record registered to a different tenant', async () => {
+    const { tenantRecordService, seedLegacyRecord, addCallCount } = makeFakeTenantRecordService()
+    seedLegacyRecord({ id: 'legacy-uuid-5678', tenantId: 'tenant-b', recipientKeyFingerprint: 'fp-legacy-cross-tenant' })
+    const api = new (TenantsApi as any)(tenantRecordService, fakeRootAgentContext, fakeAgentContextProvider, logger)
+
+    await expect(
+      api.ensureRoutingKeyRegistered({ tenantId: 'tenant-a', recipientKey: fakeRecipientKey('fp-legacy-cross-tenant') })
+    ).rejects.toThrow(/already registered to a different tenant/)
+    // Must reject on the fingerprint-lookup ownership check - no insert attempt, no new record.
+    expect(addCallCount()).toBe(0)
   })
 })
 
