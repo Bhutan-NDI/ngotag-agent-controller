@@ -507,9 +507,7 @@ describe('WalletPortabilityService — exportWallet', () => {
     )
   })
 
-  // Mocks fetchAll filtering by category, the way a real Askar session would -- needed now that
-  // flattenCredentialRecords loops over multiple categories in one transaction, so a test for one
-  // category doesn't also (accidentally) feed its fixture to the others.
+  // Mocks fetchAll filtering by category, the way a real Askar session would.
   function mockFetchAllForCategory(category: string, entries: unknown[]) {
     tempStoreFetchAllHolder.impl = jest.fn(async (options: unknown) =>
       (options as { category: string }).category === category ? entries : [],

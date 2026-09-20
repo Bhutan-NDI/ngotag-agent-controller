@@ -341,9 +341,7 @@ export class WalletPortabilityService {
             continue
           }
 
-          // kmsKeyId (SdJwtVcRecord/MdocRecord only) has no field in the flat 0.5.18 shape --
-          // a credential relying on it, rather than a legacy-derivable or DID-bound key, can't
-          // be presented after import regardless of how this method packages it.
+          // kmsKeyId (SdJwtVcRecord/MdocRecord only) has no field in the flat 0.5.18 shape.
           if (instances[0].kmsKeyId) droppedKmsKeyId += 1
 
           value[flatField] = instances[0][instanceField]
