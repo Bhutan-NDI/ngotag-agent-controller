@@ -83,8 +83,8 @@ jest.unstable_mockModule('aws-sdk', () => ({
 }))
 
 const storeClose = jest.fn(async () => undefined) as jest.Mock
-// Temp store's transaction/session surface, for flattenW3cRecords. Default: no records to
-// flatten, so tests that don't care about it are unaffected. Overridden per-test via .impl.
+// Temp store's transaction/session surface, for flattenCredentialRecords. Default: empty (no
+// records to flatten); overridden per-test via .impl.
 const tempStoreFetchAllHolder = { impl: jest.fn(async () => [] as unknown[]) as jest.Mock }
 const tempStoreSessionReplace = jest.fn(async () => undefined) as jest.Mock
 const tempStoreSessionCommit = jest.fn(async () => undefined) as jest.Mock
@@ -860,9 +860,8 @@ describe('WalletPortabilityService — importWallet', () => {
   })
 
   it('isGzip: detects the real gzip magic number, and reports plain content as not gzip', async () => {
-    // Import can no longer assume every downloaded artifact is gzipped -- a mobile-compat export
-    // (see runExport) uploads a plain .db. Verified against real gzip output and real plain bytes,
-    // not a stub, since the whole point is sniffing actual content rather than trusting a flag.
+    // Verified against real gzip output and real plain bytes, not a stub -- the point is sniffing
+    // actual content rather than trusting a flag.
     const workDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'is-gzip-test-'))
     const gzipPath = path.join(workDir, 'input.db.gz')
     const plainPath = path.join(workDir, 'input.db')

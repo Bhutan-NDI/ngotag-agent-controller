@@ -198,10 +198,7 @@ export class MultiTenancyController extends Controller {
     if (!passKey || passKey.length < MIN_PASSKEY_LENGTH) {
       return badRequestError(400, { reason: `passKey must be at least ${MIN_PASSKEY_LENGTH} characters.` })
     }
-    // Rejected, not silently normalized -- walletID becomes the literal Askar profile name
-    // mobile's import must match exactly, so an empty or whitespace-padded value must not
-    // silently fall through (empty, to the native artifact) or silently mismatch (padded, from
-    // whatever mobile actually sends), either with no error pointing at why.
+    // walletID becomes the literal Askar profile name mobile's import must match exactly.
     if (undefined !== walletID && walletID !== walletID.trim()) {
       return badRequestError(400, { reason: 'walletID must not have leading or trailing whitespace.' })
     }

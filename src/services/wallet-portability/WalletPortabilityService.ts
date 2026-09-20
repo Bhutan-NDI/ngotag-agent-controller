@@ -320,10 +320,7 @@ export class WalletPortabilityService {
     return hash.digest('hex')
   }
 
-  // Records with more than one instance are skipped, not collapsed -- cloud wallet doesn't issue
-  // batched credentials, and collapsing one would drop instances 1..n permanently. Counts (not
-  // per-record logs) are returned so the caller can flag an unexpected occurrence without this
-  // method needing job context of its own.
+  // Records with more than one instance are skipped, not collapsed, to avoid dropping instances 1..n.
   private async flattenCredentialRecords(
     store: Store,
     profile: string,
