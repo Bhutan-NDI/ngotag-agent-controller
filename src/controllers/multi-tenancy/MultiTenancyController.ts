@@ -198,6 +198,13 @@ export class MultiTenancyController extends Controller {
     if (!passKey || passKey.length < MIN_PASSKEY_LENGTH) {
       return badRequestError(400, { reason: `passKey must be at least ${MIN_PASSKEY_LENGTH} characters.` })
     }
+    // walletID becomes the literal Askar profile name mobile's import must match exactly.
+    if (undefined !== walletID && walletID !== walletID.trim()) {
+      return badRequestError(400, { reason: 'walletID must not have leading or trailing whitespace.' })
+    }
+    if (undefined !== walletID && '' === walletID) {
+      return badRequestError(400, { reason: 'walletID must not be empty.' })
+    }
     const agent = request.agent as Agent<RestMultiTenantAgentModules>
     try {
       // Fail fast with a 404 for a bad/deleted tenantId instead of enqueueing a job that can

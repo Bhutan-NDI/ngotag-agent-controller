@@ -83,12 +83,26 @@ jest.unstable_mockModule('aws-sdk', () => ({
 }))
 
 const storeClose = jest.fn(async () => undefined) as jest.Mock
+// Temp store's transaction/session surface, for flattenCredentialRecords. Default: empty (no
+// records to flatten); overridden per-test via .impl.
+const tempStoreFetchAllHolder = { impl: jest.fn(async () => [] as unknown[]) as jest.Mock }
+const tempStoreSessionReplace = jest.fn(async () => undefined) as jest.Mock
+const tempStoreSessionCommit = jest.fn(async () => undefined) as jest.Mock
+const tempStoreSessionRollback = jest.fn(async () => undefined) as jest.Mock
+const tempStoreTransaction = jest.fn(() => ({
+  open: jest.fn(async () => ({
+    fetchAll: tempStoreFetchAllHolder.impl,
+    replace: tempStoreSessionReplace,
+    commit: tempStoreSessionCommit,
+    rollback: tempStoreSessionRollback,
+  })),
+})) as jest.Mock
 // Store.provision must actually create a file at the given sqlite:// path — gzipAndChecksum
 // reads it afterwards. Content is arbitrary; only its presence/bytes matter for this test.
 const storeProvision = jest.fn(async (options: { uri: string }) => {
   const path = options.uri.replace('sqlite://', '')
   writeFileSync(path, 'fake-wallet-export-content')
-  return { close: storeClose }
+  return { close: storeClose, transaction: tempStoreTransaction }
 }) as jest.Mock
 
 // Import-side Store mock. importedStoreClose/importedStoreListProfiles/importedStoreCopyProfile
@@ -227,6 +241,7 @@ beforeEach(() => {
   jest.clearAllMocks()
   process.env.AWS_WALLET_EXPORT_BUCKET = 'test-wallet-export-bucket'
   uploadedBytes = undefined
+  tempStoreFetchAllHolder.impl = jest.fn(async () => [] as unknown[])
 })
 
 describe('WalletPortabilityService — exportWallet', () => {
@@ -458,6 +473,231 @@ describe('WalletPortabilityService — exportWallet', () => {
 
     expect(copyProfile).toHaveBeenCalledWith(expect.objectContaining({ fromProfile: PROFILE, toProfile: PROFILE }))
   })
+
+  it('native export (no walletID) still gzips the artifact', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY)
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    const uploadedKey = (s3Upload.mock.calls[0][0] as { Key: string }).Key
+    expect(uploadedKey).toMatch(/\.db\.gz$/)
+  })
+
+  it('mobile-compat export (walletID present) skips gzip and uploads the plain artifact', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+    const WALLET_ID = 'JigmeDorji'
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, WALLET_ID)
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    const uploadedKey = (s3Upload.mock.calls[0][0] as { Key: string }).Key
+    expect(uploadedKey).toMatch(/\.db$/)
+    expect(uploadedKey).not.toMatch(/\.gz$/)
+    // The plain file Store.provision's mock writes, not a gzipped copy of it.
+    expect(uploadedBytes?.toString()).toBe('fake-wallet-export-content')
+    expect(job.checksum).toBe(
+      createHash('sha256')
+        .update(uploadedBytes as Buffer)
+        .digest('hex'),
+    )
+  })
+
+  // Mocks fetchAll filtering by category, the way a real Askar session would.
+  function mockFetchAllForCategory(category: string, entries: unknown[]) {
+    tempStoreFetchAllHolder.impl = jest.fn(async (options: unknown) =>
+      (options as { category: string }).category === category ? entries : [],
+    )
+  }
+
+  it('flattens a W3cCredentialRecord from credentialInstances to a flat credential field when walletID is present', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+    mockFetchAllForCategory('W3cCredentialRecord', [
+      {
+        category: 'W3cCredentialRecord',
+        name: 'record-1',
+        tags: { some: 'tag' },
+        value: {
+          credentialInstances: [{ credential: { type: ['VerifiableCredential'] } }],
+          multiInstanceState: 'SingleInstanceUnused',
+        },
+      },
+    ])
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(tempStoreSessionReplace).toHaveBeenCalledWith({
+      category: 'W3cCredentialRecord',
+      name: 'record-1',
+      tags: { some: 'tag' },
+      value: {
+        credential: { type: ['VerifiableCredential'] },
+        multiInstanceState: 'SingleInstanceUnused',
+      },
+    })
+    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(1)
+  })
+
+  it('flattens an SdJwtVcRecord to its flat compactSdJwtVc field', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+    mockFetchAllForCategory('SdJwtVcRecord', [
+      {
+        category: 'SdJwtVcRecord',
+        name: 'sd-jwt-1',
+        tags: {},
+        value: { credentialInstances: [{ compactSdJwtVc: 'header.payload.sig~kbjwt' }] },
+      },
+    ])
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(tempStoreSessionReplace).toHaveBeenCalledWith(
+      expect.objectContaining({ value: { compactSdJwtVc: 'header.payload.sig~kbjwt' } }),
+    )
+  })
+
+  it('flattens an MdocRecord to base64Url, even though the flat field name differs from the instance field name', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+    mockFetchAllForCategory('MdocRecord', [
+      {
+        category: 'MdocRecord',
+        name: 'mdoc-1',
+        tags: {},
+        value: { credentialInstances: [{ issuerSignedBase64Url: 'encoded-mdoc-bytes' }] },
+      },
+    ])
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(tempStoreSessionReplace).toHaveBeenCalledWith(
+      expect.objectContaining({ value: { base64Url: 'encoded-mdoc-bytes' } }),
+    )
+  })
+
+  it('skips flattening a record with more than one credential instance, rather than silently dropping instances 1..n, and warns so it is traceable', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+    mockFetchAllForCategory('W3cCredentialRecord', [
+      {
+        category: 'W3cCredentialRecord',
+        name: 'batch-issued',
+        tags: {},
+        value: {
+          credentialInstances: [{ credential: { id: 'instance-1' } }, { credential: { id: 'instance-2' } }],
+          multiInstanceState: 'MultiInstanceFirstUnused',
+        },
+      },
+    ])
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(tempStoreSessionReplace).not.toHaveBeenCalled()
+    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(1)
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('1 multi-instance record'))
+  })
+
+  it('warns when a flattened record had an explicit kmsKeyId, since the flat 0.5.18 shape has no field for it', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+    mockFetchAllForCategory('SdJwtVcRecord', [
+      {
+        category: 'SdJwtVcRecord',
+        name: 'kms-backed',
+        tags: {},
+        value: { credentialInstances: [{ compactSdJwtVc: 'header.payload.sig~kbjwt', kmsKeyId: 'kms-key-1' }] },
+      },
+    ])
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(tempStoreSessionReplace).toHaveBeenCalledWith(
+      expect.objectContaining({ value: expect.objectContaining({ compactSdJwtVc: 'header.payload.sig~kbjwt' }) }),
+    )
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('1 record(s) had an explicit kmsKeyId'))
+  })
+
+  it('leaves a record with no credentialInstances untouched', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+    mockFetchAllForCategory('W3cCredentialRecord', [
+      { category: 'W3cCredentialRecord', name: 'already-flat', tags: {}, value: { credential: {} } },
+    ])
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(tempStoreSessionReplace).not.toHaveBeenCalled()
+    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not touch the flattening transaction at all when walletID is absent', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY)
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(tempStoreTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rolls back the flattening transaction and fails the job if a replace throws', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+    mockFetchAllForCategory('W3cCredentialRecord', [
+      { category: 'W3cCredentialRecord', name: 'bad', tags: {}, value: { credentialInstances: [{ credential: {} }] } },
+    ])
+    tempStoreSessionReplace.mockImplementationOnce(async () => {
+      throw new Error('replace failed')
+    })
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(tempStoreSessionRollback).toHaveBeenCalledTimes(1)
+    expect(tempStoreSessionCommit).not.toHaveBeenCalled()
+    expect(job.error).toBeDefined()
+  })
+
+  it('a failure in commit() itself is not masked by rollback() throwing on an already-closing handle', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+    tempStoreSessionCommit.mockImplementationOnce(async () => {
+      throw new Error('commit failed: handle already closing')
+    })
+    tempStoreSessionRollback.mockImplementationOnce(async () => {
+      throw new Error('rollback failed: handle already closed')
+    })
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(job.error).toBe('EXPORT_FAILED')
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('commit failed'))
+  })
 })
 
 describe('WalletPortabilityService — importWallet', () => {
@@ -615,6 +855,24 @@ describe('WalletPortabilityService — importWallet', () => {
     } finally {
       process.env.AWS_WALLET_EXPORT_BUCKET = 'test-wallet-export-bucket'
     }
+  })
+
+  it('isGzip: detects the real gzip magic number, and reports plain content as not gzip', async () => {
+    // Verified against real gzip output and real plain bytes, not a stub -- the point is sniffing
+    // actual content rather than trusting a flag.
+    const workDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'is-gzip-test-'))
+    const gzipPath = path.join(workDir, 'input.db.gz')
+    const plainPath = path.join(workDir, 'input.db')
+    await fsPromises.writeFile(gzipPath, gzipSync(Buffer.from('some wallet bytes')))
+    await fsPromises.writeFile(plainPath, Buffer.from('SQLite format 3\0not actually gzipped'))
+
+    const service = new WalletPortabilityService(makeLogger() as never)
+    const isGzip = (service as unknown as { isGzip(path: string): Promise<boolean> }).isGzip.bind(service)
+
+    await expect(isGzip(gzipPath)).resolves.toBe(true)
+    await expect(isGzip(plainPath)).resolves.toBe(false)
+
+    await fsPromises.rm(workDir, { recursive: true, force: true })
   })
 
   it('decompression bomb: gunzip aborts once decompressed output crosses its byte cap', async () => {
@@ -990,6 +1248,35 @@ describe('WalletPortabilityService — export → import round trip', () => {
     // s3Upload's own mock implementation (above) already reads these bytes off disk into the
     // module-level uploadedBytes at call time, since uploadToS3 streams via s3.upload() with a
     // fs.ReadStream Body rather than a Buffer.
+    fetchMock.mockImplementation(async () => makeFetchResponse(uploadedBytes as Buffer))
+
+    const importCopyProfile = jest.fn(async () => undefined)
+    const { agent: importAgent } = makeAgent(importCopyProfile)
+    const { jobId: importJobId } = await service.importWallet(
+      importAgent as never,
+      TENANT_ID,
+      exportJob.downloadUrl as string,
+      PASS_KEY,
+      exportJob.checksum as string,
+    )
+    const importJob = await waitForJobStatus(service, importJobId, WalletPortabilityJobStatus.Completed)
+
+    expect(importJob.status).toBe(WalletPortabilityJobStatus.Completed)
+    expect(importJob.error).toBeUndefined()
+  })
+
+  // Exercises the real (non-mocked) gzip/plain-artifact path end-to-end: a mobile-compat export's
+  // plain .db must still import cleanly, not just a gzipped native one.
+  it('a mobile-compat (walletID) export round-trips through import too, without gunzip choking on the plain artifact', async () => {
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const exportCopyProfile = jest.fn(async () => undefined)
+    const { agent: exportAgent } = makeAgent(exportCopyProfile)
+    const { jobId: exportJobId } = await service.exportWallet(exportAgent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    const exportJob = await waitForJobStatus(service, exportJobId, WalletPortabilityJobStatus.Completed)
+
+    expect(exportJob.s3Key).toMatch(/\.db$/)
+
     fetchMock.mockImplementation(async () => makeFetchResponse(uploadedBytes as Buffer))
 
     const importCopyProfile = jest.fn(async () => undefined)
