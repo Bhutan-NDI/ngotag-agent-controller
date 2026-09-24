@@ -100,11 +100,14 @@ export class WalletPortabilityService {
    *   Askar's raw KDF, which only accepts a base58-encoded 32-byte key and would reject a normal
    *   passphrase outright (see runExport below). The caller must retain this to import the
    *   artifact later; it is never generated or persisted server-side, and never logged.
+   * @param walletID Profile to package the artifact under, for mobile's `agent.wallet.import()`
+   *   to match; falls back to the tenant's real profile if omitted.
    */
   public async exportWallet(
     agent: Agent<RestMultiTenantAgentModules>,
     tenantId: string,
     passKey: string,
+    walletID?: string,
   ): Promise<ExportWalletResult> {
     const jobId = uuid()
 
@@ -135,7 +138,7 @@ export class WalletPortabilityService {
     // Fire-and-forget async job. Best-effort mark Failed here too, in case setJobStatus(InProgress)
     // itself throws before runExport's own try can catch it — otherwise the job is stranded at
     // Pending forever.
-    this.runExport(agent, tenantId, jobId, passKey, heartbeat).catch((error) => {
+    this.runExport(agent, tenantId, jobId, passKey, heartbeat, walletID).catch((error) => {
       this.logger.error(`[WalletPortabilityService] export job ${jobId} failed to start: ${error}`)
       this.setJobStatus(
         jobId,
@@ -162,6 +165,7 @@ export class WalletPortabilityService {
     jobId: string,
     passKey: string,
     heartbeat: NodeJS.Timeout,
+    walletID?: string,
   ): Promise<void> {
     let tempStore: Store | undefined
     let tempDbPath: string | undefined
@@ -190,6 +194,9 @@ export class WalletPortabilityService {
           throw new Error(`No Askar profile resolved for tenant '${tenantId}'`)
         }
 
+        // walletID, not the tenant's real profile — mobile's import requires an exact match.
+        const packagedProfile = walletID || profile
+
         tempStore = await Store.provision({
           uri: `sqlite://${tempDbPath}`,
           // Argon2IMod, not Raw: Askar's raw KDF only accepts a base58-encoded 32-byte key and
@@ -198,10 +205,10 @@ export class WalletPortabilityService {
           keyMethod: new StoreKeyMethod(KdfMethod.Argon2IMod),
           passKey,
           recreate: true,
-          profile,
+          profile: packagedProfile,
         })
 
-        await baseStore.copyProfile({ toStore: tempStore, fromProfile: profile, toProfile: profile })
+        await baseStore.copyProfile({ toStore: tempStore, fromProfile: profile, toProfile: packagedProfile })
       })
 
       await tempStore?.close()

@@ -434,6 +434,30 @@ describe('WalletPortabilityService — exportWallet', () => {
 
     expect(callOrder).toEqual(['withTenantAgent:start', 'copyProfile', 'withTenantAgent:end'])
   })
+
+  it("packages the artifact under the caller-supplied walletID, not the tenant's real profile, while still reading from the real profile", async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const WALLET_ID = 'JohnDoe'
+
+    const service = new WalletPortabilityService(makeLogger() as never)
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, WALLET_ID)
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(copyProfile).toHaveBeenCalledWith(expect.objectContaining({ fromProfile: PROFILE, toProfile: WALLET_ID }))
+    expect(storeProvision).toHaveBeenCalledWith(expect.objectContaining({ profile: WALLET_ID }))
+  })
+
+  it("falls back to the tenant's real profile when no walletID is supplied", async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+
+    const service = new WalletPortabilityService(makeLogger() as never)
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY)
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(copyProfile).toHaveBeenCalledWith(expect.objectContaining({ fromProfile: PROFILE, toProfile: PROFILE }))
+  })
 })
 
 describe('WalletPortabilityService — importWallet', () => {

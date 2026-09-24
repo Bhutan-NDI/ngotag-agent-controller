@@ -191,10 +191,10 @@ export class MultiTenancyController extends Controller {
   public async exportTenantWallet(
     @Request() request: Req,
     @Path('tenantId') tenantId: string,
-    @Body() exportWalletRequest: { passKey: string },
+    @Body() exportWalletRequest: { passKey: string; walletID?: string },
     @Res() badRequestError: TsoaResponse<400, { reason: string }>,
   ): Promise<ExportWalletResult> {
-    const { passKey } = exportWalletRequest
+    const { passKey, walletID } = exportWalletRequest
     if (!passKey || passKey.length < MIN_PASSKEY_LENGTH) {
       return badRequestError(400, { reason: `passKey must be at least ${MIN_PASSKEY_LENGTH} characters.` })
     }
@@ -214,6 +214,7 @@ export class MultiTenancyController extends Controller {
         agent,
         tenantId,
         passKey,
+        walletID,
       )
     } catch (error) {
       // Export and import share the tenant's profile namespace and can't safely run
