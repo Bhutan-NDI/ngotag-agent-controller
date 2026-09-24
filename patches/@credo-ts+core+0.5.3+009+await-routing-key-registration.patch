@@ -112,19 +112,51 @@ diff --git a/node_modules/@credo-ts/core/build/modules/routing/services/Mediator
 index 6818a3b..f69aaf4 100644
 --- a/node_modules/@credo-ts/core/build/modules/routing/services/MediatorService.js
 +++ b/node_modules/@credo-ts/core/build/modules/routing/services/MediatorService.js
-@@ -189,7 +189,11 @@ let MediatorService = class MediatorService {
+@@ -189,16 +189,6 @@ let MediatorService = class MediatorService {
          });
          try {
              await this.mediatorRoutingRepository.save(agentContext, routingRecord);
 -            this.eventEmitter.emit(agentContext, {
-+            // Awaited (emitAsync, not emit) for the same reason as RoutingService.getRouting: when
-+            // this runs in a tenant context, the tenants module's recipient-key-to-tenant mapping must
-+            // be persisted before this call returns, or a fast inbound message can arrive before the
-+            // mapping exists.
-+            await this.eventEmitter.emitAsync(agentContext, {
-                 type: RoutingEvents_1.RoutingEventTypes.RoutingCreatedEvent,
-                 payload: {
-                     routing: {
+-                type: RoutingEvents_1.RoutingEventTypes.RoutingCreatedEvent,
+-                payload: {
+-                    routing: {
+-                        endpoints: agentContext.config.endpoints,
+-                        routingKeys: [],
+-                        recipientKey: routingKey,
+-                    },
+-                },
+-            });
+         }
+         catch (error) {
+             // This addresses some race conditions issues where we first check if the record exists
+@@ -213,6 +203,27 @@ let MediatorService = class MediatorService {
+                 throw error;
+             }
+         }
++        // Awaited (emitAsync, not emit) for the same reason as RoutingService.getRouting: when
++        // this runs in a tenant context, the tenants module's recipient-key-to-tenant mapping must
++        // be persisted before this call returns, or a fast inbound message can arrive before the
++        // mapping exists.
++        //
++        // Deliberately outside the try/catch above (@kinxa0 review): that catch exists only to
++        // absorb a RecordDuplicateError from this method's own mediatorRoutingRepository.save() call
++        // (meaning the MediatorRoutingRecord itself already exists). A RoutingCreatedEvent listener
++        // - e.g. the tenants module's recipient-key registration - can also throw RecordDuplicateError,
++        // and if emitAsync were still inside the try, that would be misread as "the mediator record
++        // already exists" and silently swallowed, masking a genuine tenant-registration failure.
++        await this.eventEmitter.emitAsync(agentContext, {
++            type: RoutingEvents_1.RoutingEventTypes.RoutingCreatedEvent,
++            payload: {
++                routing: {
++                    endpoints: agentContext.config.endpoints,
++                    routingKeys: [],
++                    recipientKey: routingKey,
++                },
++            },
++        });
+         return routingRecord;
+     }
+     async findAllByQuery(agentContext, query) {
 diff --git a/node_modules/@credo-ts/core/build/modules/routing/services/RoutingService.js b/node_modules/@credo-ts/core/build/modules/routing/services/RoutingService.js
 index 1a8afdd..0bcd4c7 100644
 --- a/node_modules/@credo-ts/core/build/modules/routing/services/RoutingService.js
