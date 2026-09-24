@@ -66,6 +66,7 @@ import bodyParser from 'body-parser'
 import express from 'express'
 import { readFile } from 'fs/promises'
 
+import { mountBaseMiddleware } from './baseMiddleware'
 import { IndicioAcceptanceMechanism, IndicioTransactionAuthorAgreement, Network, NetworkName } from './enums'
 import { validatePurgeConfig } from './purge/PurgeConfigValidator'
 import {
@@ -181,8 +182,8 @@ function requireEnv(name: string): string {
 }
 const expressApp = express()
 expressApp.disable('x-powered-by')
-expressApp.use(express.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
-expressApp.use(express.urlencoded({ limit: process.env.APP_URL_ENCODED_BODY_SIZE ?? '5mb', extended: true }))
+// Body parsers are mounted by mountBaseMiddleware() below, behind the rate limiter -- one mounted
+// here would answer malformed payloads 400 without the limiter ever counting them.
 // TODO: add object
 const getModules = (
   networkConfig: [IndyVdrPoolConfig, ...IndyVdrPoolConfig[]],
@@ -606,6 +607,10 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       transport.app.use(bodyParser.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
     }
   }
+
+  // Before initialize(): it registers Credo's OID4VC routers, which mount their own 100 KiB
+  // json() parser. Whichever parser is mounted first sets the effective limit for those routes.
+  mountBaseMiddleware(expressApp)
 
   await agent.initialize()
 

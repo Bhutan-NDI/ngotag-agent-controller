@@ -3136,9 +3136,6 @@
 				],
 				"type": "string"
 			},
-			"DidCommConnectionRecord": {
-				"$ref": "#/components/schemas/Record_string.unknown_"
-			},
 			"DidResolutionMetadata": {
 				"properties": {
 					"contentType": {
@@ -9413,10 +9410,7 @@
 						"content": {
 							"application/json": {
 								"schema": {
-									"items": {
-										"$ref": "#/components/schemas/DidCommConnectionRecord"
-									},
-									"type": "array"
+									"$ref": "#/components/schemas/DidCommPlaintextMessage"
 								}
 							}
 						}
@@ -9425,7 +9419,13 @@
 				"tags": [
 					"DIDComm - Connections"
 				],
-				"security": [],
+				"security": [
+					{
+						"jwt": [
+							"skip"
+						]
+					}
+				],
 				"parameters": [
 					{
 						"in": "path",
@@ -9661,7 +9661,13 @@
 				"tags": [
 					"Auth"
 				],
-				"security": [],
+				"security": [
+					{
+						"jwt": [
+							"skip"
+						]
+					}
+				],
 				"parameters": [
 					{
 						"in": "path",

@@ -28,6 +28,15 @@ jobs:
       - name: Install dependencies
         run: yarn install
 
+      # The route guard in src/__tests__/routeSecurity.spec.ts reads the generated routes, and
+      # `yarn compile` regenerates them at build time. Without this the guard would check a stale
+      # artifact and a controller missing @Security could pass CI and still deploy unguarded.
+      - name: Generate routes
+        run: yarn tsoa
+
+      - name: Verify generated routes are committed
+        run: git diff --exit-code src/routes/
+
       - name: Linting
         run: yarn lint
 
