@@ -1,0 +1,24 @@
+diff --git a/node_modules/@2060.io/ffi-napi/src/callback_info.cc b/node_modules/@2060.io/ffi-napi/src/callback_info.cc
+--- a/node_modules/@2060.io/ffi-napi/src/callback_info.cc
++++ b/node_modules/@2060.io/ffi-napi/src/callback_info.cc
+@@ -159,10 +159,8 @@
+ #endif
+     DispatchToV8(info, retval, parameters);
+   } else {
+-    // hold the event loop open while this is executing
+-    // TODO: REF()ING FROM A DIFFERENT IS AN INHERENT RACE CONDITION AND THIS
+-    // CODE SHOULD NEVER HAVE BEEN WRITTEN
+-    uv_ref(reinterpret_cast<uv_handle_t*>(&data->async));
++    // Event-loop references must only be changed on the loop thread.
++    // The caller owns the asynchronous operation lifetime.
+ 
+     // create a temporary storage area for our invokation parameters
+     std::unique_ptr<ThreadedCallbackInvokation> inv (
+@@ -179,7 +177,6 @@
+     // wait for signal from calling thread
+     inv->WaitForExecution();
+ 
+-    uv_unref(reinterpret_cast<uv_handle_t*>(&data->async));
+   }
+ }
+ 
