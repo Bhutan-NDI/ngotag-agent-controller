@@ -62,9 +62,36 @@ selection. This is a deliberate maintenance tradeoff, not a claim that a wrapper
 is impossible in JavaScript. Revisit a wrapper if Credo exposes a public batching
 or extraction extension point.
 
+## Pinned internal contract
+
+This patch depends on Credo 0.6.2 internals; TypeScript does not validate edits to
+compiled `.mjs` files. Stock proof lookup methods call `findAgentMessage`, then
+`findSingleByQuery`, then `findByQuery`. The native regression suite verifies that
+chain, the caller context, the shared protocol identifiers, and serialized query
+key order. Duplicate-error comparisons also verify the actual message text against
+the stock lookup path for each message kind. These are runtime compatibility gates,
+not a guarantee that a future Credo version has the same internals.
+
+When upgrading Credo or editing this patch, reapply it to the exact published
+package and run the native suite through its Jest wrapper. The wrapper requires a
+successful child exit and all expected tests; CI runs it in the normal test job.
+Recheck the lookup chain and override guard against the new source before changing
+the version pin. This change does not expand support to arbitrary global prototype
+replacement or introduce a new public extension API.
+
+The single `maxMessagesToInspect` constant controls both retrieval and the
+completeness check. Sixteen remains a conservative bound, not a production-tuned
+optimum: a result at the cap still requires the three exact lookups. Both custom
+lookup and overflow paths share `exactLookups`. Shared protocol fields are explicit,
+and complete results are grouped in one pass, retaining all duplicates for the
+existing rejection behavior. No new telemetry or alternate query strategy is added;
+large histories retain the documented four-query cost. Custom-lookup tests compare
+against the stock path rather than requiring absent query options: the merged
+single-record bound in #89 legitimately adds `limit: 2` to those exact lookups.
+
 ## Correctness tests
 
-Seventeen native Askar/SQLite cases exercise the actual patched protocol/repository:
+Nineteen native Askar/SQLite cases exercise the actual patched protocol/repository:
 
 - All eight subsets of present/missing messages, compared with the original lookup path.
 - Duplicate kinds, including differing sender/receiver roles, and matching error details.
@@ -74,6 +101,8 @@ Seventeen native Askar/SQLite cases exercise the actual patched protocol/reposit
   unsupported formats, custom overrides and storage failures.
 - Instance/prototype overrides at both repository query layers and simultaneous
   duplicate message kinds.
+- Stock lookup dispatch and serialized query order, plus one tag read per returned
+  record during bounded grouping.
 
 The original PR validation passed 35 suites / 354 tests on Node 22.22.2, including
 the original 12-case native fixture. Lint (warnings only), source/test type checks

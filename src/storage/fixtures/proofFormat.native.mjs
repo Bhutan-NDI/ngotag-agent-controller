@@ -171,15 +171,16 @@ for (const method of ['findSingleByQuery', 'findByQuery']) {
         return original.call(this, context, query, options)
       }
       try {
-        assert.deepEqual(await protocol().getFormatData(f.context(), 'proof'), {
-          request: { fixture: { custom: true } },
-        })
+        const expected = await baselineProtocol().getFormatData(f.context(), 'proof')
+        const expectedCalls = [...calls]
+        calls.length = 0
+        assert.deepEqual(await protocol().getFormatData(f.context(), 'proof'), expected)
+        assert.deepEqual(calls, expectedCalls)
         assert.equal(calls.length, 3)
         assert.deepEqual(
           calls.map(({ query }) => query.messageName).sort(),
           kinds.map(([, Message]) => Message.type.messageName).sort(),
         )
-        assert.ok(calls.every(({ options }) => options === undefined))
       } finally {
         if (descriptor) Object.defineProperty(target, method, descriptor)
         else delete target[method]
@@ -199,4 +200,67 @@ test('simultaneous duplicate kinds reject without promising baseline error order
     assert.match(error.message, /propose-presentation/)
     return true
   })
+})
+
+test('stock proof lookup contract retains repository dispatch and serialized query order', async () => {
+  const p = protocol()
+  const calls = []
+  for (const method of ['findAgentMessage', 'findSingleByQuery', 'findByQuery']) {
+    const original = f.repository[method]
+    f.repository[method] = async function (context, query, options) {
+      calls.push({ method, context, query, options })
+      return original.call(this, context, query, options)
+    }
+  }
+  for (const [kind, Message] of kinds) {
+    calls.length = 0
+    const lookup = `find${kind[0].toUpperCase()}${kind.slice(1)}Message`
+    assert.equal(await p[lookup](f.context(), 'proof'), null)
+    assert.deepEqual(
+      calls.map(({ method }) => method),
+      ['findAgentMessage', 'findSingleByQuery', 'findByQuery'],
+    )
+    assert.ok(calls.every(({ context }) => context === f.context()))
+    assert.equal(calls[0].query.messageClass, Message)
+    assert.equal(calls[0].query.associatedRecordId, 'proof')
+    assert.equal(calls[0].query.role, undefined)
+    const serialized = JSON.stringify({
+      associatedRecordId: 'proof',
+      messageName: Message.type.messageName,
+      protocolName: 'present-proof',
+      protocolMajorVersion: '2',
+    })
+    assert.equal(Message.type.protocolName, 'present-proof')
+    assert.equal(String(Message.type.protocolMajorVersion), '2')
+    for (const { query } of calls.slice(1)) assert.equal(JSON.stringify(query), serialized)
+  }
+})
+
+test('bounded grouping reads each returned record tags once without dropping message kinds', async () => {
+  for (const [kind] of kinds) await f.save(kind, { kind })
+  const unrelated = await f.save('request', {})
+  unrelated.message['@type'] = 'https://didcomm.org/present-proof/2.0/ack'
+  await f.repository.update(f.context(), unrelated)
+  const tagReads = new Map()
+  const original = f.storage.findByQuery.bind(f.storage)
+  f.storage.findByQuery = async (...args) => {
+    const records = await original(...args)
+    for (const record of records) {
+      const getTags = record.getTags.bind(record)
+      record.getTags = () => {
+        tagReads.set(record.id, (tagReads.get(record.id) ?? 0) + 1)
+        return getTags()
+      }
+    }
+    return records
+  }
+  f.queries.length = 0
+  assert.deepEqual(await protocol().getFormatData(f.context(), 'proof'), {
+    proposal: { fixture: { kind: 'proposal' } },
+    request: { fixture: { kind: 'request' } },
+    presentation: { fixture: { kind: 'presentation' } },
+  })
+  assert.equal(f.queries.length, 1)
+  assert.equal(tagReads.size, 4)
+  assert.ok([...tagReads.values()].every((count) => count === 1))
 })
