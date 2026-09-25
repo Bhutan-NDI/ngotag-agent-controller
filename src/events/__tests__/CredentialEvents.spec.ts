@@ -21,6 +21,8 @@ jest.unstable_mockModule('../WebSocketEvents', () => ({
   sendWebSocketEvent: jest.fn(),
 }))
 
+const { CredoError } = await import('@credo-ts/core')
+
 const { credentialEvents } = await import('../CredentialEvents')
 const { sendWebhookEvent } = await import('../WebhookEvent')
 const { sendWebSocketEvent } = await import('../WebSocketEvents')
@@ -119,6 +121,19 @@ describe('credentialEvents', () => {
       capturedListener = listener as typeof capturedListener
     })
     await credentialEvents(agent as never, { port: 3000, webhookUrl: WEBHOOK_URL })
+  })
+
+  it('delivers the base event and warns when tenant admission is rejected', async () => {
+    agent.modules.tenants.withTenantAgent.mockImplementation(async () => {
+      throw Object.assign(new CredoError('capacity'), { code: 'TENANT_SESSION_CAPACITY_UNAVAILABLE' })
+    })
+    await capturedListener(makeCredentialEvent('tenant-abc123', DONE))
+    expect(agent.config.logger.warn).toHaveBeenCalledWith(expect.stringContaining('Tenant capacity unavailable'))
+    expect(jest.mocked(sendWebhookEvent)).toHaveBeenCalledWith(
+      `${WEBHOOK_URL}/credentials`,
+      expect.objectContaining({ credentialData: null }),
+      expect.anything(),
+    )
   })
 
   it('registers a listener for DidCommCredentialStateChanged', () => {

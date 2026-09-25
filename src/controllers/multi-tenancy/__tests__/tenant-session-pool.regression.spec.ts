@@ -1,25 +1,4 @@
-/**
- * Regression test — tenant agent-context session-pool leak / freeze.
- *
- * Root cause (confirmed on staging 2026-07): a tenant session slot could be acquired
- * (TenantSessionMutex.currentSessions++) without a matching release when work failed on an
- * unguarded path — TenantsApi._getTenantAgent() -> tenantAgent.initialize() throwing (slot already
- * acquired in getContextForSession), or the post-increment lock in acquireSession() timing out after
- * currentSessions was incremented. Leaked slots accumulate until currentSessions pins at the limit;
- * the session mutex then never unlocks and every subsequent request waits SESSION_ACQUIRE_TIMEOUT
- * and fails, until the process is restarted.
- *
- * Fix: patches/@credo-ts+tenants+0.6.2+002+session-release-exception-safe.patch — release the slot
- * on _getTenantAgent's initialize() failure (via endSession, which takes the normal mapping-present
- * path), and undo the increment when the post-increment lock rejects. (The coordinator's
- * unknown-mapping branch is intentionally left as the upstream throw: a call reaching it owns no
- * slot — sessionCount is already 0 — so releasing there would over-decrement another session.)
- *
- * These tests exercise the REAL vendored TenantSessionMutex and guard the invariant the fix
- * enforces: no matter how in-session work fails, the pool drains back to 0 and never wedges.
- * (The post-increment-lock decrement is a defensive guard for a rare concurrent interleaving that
- * async-mutex's synchronous locking makes non-deterministic to reproduce in a unit test.)
- */
+/** Tenant sessions release their slots after completed or failed work. */
 import 'reflect-metadata'
 
 // The package "exports" map does not expose build/* subpaths, so import the vendored file directly
@@ -42,14 +21,14 @@ const withSession = async (mutex: any, work: () => Promise<void>): Promise<void>
 }
 
 describe('tenant session pool — leak/freeze regression', () => {
-  it('drains to 0 and stays unlocked after many balanced acquire/release cycles', async () => {
+  it('drains to 0 and clears pending acquisitions after many balanced acquire/release cycles', async () => {
     const mutex: any = new TenantSessionMutex(logger, 100, 10000)
     for (let i = 0; i < 500; i++) {
       await mutex.acquireSession()
       mutex.releaseSession()
     }
     expect(mutex.currentSessions).toBe(0)
-    expect(mutex.sessionMutex.isLocked()).toBe(false)
+    expect(mutex.pendingSessions).toBe(0)
   })
 
   it('never wedges even when a large fraction of in-session work throws (release in finally)', async () => {
@@ -65,7 +44,7 @@ describe('tenant session pool — leak/freeze regression', () => {
     }
     // With release guaranteed in finally, the pool is fully drained despite ~1/3 failing.
     expect(mutex.currentSessions).toBe(0)
-    expect(mutex.sessionMutex.isLocked()).toBe(false)
+    expect(mutex.pendingSessions).toBe(0)
     // And a fresh request still acquires immediately (pool not frozen).
     await expect(mutex.acquireSession()).resolves.toBeUndefined()
     mutex.releaseSession()
@@ -82,9 +61,9 @@ describe('tenant session pool — leak/freeze regression', () => {
         /* leaked slot */
       }
     }
-    // Counter pinned at the limit and the mutex is stuck locked.
+    // Counter pinned at the limit, with no remaining capacity.
     expect(mutex.currentSessions).toBe(3)
-    expect(mutex.sessionMutex.isLocked()).toBe(true)
+    expect(mutex.pendingSessions).toBe(0)
     // A healthy request can no longer get in — it times out: the production freeze.
     await expect(mutex.acquireSession()).rejects.toThrow(/Failed to acquire an agent context session/)
   })

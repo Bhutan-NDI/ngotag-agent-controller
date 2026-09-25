@@ -5,6 +5,8 @@ import type { DidCommProofStateChangedEvent } from '@credo-ts/didcomm'
 
 import { DidCommProofEventTypes, DidCommProofState } from '@credo-ts/didcomm'
 
+import { isTenantAdmissionError } from '../utils/tenantSessionConfig'
+
 import { sendWebSocketEvent } from './WebSocketEvents'
 import { sendWebhookEvent } from './WebhookEvent'
 
@@ -36,12 +38,16 @@ export const proofEvents = async (agent: Agent, config: ServerConfig) => {
           body.proofData = await agent.modules.didcomm.proofs.getFormatData(record.id)
         }
       } catch (error) {
-        agent.config.logger.error(
-          `Failed to get proof format data for record ${record.id}, continuing with base record`,
-          {
-            cause: error,
-          },
-        )
+        if (isTenantAdmissionError(error)) {
+          agent.config.logger.warn('Tenant capacity unavailable; delivering proof event without format enrichment')
+        } else {
+          agent.config.logger.error(
+            `Failed to get proof format data for record ${record.id}, continuing with base record`,
+            {
+              cause: error,
+            },
+          )
+        }
         body.proofData = null
       }
     }

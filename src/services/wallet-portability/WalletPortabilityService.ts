@@ -16,6 +16,8 @@ import { pipeline } from 'stream/promises'
 import { v4 as uuid } from 'uuid'
 import { createGunzip, createGzip } from 'zlib'
 
+import { isTenantAdmissionError } from '../../utils/tenantSessionConfig'
+
 import { HEARTBEAT_INTERVAL_MS, WalletPortabilityJobStore } from './WalletPortabilityJobStore'
 import {
   WalletPortabilityJobConflictError,
@@ -276,6 +278,12 @@ export class WalletPortabilityService {
         checksum,
       })
     } catch (error) {
+      if (isTenantAdmissionError(error)) {
+        this.logger.warn(
+          '[WalletPortabilityService] Tenant capacity unavailable; export job will fail without automatic retry',
+          { jobId },
+        )
+      }
       this.logger.error(`[WalletPortabilityService] export job ${jobId} failed: ${error}`)
       await this.setJobStatus(
         jobId,
@@ -655,6 +663,12 @@ export class WalletPortabilityService {
         `[WalletPortabilityService] import job ${jobId} completed for tenant '${tenantId}' — pre-import backup left at profile '${backupProfile}' (not auto-deleted)`,
       )
     } catch (error) {
+      if (isTenantAdmissionError(error)) {
+        this.logger.warn(
+          '[WalletPortabilityService] Tenant capacity unavailable; import job will fail without automatic retry',
+          { jobId },
+        )
+      }
       this.logger.error(`[WalletPortabilityService] import job ${jobId} failed: ${error}`)
 
       // Best-effort rollback: if we got as far as renaming the tenant's real profile aside but

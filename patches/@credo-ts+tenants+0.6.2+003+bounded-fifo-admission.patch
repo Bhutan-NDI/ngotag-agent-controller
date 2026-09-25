@@ -1,0 +1,172 @@
+diff --git a/node_modules/@credo-ts/tenants/build/context/TenantSessionMutex.mjs b/node_modules/@credo-ts/tenants/build/context/TenantSessionMutex.mjs
+--- a/node_modules/@credo-ts/tenants/build/context/TenantSessionMutex.mjs
++++ b/node_modules/@credo-ts/tenants/build/context/TenantSessionMutex.mjs
+@@ -1,73 +1,66 @@
+ import { CredoError } from "@credo-ts/core";
+-import { Mutex, withTimeout } from "async-mutex";
++import { performance } from "node:perf_hooks";
+ 
+-//#region src/context/TenantSessionMutex.ts
+-/**
+-* Keep track of the total number of tenant sessions currently active. This doesn't actually manage the tenant sessions itself, or have anything to do with
+-* the agent context. It merely counts the current number of sessions, and provides a mutex to lock new sessions from being created once the maximum number
+-* of sessions has been created. Session that can't be required withing the specified sessionsAcquireTimeout will throw an error.
+-*/
++// PATCH: FIFO admission with cancellable, bounded waiting. A slot belongs to an
++// admitted caller until releaseSession; a timeout never cancels admitted work.
+ var TenantSessionMutex = class {
+-	constructor(logger, maxSessions, sessionAcquireTimeout) {
+-		this._currentSessions = 0;
+-		this.maxSessions = Number.POSITIVE_INFINITY;
++	constructor(logger, maxSessions, sessionAcquireTimeout, maxPending = 1000) {
++		for (const [name, value] of [["sessionLimit", maxSessions], ["sessionAcquireTimeout", sessionAcquireTimeout], ["sessionPendingLimit", maxPending]]) {
++			if (!(Number.isSafeInteger(value) && value > 0) && !(value === Infinity && name !== "sessionPendingLimit")) throw new CredoError(`Invalid ${name}`);
++		}
++		if (sessionAcquireTimeout !== Infinity && sessionAcquireTimeout > 2147483647) throw new CredoError("Invalid sessionAcquireTimeout");
+ 		this.logger = logger;
+ 		this.maxSessions = maxSessions;
+-		this.sessionMutex = withTimeout(new Mutex(), sessionAcquireTimeout, new CredoError(`Failed to acquire an agent context session within ${sessionAcquireTimeout}ms`));
++		this.sessionAcquireTimeout = sessionAcquireTimeout;
++		this.maxPending = maxPending;
++		this._currentSessions = 0;
++		this.pending = new Set();
+ 	}
+-	/**
+-	* Getter to retrieve the total number of current sessions.
+-	*/
+ 	get currentSessions() {
+ 		return this._currentSessions;
+ 	}
+-	set currentSessions(value) {
+-		this._currentSessions = value;
++	get pendingSessions() {
++		return this.pending.size;
+ 	}
+-	/**
+-	* Wait to acquire a session. Will use the session semaphore to keep total number of sessions limited.
+-	* For each session that is acquired using this method, the sessions MUST be closed by calling `releaseSession`.
+-	* Failing to do so can lead to deadlocks over time.
+-	*/
++	admissionError() {
++		const error = new CredoError("Failed to acquire an agent context session: tenant capacity unavailable");
++		error.code = "TENANT_SESSION_CAPACITY_UNAVAILABLE";
++		return error;
++	}
+ 	async acquireSession() {
+-		this.logger.debug("Acquiring tenant session");
+-		if (this.sessionMutex.isLocked()) {
+-			this.logger.debug("Session mutex is locked, waiting for it to unlock");
+-			await this.sessionMutex.acquire();
+-			if (this.currentSessions < this.maxSessions) this.sessionMutex.release();
++		if (this._currentSessions < this.maxSessions) {
++			this._currentSessions++;
++			return;
+ 		}
+-		this.logger.debug(`Increasing current session count to ${this.currentSessions + 1} (max: ${this.maxSessions})`);
+-		this.currentSessions++;
+-		if (this.currentSessions >= this.maxSessions) {
+-			this.logger.debug(`Reached max number of sessions ${this.maxSessions}, locking mutex`);
+-			try {
+-				await this.sessionMutex.acquire();
+-			} catch (error) {
+-				// PATCH(session-release): the post-increment lock timed out. currentSessions was
+-				// already incremented above, so undo it before propagating or the slot leaks permanently.
+-				this.currentSessions--;
+-				throw error;
++		if (this.pending.size >= this.maxPending) throw this.admissionError();
++		return new Promise((resolve, reject) => {
++			const waiter = { resolve, reject, deadline: performance.now() + this.sessionAcquireTimeout, timer: undefined };
++			this.pending.add(waiter);
++			if (this.sessionAcquireTimeout !== Infinity) {
++				waiter.timer = setTimeout(() => {
++					if (this.pending.delete(waiter)) reject(this.admissionError());
++				}, this.sessionAcquireTimeout);
+ 			}
++		});
++	}
++	releaseSession() {
++		if (this._currentSessions === 0) {
++			this.logger.warn("No tenant session to release");
++			return;
+ 		}
+-		this.logger.debug(`Acquired tenant session (${this.currentSessions} / ${this.maxSessions})`);
+-	}
+-	/**
+-	* Release a session from the session mutex. If the total number of current sessions drops below
+-	* the max number of sessions, the session mutex will be released so new sessions can be started.
+-	*/
+-	releaseSession() {
+-		this.logger.debug("Releasing tenant session");
+-		if (this.currentSessions > 0) {
+-			this.logger.debug(`Decreasing current sessions to ${this.currentSessions - 1} (max: ${this.maxSessions})`);
+-			this.currentSessions--;
+-		} else this.logger.warn("Total sessions is already at 0, and releasing a session should not happen in this case. Not decrementing current session count.");
+-		if (this.sessionMutex.isLocked() && this.currentSessions < this.maxSessions) {
+-			this.logger.debug(`Releasing session mutex as number of current sessions ${this.currentSessions} is below max number of sessions ${this.maxSessions}`);
+-			this.sessionMutex.release();
++		for (const waiter of this.pending) {
++			this.pending.delete(waiter);
++			clearTimeout(waiter.timer);
++			// Timers can be delayed by a busy event loop. Never admit an expired waiter.
++			if (performance.now() >= waiter.deadline) {
++				waiter.reject(this.admissionError());
++				continue;
++			}
++			// Transfer ownership without exposing the slot to a newer caller.
++			waiter.resolve();
++			return;
+ 		}
++		this._currentSessions--;
+ 	}
+ };
+-
+-//#endregion
+ export { TenantSessionMutex };
+-//# sourceMappingURL=TenantSessionMutex.mjs.map
+\ No newline at end of file
+diff --git a/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.mjs b/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.mjs
+--- a/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.mjs
++++ b/node_modules/@credo-ts/tenants/build/context/TenantSessionCoordinator.mjs
+@@ -14,7 +14,7 @@
+ 		this.rootAgentContext = rootAgentContext;
+ 		this.logger = logger;
+ 		this.tenantsModuleConfig = tenantsModuleConfig;
+-		this.sessionMutex = new TenantSessionMutex(this.logger, this.tenantsModuleConfig.sessionLimit, this.tenantsModuleConfig.sessionAcquireTimeout);
++		this.sessionMutex = new TenantSessionMutex(this.logger, this.tenantsModuleConfig.sessionLimit, this.tenantsModuleConfig.sessionAcquireTimeout, this.tenantsModuleConfig.sessionPendingLimit);
+ 	}
+ 	getSessionCountForTenant(tenantId) {
+ 		const contextCorrelationId = this.getContextCorrelationIdForTenantId(tenantId);
+diff --git a/node_modules/@credo-ts/tenants/build/TenantsModuleConfig.mjs b/node_modules/@credo-ts/tenants/build/TenantsModuleConfig.mjs
+--- a/node_modules/@credo-ts/tenants/build/TenantsModuleConfig.mjs
++++ b/node_modules/@credo-ts/tenants/build/TenantsModuleConfig.mjs
+@@ -2,6 +2,10 @@
+ var TenantsModuleConfig = class {
+ 	constructor(options) {
+ 		this.options = options ?? {};
++	}
++	/** See {@link TenantsModuleConfigOptions.sessionPendingLimit} */
++	get sessionPendingLimit() {
++		return this.options.sessionPendingLimit ?? 1000;
+ 	}
+ 	/** See {@link TenantsModuleConfigOptions.sessionLimit} */
+ 	get sessionLimit() {
+diff --git a/node_modules/@credo-ts/tenants/build/TenantsModuleConfig.d.mts b/node_modules/@credo-ts/tenants/build/TenantsModuleConfig.d.mts
+--- a/node_modules/@credo-ts/tenants/build/TenantsModuleConfig.d.mts
++++ b/node_modules/@credo-ts/tenants/build/TenantsModuleConfig.d.mts
+@@ -4,6 +4,8 @@
+  * This can contain optional parameters that have default values in the config class itself.
+  */
+ interface TenantsModuleConfigOptions {
++  /** Maximum queued session acquisitions per process. Defaults to 1000. */
++  sessionPendingLimit?: number;
+   /**
+    * Maximum number of concurrent tenant sessions that can be active at the same time. Defaults to
+    * 100 concurrent sessions. The default is low on purpose, to make sure deployments determine their own
+@@ -27,6 +29,7 @@
+   constructor(options?: TenantsModuleConfigOptions);
+   /** See {@link TenantsModuleConfigOptions.sessionLimit} */
+   get sessionLimit(): number;
++  get sessionPendingLimit(): number;
+   /** See {@link TenantsModuleConfigOptions.sessionAcquireTimeout} */
+   get sessionAcquireTimeout(): number;
+ }

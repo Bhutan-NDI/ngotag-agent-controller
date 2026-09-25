@@ -4,6 +4,7 @@ import type { PeerDidNumAlgo2CreateOptions } from '@credo-ts/core'
 
 import { createPeerDidDocumentFromServices, JsonTransformer, PeerDidNumAlgo } from '@credo-ts/core'
 import {
+  DidCommOutOfBandRepository,
   DidCommConnectionRecordProps,
   DidCommRouting,
   DidCommOutOfBandInvitation,
@@ -16,6 +17,7 @@ import { injectable } from 'tsyringe'
 import { SCOPES } from '../../../enums'
 import ErrorHandlingService from '../../../errorHandlingService'
 import { InternalServerError, NotFoundError } from '../../../errors'
+import { recordPageOptions, fetchRecordPage } from '../../../utils/recordPagination'
 import { ConnectionRecordExample, outOfBandInvitationExample, outOfBandRecordExample, RecordId } from '../../examples'
 import { AcceptInvitationConfig, ReceiveInvitationByUrlProps, ReceiveInvitationProps } from '../../types'
 
@@ -27,18 +29,36 @@ export class OutOfBandController extends Controller {
   /**
    * Retrieve all out of band records
    * @param invitationId invitation identifier
+   * @param limit Opt into live pagination (1–1000). Omit both paging parameters for the complete legacy list.
+   * @param offset Zero-based offset, used with limit. Read X-Has-More and X-Next-Offset headers.
+   * Pages use internal insertion order. Concurrent deletion or insertion can change traversal;
+   * use the complete-list endpoint when a single-query view is required. Deep offsets cost more.
    * @returns OutOfBandRecord[]
    */
   @Example<OutOfBandRecordWithInvitationProps[]>([outOfBandRecordExample])
   @Get()
-  public async getAllOutOfBandRecords(@Request() request: Req, @Query('invitationId') invitationId?: RecordId) {
+  public async getAllOutOfBandRecords(
+    @Request() request: Req,
+    @Query('invitationId') invitationId?: RecordId,
+    @Query('limit') limit?: number,
+    @Query('offset') offset?: number,
+  ) {
     try {
+      const page = recordPageOptions(limit, offset)
       const query = invitationId
         ? {
             invitationId: invitationId,
           }
         : {}
-      const outOfBandRecords = await request.agent.modules.didcomm.oob.findAllByQuery(query)
+      const outOfBandRecords = await fetchRecordPage(
+        this,
+        page,
+        (options) =>
+          request.agent.context.dependencyManager
+            .resolve(DidCommOutOfBandRepository)
+            .findByQuery(request.agent.context, query, options),
+        () => request.agent.modules.didcomm.oob.findAllByQuery(query),
+      )
 
       return outOfBandRecords.map((c: { toJSON: () => any }) => c.toJSON())
     } catch (error) {
