@@ -1,0 +1,28 @@
+diff --git a/node_modules/@openwallet-foundation/askar-shared/build/store/Scan.js b/node_modules/@openwallet-foundation/askar-shared/build/store/Scan.js
+--- a/node_modules/@openwallet-foundation/askar-shared/build/store/Scan.js
++++ b/node_modules/@openwallet-foundation/askar-shared/build/store/Scan.js
+@@ -44,11 +44,19 @@ class Scan {
+                 if (!listHandle)
+                     break;
+                 this._listHandle = listHandle;
+-                const list = new EntryList_1.EntryList({ handle: this._listHandle });
+-                recordCount = recordCount + list.length;
+-                for (let index = 0; index < list.length; index++) {
+-                    const entry = list.getEntryByIndex(index);
+-                    cb(entry);
++                try {
++                    const list = new EntryList_1.EntryList({ handle: listHandle });
++                    recordCount = recordCount + list.length;
++                    for (let index = 0; index < list.length; index++) {
++                        const entry = list.getEntryByIndex(index);
++                        cb(entry);
++                    }
++                }
++                finally {
++                    // fetchAll copies each entry before returning from its callback.
++                    // The result list is owned separately from the scan handle.
++                    this._listHandle = undefined;
++                    listHandle.free();
+                 }
+             }
+         }

@@ -15,6 +15,7 @@ import type { ScheduledTask } from 'node-cron'
 import cron from 'node-cron'
 import { randomUUID } from 'node:crypto'
 
+import { isTenantAdmissionError } from '../../utils/tenantSessionConfig'
 import { purgeTenant } from '../PurgeEngine'
 import { PurgeDeletionStatus, sendPurgeWebhook } from '../PurgeWebhook'
 
@@ -98,6 +99,7 @@ export class CronPurgeScheduler {
     const notify = this.buildDeletionNotifier(agent, webhookUrl)
     const results: PurgeTenantResult[] = []
     let tenantsFailed = 0
+    let tenantsDeferred = 0
 
     if (isShared) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -112,6 +114,14 @@ export class CronPurgeScheduler {
             )
           })
         } catch (err) {
+          if (isTenantAdmissionError(err)) {
+            tenantsDeferred++
+            logger.warn('[Purge] Tenant capacity unavailable; deferring tenant to next scan', {
+              runId,
+              tenantId: tenant.id,
+            })
+            continue
+          }
           // Tenants are isolated: one unopenable wallet must not stop the rest of the run.
           tenantsFailed++
           logger.error('[Purge] Failed to purge tenant', { runId, tenantId: tenant.id, error: (err as Error)?.message })
@@ -129,6 +139,7 @@ export class CronPurgeScheduler {
       durationMs: Date.now() - startedAt,
       tenantsProcessed: results.length,
       tenantsFailed,
+      tenantsDeferred,
       tenantsTruncated: results.filter((result) => result.truncated).length,
       eligible: sum(results.map((result) => result.eligible)),
       parentsDeleted: sum(results.map((result) => result.parentsDeleted)),

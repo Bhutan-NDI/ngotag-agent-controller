@@ -1376,11 +1376,6 @@ const models: TsoaRoute.Models = {
         "enums": ["start","invitation-sent","invitation-received","request-sent","request-received","response-sent","response-received","abandoned","completed"],
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DidCommConnectionRecord": {
-        "dataType": "refAlias",
-        "type": {"ref":"Record_string.unknown_","validators":{}},
-    },
-    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "DidResolutionMetadata": {
         "dataType": "refObject",
         "properties": {
@@ -3908,7 +3903,7 @@ export function RegisterRoutes(app: Router) {
         const argsMultiTenancyController_exportTenantWallet: Record<string, TsoaRoute.ParameterSchema> = {
                 request: {"in":"request","name":"request","required":true,"dataType":"object"},
                 tenantId: {"in":"path","name":"tenantId","required":true,"dataType":"string"},
-                exportWalletRequest: {"in":"body","name":"exportWalletRequest","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"passKey":{"dataType":"string","required":true}}},
+                exportWalletRequest: {"in":"body","name":"exportWalletRequest","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"walletID":{"dataType":"string"},"passKey":{"dataType":"string","required":true}}},
                 badRequestError: {"in":"res","name":"400","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true}}},
         };
         app.post('/multi-tenancy/export/:tenantId',
@@ -4215,6 +4210,8 @@ export function RegisterRoutes(app: Router) {
         const argsOutOfBandController_getAllOutOfBandRecords: Record<string, TsoaRoute.ParameterSchema> = {
                 request: {"in":"request","name":"request","required":true,"dataType":"object"},
                 invitationId: {"in":"query","name":"invitationId","ref":"RecordId"},
+                limit: {"in":"query","name":"limit","dataType":"double"},
+                offset: {"in":"query","name":"offset","dataType":"double"},
         };
         app.get('/didcomm/oob',
             authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
@@ -4704,6 +4701,7 @@ export function RegisterRoutes(app: Router) {
                 invitationId: {"in":"path","name":"invitationId","required":true,"dataType":"string"},
         };
         app.get('/didcomm/url/:invitationId',
+            authenticateMiddleware([{"jwt":["skip"]}]),
             ...(fetchMiddlewares<RequestHandler>(ConnectionController)),
             ...(fetchMiddlewares<RequestHandler>(ConnectionController.prototype.getInvitation)),
 
@@ -4852,6 +4850,7 @@ export function RegisterRoutes(app: Router) {
                 body: {"in":"body","name":"body","required":true,"ref":"OrgTokenRequest"},
         };
         app.post('/v1/orgs/:orgId/token',
+            authenticateMiddleware([{"jwt":["skip"]}]),
             ...(fetchMiddlewares<RequestHandler>(AuthController)),
             ...(fetchMiddlewares<RequestHandler>(AuthController.prototype.getOrgToken)),
 
@@ -5738,6 +5737,8 @@ export function RegisterRoutes(app: Router) {
         const argsProofController_getAllProofs: Record<string, TsoaRoute.ParameterSchema> = {
                 request: {"in":"request","name":"request","required":true,"dataType":"object"},
                 threadId: {"in":"query","name":"threadId","dataType":"string"},
+                limit: {"in":"query","name":"limit","dataType":"double"},
+                offset: {"in":"query","name":"offset","dataType":"double"},
         };
         app.get('/didcomm/proofs',
             authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),

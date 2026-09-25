@@ -2,10 +2,12 @@ import type { ApiError } from './errors'
 import type { Logger } from '@credo-ts/core'
 import type { Response as ExResponse, Request as ExRequest, NextFunction, ErrorRequestHandler } from 'express'
 
+import { STATUS_CODES } from 'node:http'
 import { ValidateError } from 'tsoa'
 
 import { ErrorMessages } from './enums'
 import { BaseError } from './errors/errors'
+import { isTenantAdmissionError } from './utils/tenantSessionConfig'
 
 /**
  * The single place a failed request is turned into a response, and the only place the resolved
@@ -14,11 +16,14 @@ import { BaseError } from './errors/errors'
  */
 export const createErrorHandler = (logger: Logger): ErrorRequestHandler =>
   (async (err: unknown, req: ExRequest, res: ExResponse, _next: NextFunction): Promise<ExResponse | void> => {
+    if (err instanceof Error && 'cause' in err && isTenantAdmissionError(err.cause)) {
+      res.setHeader('Retry-After', '1')
+    }
     if (err instanceof ValidateError) {
+      // `fields` names DTO members and enumerates their permitted values, so it stays in the log.
       logger.warn(`${req.method} ${req.path} -> 422: validation failed`, { fields: err.fields })
       return res.status(422).json({
         message: 'Validation Failed',
-        details: err?.fields,
       })
     } else if (err instanceof BaseError) {
       // Level follows the resolved status: a 404 is a normal outcome, not an error. `cause` is
@@ -28,23 +33,24 @@ export const createErrorHandler = (logger: Logger): ErrorRequestHandler =>
         error: err.cause ?? err,
       })
       return res.status(err.statusCode).json({
-        message: err.message,
+        message: 500 <= err.statusCode ? 'Internal Server Error' : err.message,
       })
     } else if (err instanceof Error) {
       // Extend the Error type with custom properties
       const error = err as Error & { statusCode?: number; status?: number; stack?: string }
       if (error.status === 401) {
+        // Why a credential was rejected is exactly what an unauthenticated caller must not learn.
         logger.warn(`${req.method} ${req.path} -> 401: ${error.message}`, { error })
         return res.status(401).json({
-          message: `Unauthorized`,
-          details: err.message !== ErrorMessages.Unauthorized ? err.message : undefined,
+          message: ErrorMessages.Unauthorized,
         } satisfies ApiError)
       }
       const statusCode = error.statusCode || error.status || 500
       const level = 500 <= statusCode ? 'error' : 'warn'
       logger[level](`${req.method} ${req.path} -> ${statusCode}: ${error.message}`, { error })
+      // Parser, library and runtime text only -- the status' reason phrase is all that is safe.
       return res.status(statusCode).json({
-        message: error.message || 'Internal Server Error',
+        message: STATUS_CODES[statusCode] ?? 'Internal Server Error',
       })
     }
     // A rejection that is not an Error at all -- a thrown string, or next(someObject). This used

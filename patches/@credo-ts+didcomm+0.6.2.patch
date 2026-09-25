@@ -132,3 +132,51 @@ diff --git a/node_modules/@credo-ts/didcomm/build/modules/proofs/protocol/v2/Did
  		const messages = {
  			proposal: [proposalMessage?.formats, proposalMessage?.proposalAttachments],
  			request: [requestMessage?.formats, requestMessage?.requestAttachments],
+diff --git a/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommMediatorService.mjs b/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommMediatorService.mjs
+index b7343bf..e430a26 100644
+--- a/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommMediatorService.mjs
++++ b/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommMediatorService.mjs
+@@ -172,18 +172,19 @@ let DidCommMediatorService = class DidCommMediatorService {
+ 		});
+ 		try {
+ 			await this.mediatorRoutingRepository.save(agentContext, routingRecord);
+-			this.eventEmitter.emit(agentContext, {
+-				type: DidCommRoutingEventTypes.RoutingCreatedEvent,
+-				payload: { routing: {
+-					endpoints: didcommConfig.endpoints,
+-					routingKeys: [],
+-					recipientKey: routingKey
+-				} }
+-			});
+ 		} catch (error) {
+ 			if (error instanceof RecordDuplicateError) return this.mediatorRoutingRepository.getById(agentContext, this.mediatorRoutingRepository.MEDIATOR_ROUTING_RECORD_ID);
+ 			throw error;
+ 		}
++		// awaited: tenant recipient-key mapping must be persisted before returning
++		await this.eventEmitter.emitAsync(agentContext, {
++			type: DidCommRoutingEventTypes.RoutingCreatedEvent,
++			payload: { routing: {
++				endpoints: didcommConfig.endpoints,
++				routingKeys: [],
++				recipientKey: publicJwk
++			} }
++		});
+ 		return routingRecord;
+ 	}
+ 	async findAllByQuery(agentContext, query, queryOptions) {
+diff --git a/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommRoutingService.mjs b/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommRoutingService.mjs
+index 9d7ac7b..13da301 100644
+--- a/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommRoutingService.mjs
++++ b/node_modules/@credo-ts/didcomm/build/modules/routing/services/DidCommRoutingService.mjs
+@@ -28,7 +28,10 @@ let DidCommRoutingService = class DidCommRoutingService {
+ 			mediatorId,
+ 			useDefaultMediator
+ 		});
+-		this.eventEmitter.emit(agentContext, {
++		// awaited: tenant recipient-key mapping must be persisted before returning. Accepted risk: if
++		// the mapping write fails after addMediationRouting has already registered the key with the
++		// mediator, a caller retry leaves an orphaned KMS key and keylist entry at the mediator.
++		await this.eventEmitter.emitAsync(agentContext, {
+ 			type: DidCommRoutingEventTypes.RoutingCreatedEvent,
+ 			payload: { routing }
+ 		});

@@ -35,7 +35,7 @@
     "compile": "tsoa spec-and-routes && tsc -p tsconfig.build.json",
     "prepublishOnly": "yarn run build",
     "test": "node --experimental-vm-modules --max-old-space-size=4096 node_modules/jest/bin/jest.js",
-    "postinstall": "patch-package",
+    "postinstall": "patch-package --error-on-fail && npm rebuild @2060.io/ffi-napi --build-from-source",
     "lint": "eslint --config eslint.config.mjs .",
     "validate": "yarn lint && yarn check-types && yarn check-types:test && yarn check-format"
   },

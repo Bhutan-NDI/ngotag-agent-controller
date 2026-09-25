@@ -7,7 +7,6 @@ import type { ServerConfig } from './utils/ServerConfig'
 import type { Response as ExResponse, Request as ExRequest, NextFunction, ErrorRequestHandler } from 'express'
 
 import { Agent, type Logger } from '@credo-ts/core'
-import { TenantAgent } from '@credo-ts/tenants'
 import bodyParser from 'body-parser'
 import cors from 'cors'
 import dotenv from 'dotenv'
@@ -19,6 +18,7 @@ import { ValidateError } from 'tsoa'
 import { container } from 'tsyringe'
 
 import { setDynamicApiKey } from './authentication'
+import { mountBaseMiddleware } from './baseMiddleware'
 import { ErrorMessages } from './enums'
 import { createErrorHandler } from './errorHandler'
 import { BaseError } from './errors/errors'
@@ -35,6 +35,7 @@ import { SecurityMiddleware } from './securityMiddleware'
 import { toSerializableConfig } from './utils/ServerConfig'
 import { validateAuthConfig } from './utils/auth'
 import { validateApiKey } from './utils/config'
+import { tenantSessionLifecycle } from './utils/tenantSessionLifecycle'
 
 dotenv.config()
 
@@ -57,7 +58,9 @@ export const setupServer = async (
   fs.writeFileSync('config.json', JSON.stringify(toSerializableConfig(config), null, 2))
 
   const app = config.app ?? express()
-  if (config.cors) app.use(cors())
+  if (config.cors) {
+    app.use(cors({ exposedHeaders: ['X-Has-More', 'X-Page-Limit', 'X-Page-Offset', 'X-Next-Offset', 'Retry-After'] }))
+  }
 
   if (config.socketServer || config.webhookUrl) {
     questionAnswerEvents(agent, config)
@@ -70,17 +73,9 @@ export const setupServer = async (
     reuseConnectionEvents(agent, config)
   }
 
-  // Use body parser to read sent json payloads
-  app.use(
-    bodyParser.urlencoded({
-      extended: true,
-      limit: process.env.APP_URL_ENCODED_BODY_SIZE ?? '5mb',
-    }),
-  )
-
   setDynamicApiKey(validatedApiKey)
 
-  app.use(bodyParser.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
+  mountBaseMiddleware(app)
   app.use('/docs', serve, (_req: ExRequest, res: ExResponse, next: NextFunction) => {
     import('./routes/swagger.json')
       .then((swaggerJson) => {
@@ -88,21 +83,6 @@ export const setupServer = async (
       })
       .catch(next)
   })
-  // Deliberately unauthenticated and unthrottled: used only by the load balancer
-  // to determine whether the initialized HTTP server is available.
-  app.get('/health', (_req, res) => {
-    res.status(200).json({ status: 'ok' })
-  })
-
-  const windowMs = Number(process.env.windowMs)
-  const maxRateLimit = Number(process.env.maxRateLimit)
-  const limiter = rateLimit({
-    windowMs, // 1 second
-    max: maxRateLimit, // max 800 requests per second
-  })
-
-  // apply rate limiter to all remaining requests
-  app.use(limiter)
 
   // Note: Having used it above, redirects accordingly
   app.use((req, res, next) => {
@@ -113,12 +93,7 @@ export const setupServer = async (
     next()
   })
 
-  app.use(async (req: ExRequest, res: ExResponse, next: NextFunction) => {
-    res.on('finish', async () => {
-      await endTenantSessionIfActive(req)
-    })
-    next()
-  })
+  app.use(tenantSessionLifecycle)
 
   const securityMiddleware = new SecurityMiddleware()
   app.use(securityMiddleware.use)
@@ -127,16 +102,4 @@ export const setupServer = async (
   app.use(createErrorHandler(agent.config.logger))
 
   return app
-}
-
-async function endTenantSessionIfActive(request: ExRequest) {
-  if ('agent' in request) {
-    const agent = request?.agent
-    if (agent instanceof TenantAgent) {
-      agent.config.logger.debug(`Ending tenant session for tenant:: ${agent.context.contextCorrelationId}`)
-      // TODO: we can also not wait for the ending of session
-      // This can further imporve the response time
-      await agent.endSession()
-    }
-  }
 }

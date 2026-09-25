@@ -65,3 +65,17 @@ describe('cli parser, apiKey option', () => {
     await expect(parse([], 'y'.repeat(20))).resolves.toMatchObject({ apiKey: 'y'.repeat(20) })
   })
 })
+
+describe('cli parser, PostgreSQL statement cache', () => {
+  it('preserves an explicit zero', async () => {
+    await expect(parse(['--wallet-postgres-statement-cache-capacity=0'], 'x'.repeat(16))).resolves.toMatchObject({
+      'wallet-postgres-statement-cache-capacity': 0,
+    })
+  })
+
+  it.each(['-1', '0.5', '10001', 'NaN'])('rejects invalid capacity %s', async (capacity) => {
+    await expect(parse([`--wallet-postgres-statement-cache-capacity=${capacity}`], 'x'.repeat(16))).rejects.toThrow(
+      'wallet-postgres-statement-cache-capacity must be an integer from 0 through 10000',
+    )
+  })
+})

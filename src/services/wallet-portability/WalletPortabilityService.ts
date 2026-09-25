@@ -16,6 +16,8 @@ import { pipeline } from 'stream/promises'
 import { v4 as uuid } from 'uuid'
 import { createGunzip, createGzip } from 'zlib'
 
+import { isTenantAdmissionError } from '../../utils/tenantSessionConfig'
+
 import { HEARTBEAT_INTERVAL_MS, WalletPortabilityJobStore } from './WalletPortabilityJobStore'
 import {
   WalletPortabilityJobConflictError,
@@ -43,6 +45,19 @@ const MAX_DECOMPRESSED_BYTES = MAX_DOWNLOAD_BYTES
 // (cleared once headers arrive) — a stalled body isn't caught by this alone; see
 // downloadAndChecksum's inactivity timer for that case.
 const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000
+
+// Gzip magic number — used to detect a mobile-compat (uncompressed) artifact on import without
+// trusting the job's own metadata to say so.
+const GZIP_MAGIC_BYTES = Buffer.from([0x1f, 0x8b])
+
+// Holder-credential record categories with a flat<->credentialInstances back-compat setter,
+// verified against @credo-ts/core's own source.
+const FLATTENABLE_RECORD_CATEGORIES: Array<{ category: string; flatField: string; instanceField: string }> = [
+  { category: 'W3cCredentialRecord', flatField: 'credential', instanceField: 'credential' },
+  { category: 'W3cV2CredentialRecord', flatField: 'credential', instanceField: 'credential' },
+  { category: 'SdJwtVcRecord', flatField: 'compactSdJwtVc', instanceField: 'compactSdJwtVc' },
+  { category: 'MdocRecord', flatField: 'base64Url', instanceField: 'issuerSignedBase64Url' },
+]
 
 // Deliberately not typed as the real AWS.S3 class — its full type declarations OOM ts-jest's
 // type-aware transform when type-checking this file. See WalletPortabilityService.spec.ts.
@@ -100,11 +115,14 @@ export class WalletPortabilityService {
    *   Askar's raw KDF, which only accepts a base58-encoded 32-byte key and would reject a normal
    *   passphrase outright (see runExport below). The caller must retain this to import the
    *   artifact later; it is never generated or persisted server-side, and never logged.
+   * @param walletID Profile to package the artifact under, for mobile's `agent.wallet.import()`
+   *   to match; falls back to the tenant's real profile if omitted.
    */
   public async exportWallet(
     agent: Agent<RestMultiTenantAgentModules>,
     tenantId: string,
     passKey: string,
+    walletID?: string,
   ): Promise<ExportWalletResult> {
     const jobId = uuid()
 
@@ -135,7 +153,7 @@ export class WalletPortabilityService {
     // Fire-and-forget async job. Best-effort mark Failed here too, in case setJobStatus(InProgress)
     // itself throws before runExport's own try can catch it — otherwise the job is stranded at
     // Pending forever.
-    this.runExport(agent, tenantId, jobId, passKey, heartbeat).catch((error) => {
+    this.runExport(agent, tenantId, jobId, passKey, heartbeat, walletID).catch((error) => {
       this.logger.error(`[WalletPortabilityService] export job ${jobId} failed to start: ${error}`)
       this.setJobStatus(
         jobId,
@@ -162,10 +180,10 @@ export class WalletPortabilityService {
     jobId: string,
     passKey: string,
     heartbeat: NodeJS.Timeout,
+    walletID?: string,
   ): Promise<void> {
     let tempStore: Store | undefined
     let tempDbPath: string | undefined
-    let gzipPath: string | undefined
     // Hoisted so cleanup can remove the whole temp directory — Askar's sqlite backend leaves
     // -shm/-wal sidecars next to the .db file, which removing only the explicit .db/.db.gz paths
     // would leave behind.
@@ -190,6 +208,9 @@ export class WalletPortabilityService {
           throw new Error(`No Askar profile resolved for tenant '${tenantId}'`)
         }
 
+        // walletID, not the tenant's real profile — mobile's import requires an exact match.
+        const packagedProfile = walletID || profile
+
         tempStore = await Store.provision({
           uri: `sqlite://${tempDbPath}`,
           // Argon2IMod, not Raw: Askar's raw KDF only accepts a base58-encoded 32-byte key and
@@ -198,20 +219,50 @@ export class WalletPortabilityService {
           keyMethod: new StoreKeyMethod(KdfMethod.Argon2IMod),
           passKey,
           recreate: true,
-          profile,
+          profile: packagedProfile,
         })
 
-        await baseStore.copyProfile({ toStore: tempStore, fromProfile: profile, toProfile: profile })
+        await baseStore.copyProfile({ toStore: tempStore, fromProfile: profile, toProfile: packagedProfile })
+
+        // walletID also selects the mobile-compat artifact: flatten holder-credential records to
+        // the shape Credo 0.5.18 can read (nested credentialInstances -> flat field).
+        if (walletID) {
+          const { skippedMultiInstance, droppedKmsKeyId } = await this.flattenCredentialRecords(
+            tempStore,
+            packagedProfile,
+          )
+          if (skippedMultiInstance > 0) {
+            this.logger.warn(
+              `[WalletPortabilityService] export job ${jobId}: ${skippedMultiInstance} multi-instance record(s) left unflattened -- not readable by Credo 0.5.18`,
+            )
+          }
+          if (droppedKmsKeyId > 0) {
+            this.logger.warn(
+              `[WalletPortabilityService] export job ${jobId}: ${droppedKmsKeyId} record(s) had an explicit kmsKeyId with no home in the flat 0.5.18 shape -- presentation may fail if the key isn't otherwise derivable`,
+            )
+          }
+        }
       })
 
       await tempStore?.close()
       tempStore = undefined
 
-      gzipPath = `${tempDbPath}.gz`
-      const checksum = await this.gzipAndChecksum(tempDbPath, gzipPath)
-
-      const s3Key = `wallet-exports/${tenantId}/${jobId}.db.gz`
-      await this.uploadToS3(gzipPath, s3Key)
+      let uploadPath: string
+      let checksum: string
+      let s3Key: string
+      if (walletID) {
+        // Mobile's Credo 0.5.18 never decompresses a downloaded artifact -- ship the plain
+        // file it can open directly instead of the native (gzipped) one.
+        checksum = await this.checksumFile(tempDbPath)
+        uploadPath = tempDbPath
+        s3Key = `wallet-exports/${tenantId}/${jobId}.db`
+      } else {
+        const gzipPath = `${tempDbPath}.gz`
+        checksum = await this.gzipAndChecksum(tempDbPath, gzipPath)
+        uploadPath = gzipPath
+        s3Key = `wallet-exports/${tenantId}/${jobId}.db.gz`
+      }
+      await this.uploadToS3(uploadPath, s3Key)
 
       // s3Key is persisted, not a downloadUrl — getJobStatus mints a fresh short-lived URL on
       // every read so a job read long after completion still returns a live link.
@@ -227,6 +278,12 @@ export class WalletPortabilityService {
         checksum,
       })
     } catch (error) {
+      if (isTenantAdmissionError(error)) {
+        this.logger.warn(
+          '[WalletPortabilityService] Tenant capacity unavailable; export job will fail without automatic retry',
+          { jobId },
+        )
+      }
       this.logger.error(`[WalletPortabilityService] export job ${jobId} failed: ${error}`)
       await this.setJobStatus(
         jobId,
@@ -261,6 +318,55 @@ export class WalletPortabilityService {
     gzip.on('data', (chunk) => hash.update(chunk))
     await pipeline(source, gzip, dest)
     return hash.digest('hex')
+  }
+
+  // Hashes the plain (uncompressed) artifact — the mobile-compat upload path uploads this same
+  // file as-is, so the checksum must cover it directly, not a gzipped copy.
+  private async checksumFile(filePath: string): Promise<string> {
+    const hash = createHash('sha256')
+    await pipeline(createReadStream(filePath), hash)
+    return hash.digest('hex')
+  }
+
+  // Records with more than one instance are skipped, not collapsed, to avoid dropping instances 1..n.
+  private async flattenCredentialRecords(
+    store: Store,
+    profile: string,
+  ): Promise<{ skippedMultiInstance: number; droppedKmsKeyId: number }> {
+    const session = await store.transaction(profile).open()
+    let skippedMultiInstance = 0
+    let droppedKmsKeyId = 0
+    try {
+      for (const { category, flatField, instanceField } of FLATTENABLE_RECORD_CATEGORIES) {
+        const entries = await session.fetchAll({ category, forUpdate: true, isJson: true })
+
+        for (const entry of entries) {
+          const value = entry.value as Record<string, unknown>
+          const instances = value.credentialInstances as Array<Record<string, unknown>> | undefined
+          if (!instances) continue
+          if (1 !== instances.length) {
+            skippedMultiInstance += 1
+            continue
+          }
+
+          // kmsKeyId (SdJwtVcRecord/MdocRecord only) has no field in the flat 0.5.18 shape.
+          if (instances[0].kmsKeyId) droppedKmsKeyId += 1
+
+          value[flatField] = instances[0][instanceField]
+          delete value.credentialInstances
+
+          await session.replace({ category: entry.category, name: entry.name, value, tags: entry.tags })
+        }
+      }
+
+      await session.commit()
+      return { skippedMultiInstance, droppedKmsKeyId }
+    } catch (error) {
+      // If commit() itself is what threw, the native handle is already closing/closed --
+      // rollback() would double-close and mask the real error with its own failure.
+      await session.rollback().catch(() => undefined)
+      throw error
+    }
   }
 
   private getExportBucket(): string {
@@ -442,7 +548,7 @@ export class WalletPortabilityService {
     heartbeat: NodeJS.Timeout,
   ): Promise<void> {
     let importedStore: Store | undefined
-    let gzipPath: string | undefined
+    let downloadedPath: string | undefined
     let importedDbPath: string | undefined
     let backupProfile: string | undefined
     let renamedAway = false
@@ -461,17 +567,23 @@ export class WalletPortabilityService {
       await this.setJobStatus(jobId, tenantId, WalletPortabilityJobType.Import, WalletPortabilityJobStatus.InProgress)
 
       workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-import-'))
-      gzipPath = path.join(workDir, `${jobId}.db.gz`)
+      // Extension-less: a mobile-compat export (see runExport) uploads a plain .db, not a gzipped
+      // one, so the format isn't known from the job's own metadata — sniffed below instead.
+      downloadedPath = path.join(workDir, `${jobId}.download`)
       importedDbPath = path.join(workDir, `${jobId}.db`)
 
       // Verify the checksum BEFORE touching anything live — a corrupt/tampered artifact must
       // never reach the point of renaming the tenant's real profile aside.
-      const actualChecksum = await this.downloadAndChecksum(exportUrl, gzipPath)
+      const actualChecksum = await this.downloadAndChecksum(exportUrl, downloadedPath)
       if (actualChecksum !== checksum) {
         throw new Error(`Checksum mismatch: expected ${checksum}, got ${actualChecksum}`)
       }
 
-      await this.gunzip(gzipPath, importedDbPath)
+      if (await this.isGzip(downloadedPath)) {
+        await this.gunzip(downloadedPath, importedDbPath)
+      } else {
+        await fs.rename(downloadedPath, importedDbPath)
+      }
 
       importedStore = await Store.open({
         uri: `sqlite://${importedDbPath}`,
@@ -551,6 +663,12 @@ export class WalletPortabilityService {
         `[WalletPortabilityService] import job ${jobId} completed for tenant '${tenantId}' — pre-import backup left at profile '${backupProfile}' (not auto-deleted)`,
       )
     } catch (error) {
+      if (isTenantAdmissionError(error)) {
+        this.logger.warn(
+          '[WalletPortabilityService] Tenant capacity unavailable; import job will fail without automatic retry',
+          { jobId },
+        )
+      }
       this.logger.error(`[WalletPortabilityService] import job ${jobId} failed: ${error}`)
 
       // Best-effort rollback: if we got as far as renaming the tenant's real profile aside but
@@ -701,6 +819,18 @@ export class WalletPortabilityService {
       if (inactivityTimer) clearTimeout(inactivityTimer)
     }
     return hash.digest('hex')
+  }
+
+  // Reads just the first two bytes rather than trusting a file extension or the job's own
+  // metadata — a mobile-compat export (see runExport) uploads a plain, unwrapped .db.
+  private async isGzip(filePath: string): Promise<boolean> {
+    const handle = await fs.open(filePath, 'r')
+    try {
+      const { buffer, bytesRead } = await handle.read(Buffer.alloc(2), 0, 2, 0)
+      return 2 === bytesRead && 0 === buffer.compare(GZIP_MAGIC_BYTES)
+    } finally {
+      await handle.close()
+    }
   }
 
   // maxBytes defaults to the real cap; runImport never overrides it — the parameter exists so
