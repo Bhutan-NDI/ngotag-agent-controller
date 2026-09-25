@@ -844,6 +844,15 @@ export class MultiTenancyController extends Controller {
             recipientKey: Key.fromPublicKeyBase58(config.recipientKey, KeyType.Ed25519),
             mediatorId: undefined,
           }
+          // This recipient key is caller-supplied (reusing an existing connection's key rather than
+          // minting one via getRouting()), so RoutingCreatedEvent never fires for it and its
+          // TenantRoutingRecord may not exist - not late, never. Register it (idempotently) before
+          // handing back an invitation built around it, or inbound messages encrypted to this key
+          // fail with "Couldn't determine tenant id for inbound message" every single time.
+          await this.agent.modules.tenants.ensureRoutingKeyRegistered({
+            tenantId,
+            recipientKey: routing.recipientKey,
+          })
         } else {
           routing = await tenantAgent.mediationRecipient.getRouting({})
         }

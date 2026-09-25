@@ -1,0 +1,320 @@
+/**
+ * Regression test — tenant routing key registration race (PR #94 review by @devdgna).
+ *
+ * Root cause: RoutingService.getRouting() (used when creating an invitation/connection)
+ * emitted RoutingCreatedEvent and returned immediately, without waiting for the tenants
+ * module's listener to persist the recipient-key-to-tenant mapping in the root wallet.
+ * A fast-responding counterparty (e.g. a mobile wallet scanning a QR code) could reply
+ * before that write committed, so TenantAgentContextProvider.getContextForInboundMessage
+ * found no matching TenantRoutingRecord and threw "Couldn't determine tenant id for
+ * inbound message" — the most frequent error in production logs (92 occurrences in one
+ * afternoon).
+ *
+ * Fix (patch @credo-ts+core+0.5.3+009, @credo-ts+tenants+0.5.3+003): EventEmitter gained
+ * emitAsync/onAsync, which awaits registered async listeners before resolving (while still
+ * firing plain on() listeners the same fire-and-forget way as before). Both publishers of
+ * RoutingCreatedEvent — RoutingService.getRouting (own routing key) and
+ * MediatorService.createMediatorRoutingRecord (mediator routing key, used when a tenant acts
+ * as its own mediator) — now await emitAsync, and the tenants module registers its mapping
+ * listener via onAsync instead of on().
+ *
+ * First review pass missed MediatorService's publisher entirely (it moved the tenant listener
+ * off `on()` without updating every emitter of RoutingCreatedEvent), silently breaking mediator
+ * routing key registration. These tests exercise the REAL vendored EventEmitter and guard: both
+ * publishers wait for registration, a slow (delayed) registration write is still awaited rather
+ * than raced past, and a registration that fails surfaces as a rejection instead of silently
+ * handing back routing info with no mapping ever persisted.
+ */
+import 'reflect-metadata'
+import * as fs from 'fs'
+import * as path from 'path'
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+import { EventEmitter } from '@credo-ts/core/build/agent/EventEmitter'
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+import { MediatorService } from '@credo-ts/core/build/modules/routing/services/MediatorService'
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+import { RecordDuplicateError } from '@credo-ts/core'
+
+const readVendoredSource = (relativePath: string): string =>
+  fs.readFileSync(path.join(__dirname, '..', 'node_modules', relativePath), 'utf8')
+
+const agentDependencies = { EventEmitterClass: require('events').EventEmitter }
+const fakeAgentContext: any = { contextCorrelationId: 'tenant-under-test' }
+
+// Mirrors TenantAgentContextProvider.listenForRoutingKeyCreatedEvents: the one listener that
+// persists the recipient-key-to-tenant mapping, registered via onAsync (not on).
+const registerTenantRoutingListener = (emitter: EventEmitter, recordStore: Map<string, string>, options?: { delayMs?: number; failWith?: Error }) => {
+  emitter.onAsync('RoutingCreatedEvent' as any, async (event: any) => {
+    if (options?.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs))
+    if (options?.failWith) throw options.failWith
+    recordStore.set(event.payload.routing.recipientKey, event.metadata.contextCorrelationId)
+  })
+}
+
+// Mirrors RoutingService.getRouting: creates a key, emits, then returns routing info.
+const getRouting = async (emitter: EventEmitter, recipientKey: string) => {
+  const routing = { recipientKey, endpoints: [], routingKeys: [] }
+  await emitter.emitAsync(fakeAgentContext, { type: 'RoutingCreatedEvent' as any, payload: { routing } })
+  return routing
+}
+
+// Mirrors MediatorService.createMediatorRoutingRecord: a second, independent publisher of the
+// same event, used when a tenant acts as its own mediator.
+const createMediatorRoutingRecord = async (emitter: EventEmitter, recipientKey: string) => {
+  const routing = { recipientKey, endpoints: [], routingKeys: [] }
+  await emitter.emitAsync(fakeAgentContext, { type: 'RoutingCreatedEvent' as any, payload: { routing } })
+  return routing
+}
+
+describe('tenant routing key registration — race regression', () => {
+  it('RoutingService.getRouting publisher: mapping is persisted before routing info is returned', async () => {
+    const emitter = new EventEmitter(agentDependencies as any, {} as any)
+    const recordStore = new Map<string, string>()
+    registerTenantRoutingListener(emitter, recordStore)
+
+    const routing = await getRouting(emitter, 'key-connection-invite')
+
+    expect(recordStore.get(routing.recipientKey)).toBe(fakeAgentContext.contextCorrelationId)
+  })
+
+  it('MediatorService.createMediatorRoutingRecord publisher: mapping is persisted before routing info is returned', async () => {
+    const emitter = new EventEmitter(agentDependencies as any, {} as any)
+    const recordStore = new Map<string, string>()
+    registerTenantRoutingListener(emitter, recordStore)
+
+    const routing = await createMediatorRoutingRecord(emitter, 'key-mediator-routing')
+
+    expect(recordStore.get(routing.recipientKey)).toBe(fakeAgentContext.contextCorrelationId)
+  })
+
+  it('delayed persistence: a slow registration write is awaited, not raced past', async () => {
+    const emitter = new EventEmitter(agentDependencies as any, {} as any)
+    const recordStore = new Map<string, string>()
+    registerTenantRoutingListener(emitter, recordStore, { delayMs: 50 })
+
+    const start = Date.now()
+    const routing = await getRouting(emitter, 'key-slow-write')
+    const elapsedMs = Date.now() - start
+
+    // The caller only gets routing info back after the (slow) write has actually landed.
+    expect(elapsedMs).toBeGreaterThanOrEqual(45)
+    expect(recordStore.get(routing.recipientKey)).toBe(fakeAgentContext.contextCorrelationId)
+  })
+
+  it('persistence failure: a rejected registration write surfaces to the caller instead of handing back an unmapped key', async () => {
+    const emitter = new EventEmitter(agentDependencies as any, {} as any)
+    const recordStore = new Map<string, string>()
+    registerTenantRoutingListener(emitter, recordStore, { failWith: new Error('root wallet write failed') })
+
+    await expect(getRouting(emitter, 'key-write-fails')).rejects.toThrow('root wallet write failed')
+    expect(recordStore.size).toBe(0)
+  })
+
+  it('plain on() subscribers still fire via emitAsync (backward compatible with non-tenant listeners)', async () => {
+    const emitter = new EventEmitter(agentDependencies as any, {} as any)
+    const recordStore = new Map<string, string>()
+    registerTenantRoutingListener(emitter, recordStore)
+
+    let plainListenerFired = false
+    emitter.on('RoutingCreatedEvent' as any, () => {
+      plainListenerFired = true
+    })
+
+    await getRouting(emitter, 'key-plain-listener')
+
+    expect(plainListenerFired).toBe(true)
+  })
+})
+
+describe('EventEmitter.emitAsync/onAsync — review follow-up (@kinxa0)', () => {
+  // kinxa0 flagged two gaps in the first version of this fix:
+  // 1. emitAsync's `Promise.all` meant one onAsync listener throwing could, in principle, stop
+  //    other listeners for the same event from being awaited/observed as failed - it should isolate
+  //    listeners from each other while still failing closed overall (a registration failure must
+  //    not be swallowed, since the entire point of emitAsync is "don't proceed until this
+  //    persisted").
+  // 2. `emit()` never reached onAsync listeners at all, so any RoutingCreatedEvent publisher that
+  //    (today or in the future) calls plain emit() instead of emitAsync silently skips
+  //    registration with no error - as MediatorService did before the previous commit.
+
+  it('isolates onAsync listeners from each other: one throwing does not stop another from running', async () => {
+    const emitter = new EventEmitter(agentDependencies as any, {} as any)
+    let secondListenerRan = false
+
+    emitter.onAsync('RoutingCreatedEvent' as any, async () => {
+      throw new Error('first listener failed')
+    })
+    emitter.onAsync('RoutingCreatedEvent' as any, async () => {
+      secondListenerRan = true
+    })
+
+    await expect(getRouting(emitter, 'key-one-of-two-listeners-fails')).rejects.toThrow('first listener failed')
+    expect(secondListenerRan).toBe(true)
+  })
+
+  it('fails closed with an AggregateError when more than one onAsync listener rejects', async () => {
+    const emitter = new EventEmitter(agentDependencies as any, {} as any)
+
+    emitter.onAsync('RoutingCreatedEvent' as any, async () => {
+      throw new Error('listener A failed')
+    })
+    emitter.onAsync('RoutingCreatedEvent' as any, async () => {
+      throw new Error('listener B failed')
+    })
+
+    let caught: any
+    try {
+      await getRouting(emitter, 'key-two-listeners-fail')
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBeInstanceOf(AggregateError)
+    expect(caught.errors.map((e: Error) => e.message)).toEqual(['listener A failed', 'listener B failed'])
+  })
+
+  it('emit() (not just emitAsync) also fires onAsync listeners, so no publisher can bypass registration', async () => {
+    const emitter = new EventEmitter(agentDependencies as any, {} as any)
+    const recordStore = new Map<string, string>()
+    registerTenantRoutingListener(emitter, recordStore)
+
+    // Mirrors a hypothetical publisher that (mistakenly, or on an older Credo version) still calls
+    // plain emit() for RoutingCreatedEvent instead of emitAsync.
+    emitter.emit(fakeAgentContext, { type: 'RoutingCreatedEvent' as any, payload: { routing: { recipientKey: 'key-via-plain-emit' } } })
+
+    // emit() is synchronous and does not await onAsync listeners, so poll briefly for the
+    // fire-and-forget registration to land instead of asserting immediately.
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(recordStore.get('key-via-plain-emit')).toBe(fakeAgentContext.contextCorrelationId)
+  })
+})
+
+describe('MediatorService.createMediatorRoutingRecord — review follow-up (@kinxa0)', () => {
+  // kinxa0 flagged that the awaited emitAsync call sat inside the same try block whose catch
+  // absorbs RecordDuplicateError from mediatorRoutingRepository.save() (meaning "the mediator's own
+  // MediatorRoutingRecord already exists"). Once RoutingCreatedEvent listeners can themselves throw
+  // RecordDuplicateError (the tenants module's recipient-key registration does, via
+  // TenantsApi.ensureRoutingKeyRegistered / addTenantRoutingRecord's deterministic-id insert), that
+  // catch would misread a genuine tenant-registration failure as "record already exists" and return
+  // as if nothing went wrong. These tests exercise the REAL vendored MediatorService.
+
+  const fakeMediatorAgentContext: any = {
+    contextCorrelationId: 'tenant-under-test',
+    config: { endpoints: ['https://example.com'] },
+    wallet: { createKey: async () => ({ publicKeyBase58: 'pk-mediator-key', fingerprint: 'fp-mediator-key' }) },
+  }
+
+  const makeMediatorService = (emitter: EventEmitter, mediatorRoutingRepository: any) =>
+    new (MediatorService as any)({}, mediatorRoutingRepository, {}, emitter, { debug: () => {}, warn: () => {} }, {})
+
+  it('does not swallow a RecordDuplicateError thrown by a RoutingCreatedEvent listener as "mediator record already exists"', async () => {
+    const emitter = new EventEmitter(agentDependencies as any, {} as any)
+    emitter.onAsync('RoutingCreatedEvent' as any, async () => {
+      // Mirrors the tenants module's recipient-key registration failing with a duplicate.
+      throw new RecordDuplicateError('recipient key already registered to a different tenant', {
+        recordType: 'TenantRoutingRecord',
+      })
+    })
+    let getByIdCalled = false
+    const mediatorRoutingRepository: any = {
+      MEDIATOR_ROUTING_RECORD_ID: 'mediator-routing-record-id',
+      save: async () => {}, // succeeds - no duplicate on the mediator's own record
+      getById: async () => {
+        getByIdCalled = true
+        return { id: 'mediator-routing-record-id' }
+      },
+    }
+    const service = makeMediatorService(emitter, mediatorRoutingRepository)
+
+    await expect(service.createMediatorRoutingRecord(fakeMediatorAgentContext)).rejects.toThrow(
+      'recipient key already registered to a different tenant'
+    )
+    // Must not be reinterpreted as "mediator record already exists" - that would silently mask the
+    // real failure and return as if registration succeeded.
+    expect(getByIdCalled).toBe(false)
+  })
+
+  it('still recovers when mediatorRoutingRepository.save itself collides (genuine duplicate on the mediator record)', async () => {
+    const emitter = new EventEmitter(agentDependencies as any, {} as any)
+    let listenerRan = false
+    emitter.onAsync('RoutingCreatedEvent' as any, async () => {
+      listenerRan = true
+    })
+    const mediatorRoutingRepository: any = {
+      MEDIATOR_ROUTING_RECORD_ID: 'mediator-routing-record-id',
+      save: async () => {
+        throw new RecordDuplicateError('already exists', { recordType: 'MediatorRoutingRecord' })
+      },
+      getById: async (_ctx: any, id: string) => ({ id }),
+    }
+    const service = makeMediatorService(emitter, mediatorRoutingRepository)
+
+    const result = await service.createMediatorRoutingRecord(fakeMediatorAgentContext)
+
+    expect(result).toEqual({ id: 'mediator-routing-record-id' })
+    // The event is never emitted when the mediator record already existed - nothing new was created.
+    expect(listenerRan).toBe(false)
+  })
+
+  it('still emits and registers normally on the non-duplicate happy path', async () => {
+    const emitter = new EventEmitter(agentDependencies as any, {} as any)
+    // MediatorService's payload carries the real Key object (with a .fingerprint), unlike the
+    // string-recipientKey shorthand the other tests in this file use.
+    const recordStore = new Map<string, string>()
+    emitter.onAsync('RoutingCreatedEvent' as any, async (event: any) => {
+      recordStore.set(event.payload.routing.recipientKey.fingerprint, event.metadata.contextCorrelationId)
+    })
+    const mediatorRoutingRepository: any = {
+      MEDIATOR_ROUTING_RECORD_ID: 'mediator-routing-record-id',
+      save: async () => {},
+      getById: async () => {
+        throw new Error('should not be called on the happy path')
+      },
+    }
+    const service = makeMediatorService(emitter, mediatorRoutingRepository)
+
+    await service.createMediatorRoutingRecord(fakeMediatorAgentContext)
+
+    expect(recordStore.get('fp-mediator-key')).toBe(fakeMediatorAgentContext.contextCorrelationId)
+  })
+})
+
+describe('tenant routing key registration — patched publishers stay wired up (source guard)', () => {
+  // These guard against exactly the regression @devdgna caught in review: the tenants module's
+  // listener moved to onAsync-only, but one of the two RoutingCreatedEvent publishers
+  // (MediatorService) was left calling plain emit(), so it silently stopped reaching the
+  // listener at all. A future edit reverting either publisher back to emit(), or moving the
+  // tenants listener back to on(), would fail these before it reaches production.
+
+  it('RoutingService.getRouting emits RoutingCreatedEvent via emitAsync', () => {
+    const source = readVendoredSource('@credo-ts/core/build/modules/routing/services/RoutingService.js')
+    expect(source).toMatch(/await this\.eventEmitter\.emitAsync\(agentContext,\s*\{\s*type:\s*RoutingEvents_1\.RoutingEventTypes\.RoutingCreatedEvent/)
+  })
+
+  it('MediatorService.createMediatorRoutingRecord emits RoutingCreatedEvent via emitAsync', () => {
+    const source = readVendoredSource('@credo-ts/core/build/modules/routing/services/MediatorService.js')
+    expect(source).toMatch(/await this\.eventEmitter\.emitAsync\(agentContext,\s*\{\s*type:\s*RoutingEvents_1\.RoutingEventTypes\.RoutingCreatedEvent/)
+  })
+
+  it('tenants module registers its recipient-key mapping listener via onAsync, not on', () => {
+    const source = readVendoredSource('@credo-ts/tenants/build/context/TenantAgentContextProvider.js')
+    expect(source).toMatch(/this\.eventEmitter\.onAsync\(core_1\.RoutingEventTypes\.RoutingCreatedEvent/)
+    expect(source).not.toMatch(/this\.eventEmitter\.on\(core_1\.RoutingEventTypes\.RoutingCreatedEvent/)
+  })
+
+  it('MediatorService.createMediatorRoutingRecord emits outside the try/catch that handles its own record duplicate (@kinxa0)', () => {
+    const source = readVendoredSource('@credo-ts/core/build/modules/routing/services/MediatorService.js')
+    const method = source.slice(
+      source.indexOf('async createMediatorRoutingRecord'),
+      source.indexOf('async findAllByQuery')
+    )
+    // The catch block (which recovers from a duplicate on the mediator's own record) must close
+    // before emitAsync is called, not wrap it - otherwise a RecordDuplicateError from a listener
+    // gets misread as "the mediator record already exists".
+    const catchCloseIndex = method.indexOf('}', method.indexOf('else {\n                throw error;\n            }') + 1)
+    const emitAsyncIndex = method.indexOf('await this.eventEmitter.emitAsync(')
+    expect(emitAsyncIndex).toBeGreaterThan(-1)
+    expect(catchCloseIndex).toBeGreaterThan(-1)
+    expect(emitAsyncIndex).toBeGreaterThan(catchCloseIndex)
+  })
+})
