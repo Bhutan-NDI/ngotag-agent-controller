@@ -25,6 +25,8 @@
  * If that feature is ported to develop later, port that fix alongside it.
  */
 import 'reflect-metadata'
+import { jest } from '@jest/globals'
+import * as crypto from 'crypto'
 import { EventEmitter as NodeEventEmitter } from 'events'
 import * as fs from 'fs'
 
@@ -34,6 +36,10 @@ const CORE_BUILD = '../../node_modules/@credo-ts/core/build'
 const DIDCOMM_BUILD = '../../node_modules/@credo-ts/didcomm/build'
 const TENANTS_BUILD = '../../node_modules/@credo-ts/tenants/build'
 const { EventEmitter } = await import(`${CORE_BUILD}/agent/EventEmitter.mjs`)
+const { Kms, RecordDuplicateError } = await import(`${CORE_BUILD}/index.mjs`)
+const { DidCommMediatorService } = await import(`${DIDCOMM_BUILD}/modules/routing/services/DidCommMediatorService.mjs`)
+const { DidCommModuleConfig } = await import(`${DIDCOMM_BUILD}/DidCommModuleConfig.mjs`)
+const { DidCommRoutingEventTypes } = await import(`${DIDCOMM_BUILD}/modules/routing/DidCommRoutingEvents.mjs`)
 
 const readVendoredSource = (buildRoot: string, relativePath: string): string =>
   fs.readFileSync(new URL(`${buildRoot}/${relativePath}`, import.meta.url), 'utf8')
@@ -66,17 +72,6 @@ describe('tenant routing key registration — race regression (0.6.2)', () => {
     registerTenantRoutingListener(emitter, recordStore)
 
     const routing = await getRouting(emitter, 'key-connection-invite')
-
-    expect(recordStore.get(routing.recipientKey)).toBe(fakeAgentContext.contextCorrelationId)
-  })
-
-  it('DidCommMediatorService.createMediatorRoutingRecord publisher: mapping is persisted before routing info is returned', async () => {
-    const emitter = new EventEmitter(agentDependencies, {})
-    const recordStore = new Map<string, string>()
-    registerTenantRoutingListener(emitter, recordStore)
-
-    // Mirrors createMediatorRoutingRecord: a second, independent publisher of the same event.
-    const routing = await getRouting(emitter, 'key-mediator-routing')
 
     expect(recordStore.get(routing.recipientKey)).toBe(fakeAgentContext.contextCorrelationId)
   })
@@ -147,6 +142,104 @@ describe('tenant routing key registration — race regression (0.6.2)', () => {
   })
 })
 
+describe('DidCommMediatorService.createMediatorRoutingRecord — real service, stubbed repository/KMS (0.6.2)', () => {
+  const buildFakeKms = () => {
+    const publicKeyBytes = crypto.randomBytes(32)
+    const rawPublicJwk = Kms.PublicJwk.fromPublicKey({ crv: 'Ed25519', kty: 'OKP', publicKey: publicKeyBytes }).toJson()
+    return {
+      createKey: jest.fn(async () => ({
+        keyId: 'kms-key-id-under-test',
+        publicJwk: { ...rawPublicJwk, kid: 'kms-key-id-under-test' },
+      })),
+    }
+  }
+
+  const buildFakeRepository = () => {
+    const saved: unknown[] = []
+    return {
+      MEDIATOR_ROUTING_RECORD_ID: 'MEDIATOR_ROUTING_RECORD_ID_TEST',
+      save: jest.fn(async (_ctx: unknown, record: unknown) => {
+        saved.push(record)
+      }),
+      getById: jest.fn(async () => saved[0]),
+    }
+  }
+
+  const buildService = (eventEmitter: unknown, mediatorRoutingRepository: unknown) => {
+    const fakeKms = buildFakeKms()
+    const didcommConfig = new DidCommModuleConfig({ endpoints: ['https://mediator.example'] })
+    const agentContext: any = {
+      contextCorrelationId: 'tenant-under-test',
+      resolve: (token: unknown) => {
+        if (token === Kms.KeyManagementApi) return fakeKms
+        if (token === DidCommModuleConfig) return didcommConfig
+        throw new Error(`Unexpected agentContext.resolve() call in test for token ${String(token)}`)
+      },
+    }
+    const service = new DidCommMediatorService(
+      /* mediationRepository */ {},
+      mediatorRoutingRepository,
+      eventEmitter,
+      /* logger */ { debug: () => {}, warn: () => {}, error: () => {} },
+      /* connectionService */ {},
+    )
+    return { service, agentContext }
+  }
+
+  // Regression for @kinxa0's review: the buggy patch passed the raw kms.createKey() result
+  // ({ keyId, publicJwk }) as recipientKey instead of the wrapped Kms.PublicJwk, so
+  // recipientKey.fingerprint was undefined and the tenant mapping could never be looked up.
+  it('emits a RoutingCreatedEvent whose recipientKey carries a real fingerprint', async () => {
+    const eventEmitter = new EventEmitter(agentDependencies, {})
+    let capturedRecipientKey: any
+    eventEmitter.onAsync(DidCommRoutingEventTypes.RoutingCreatedEvent, async (event: any) => {
+      capturedRecipientKey = event.payload.routing.recipientKey
+    })
+    const mediatorRoutingRepository = buildFakeRepository()
+    const { service, agentContext } = buildService(eventEmitter, mediatorRoutingRepository)
+
+    const record = await service.createMediatorRoutingRecord(agentContext)
+
+    expect(capturedRecipientKey?.fingerprint).toBeDefined()
+    expect(capturedRecipientKey.fingerprint).toBe(record.routingKeys[0].routingKeyFingerprint)
+  })
+
+  // Regression for @kinxa0's review: emitAsync used to run inside the try/catch that handles
+  // save()'s RecordDuplicateError, so a failure from the tenant mapping listener was swallowed
+  // as if the mediator routing record already existed instead of surfacing to the caller.
+  it('does not mistake a RecordDuplicateError from the mapping listener for "the mediator routing record already existed"', async () => {
+    const eventEmitter = new EventEmitter(agentDependencies, {})
+    eventEmitter.onAsync(DidCommRoutingEventTypes.RoutingCreatedEvent, async () => {
+      throw new RecordDuplicateError('duplicate tenant routing record', { recordType: 'TenantRoutingRecord' })
+    })
+    const mediatorRoutingRepository = buildFakeRepository()
+    const { service, agentContext } = buildService(eventEmitter, mediatorRoutingRepository)
+
+    await expect(service.createMediatorRoutingRecord(agentContext)).rejects.toThrow('duplicate tenant routing record')
+    expect(mediatorRoutingRepository.save).toHaveBeenCalledTimes(1)
+    expect(mediatorRoutingRepository.getById).not.toHaveBeenCalled()
+  })
+
+  it('still returns the existing record when the repository save itself throws RecordDuplicateError', async () => {
+    const eventEmitter = new EventEmitter(agentDependencies, {})
+    const emitted: unknown[] = []
+    eventEmitter.onAsync(DidCommRoutingEventTypes.RoutingCreatedEvent, async (event: unknown) => {
+      emitted.push(event)
+    })
+    const mediatorRoutingRepository = buildFakeRepository()
+    mediatorRoutingRepository.save.mockRejectedValueOnce(
+      new RecordDuplicateError('already exists', { recordType: 'DidCommMediatorRoutingRecord' }),
+    )
+    mediatorRoutingRepository.getById.mockResolvedValueOnce({ id: 'existing-record' })
+    const { service, agentContext } = buildService(eventEmitter, mediatorRoutingRepository)
+
+    const record = await service.createMediatorRoutingRecord(agentContext)
+
+    expect(record).toEqual({ id: 'existing-record' })
+    expect(emitted).toHaveLength(0)
+  })
+})
+
 describe('tenant routing key registration — patched publishers stay wired up (source guard, 0.6.2)', () => {
   it('DidCommRoutingService.getRouting emits RoutingCreatedEvent via emitAsync', () => {
     const source = readVendoredSource(DIDCOMM_BUILD, 'modules/routing/services/DidCommRoutingService.mjs')
@@ -166,5 +259,13 @@ describe('tenant routing key registration — patched publishers stay wired up (
     const source = readVendoredSource(TENANTS_BUILD, 'context/TenantAgentContextProvider.mjs')
     expect(source).toMatch(/this\.eventEmitter\.onAsync\(DidCommRoutingEventTypes\.RoutingCreatedEvent/)
     expect(source).not.toMatch(/this\.eventEmitter\.on\(DidCommRoutingEventTypes\.RoutingCreatedEvent/)
+  })
+
+  // Regression for @kinxa0's follow-up review: under onAsync, a non-tenant/non-root context used
+  // to fall through to assertTenantContextCorrelationId, which throws and (now that the listener is
+  // awaited) would abort the caller instead of being ignored.
+  it('tenants module ignores non-tenant contexts instead of asserting on them', () => {
+    const source = readVendoredSource(TENANTS_BUILD, 'context/TenantAgentContextProvider.mjs')
+    expect(source).toMatch(/this\.tenantSessionCoordinator\.isTenantContextCorrelationId\(contextCorrelationId\)/)
   })
 })

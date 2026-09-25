@@ -22,7 +22,7 @@ diff --git a/node_modules/@credo-ts/core/build/agent/EventEmitter.mjs b/node_mod
 index 7e9290a..4bc7877 100644
 --- a/node_modules/@credo-ts/core/build/agent/EventEmitter.mjs
 +++ b/node_modules/@credo-ts/core/build/agent/EventEmitter.mjs
-@@ -14,19 +14,70 @@ let EventEmitter = class EventEmitter {
+@@ -14,19 +14,62 @@ let EventEmitter = class EventEmitter {
  	constructor(agentDependencies, stop$) {
  		this.eventEmitter = new agentDependencies.EventEmitterClass();
  		this.stop$ = stop$;
@@ -36,9 +36,7 @@ index 7e9290a..4bc7877 100644
 -		});
 +		};
 +		this.eventEmitter.emit(data.type, eventData);
-+		// onAsync is a strict superset of on: fire its listeners here too (fire-and-forget, same as
-+		// on listeners always have been) so no emit() call site can silently bypass an onAsync
-+		// registration - only emitAsync differs from plain emit in actually waiting.
++		// fan out to onAsync listeners too, fire-and-forget, so onAsync registration doesn't depend on the publisher using emitAsync
 +		this.fireAsyncListenersInBackground(data.type, eventData);
 +	}
 +	// Like emit, but awaits every listener registered via onAsync before resolving. Use this when a
@@ -65,8 +63,7 @@ index 7e9290a..4bc7877 100644
  	on(event, listener) {
  		this.eventEmitter.on(event, listener);
  	}
-+	// Registers a listener that will be awaited by emitAsync (in addition to, not instead of, plain
-+	// emit/on subscribers, which remain fire-and-forget).
++	// like on(), but also awaited by emitAsync
 +	onAsync(event, listener) {
 +		const listeners = this.asyncListeners.get(event) || [];
 +		listeners.push(listener);
@@ -81,16 +78,11 @@ index 7e9290a..4bc7877 100644
 +		const index = listeners.indexOf(listener);
 +		if (index !== -1) listeners.splice(index, 1);
 +	}
-+	// Fire-and-forget dispatch to onAsync listeners, used by plain emit(). Listener failures here
-+	// have no caller to propagate to (emit() itself is synchronous and was never awaited), so
-+	// they're surfaced via console.error rather than silently swallowed or left as an unhandled
-+	// rejection.
++	// fire-and-forget dispatch to onAsync listeners for plain emit(); a rejecting listener surfaces
++	// the same way an async on() listener always has (an unhandled rejection), not a second log sink
 +	fireAsyncListenersInBackground(eventType, eventData) {
 +		const listeners = this.asyncListeners.get(eventType) || [];
-+		for (const listener of listeners) Promise.resolve().then(() => listener(eventData)).catch((error) => {
-+			// eslint-disable-next-line no-console
-+			console.error(`Unhandled rejection from onAsync listener for event '${eventType}' fired via emit()`, error);
-+		});
++		for (const listener of listeners) Promise.resolve().then(() => listener(eventData));
 +	}
  	observable(event) {
  		return fromEventPattern((handler) => this.on(event, handler), (handler) => this.off(event, handler)).pipe(takeUntil(this.stop$));

@@ -2,16 +2,21 @@ diff --git a/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProv
 index 6792f2b..708d23b 100644
 --- a/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.mjs
 +++ b/node_modules/@credo-ts/tenants/build/context/TenantAgentContextProvider.mjs
-@@ -133,7 +133,11 @@ let TenantAgentContextProvider = class TenantAgentContextProvider {
+@@ -133,11 +133,15 @@ let TenantAgentContextProvider = class TenantAgentContextProvider {
  	}
  	listenForRoutingKeyCreatedEvents() {
  		this.logger.debug("Listening for routing key created events in tenant agent context provider");
 -		this.eventEmitter.on(DidCommRoutingEventTypes.RoutingCreatedEvent, async (event) => {
-+		// Registered via onAsync (not on) so that DidCommRoutingService.getRouting (and
-+		// DidCommMediatorService.createMediatorRoutingRecord) await this handler and the
-+		// recipient-key-to-tenant mapping is guaranteed to be persisted before routing info is
-+		// returned to the caller, closing the race where a fast reply arrives before the mapping exists.
++		// awaited via onAsync: the recipient-key-to-tenant mapping must be persisted before routing info is returned to the caller
 +		this.eventEmitter.onAsync(DidCommRoutingEventTypes.RoutingCreatedEvent, async (event) => {
  			const contextCorrelationId = event.metadata.contextCorrelationId;
  			const recipientKey = event.payload.routing.recipientKey;
  			if (contextCorrelationId === this.rootAgentContext.contextCorrelationId) return;
+-			this.tenantSessionCoordinator.assertTenantContextCorrelationId(contextCorrelationId);
++			if (!this.tenantSessionCoordinator.isTenantContextCorrelationId(contextCorrelationId)) {
++				this.logger.warn(`Ignoring routing key created event for non-tenant context ${contextCorrelationId}`);
++				return;
++			}
+ 			this.logger.debug(`Received routing key created event for tenant context ${contextCorrelationId}, registering recipient key ${recipientKey.fingerprint} in base wallet`);
+ 			await this.registerRecipientKeyForTenant(this.tenantSessionCoordinator.getTenantIdForContextCorrelationId(contextCorrelationId), recipientKey);
+ 		});
