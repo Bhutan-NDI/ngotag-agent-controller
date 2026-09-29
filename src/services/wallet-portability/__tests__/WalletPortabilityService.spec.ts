@@ -86,13 +86,19 @@ const storeClose = jest.fn(async () => undefined) as jest.Mock
 // Temp store's transaction/session surface, for flattenCredentialRecords. Default: empty (no
 // records to flatten); overridden per-test via .impl.
 const tempStoreFetchAllHolder = { impl: jest.fn(async () => [] as unknown[]) as jest.Mock }
+// For stampStorageVersion. Default: no existing record, so a test only sees an insert unless it
+// overrides .impl to simulate one already being there.
+const tempStoreFetchHolder = { impl: jest.fn(async () => null as unknown) as jest.Mock }
 const tempStoreSessionReplace = jest.fn(async () => undefined) as jest.Mock
+const tempStoreSessionInsert = jest.fn(async () => undefined) as jest.Mock
 const tempStoreSessionCommit = jest.fn(async () => undefined) as jest.Mock
 const tempStoreSessionRollback = jest.fn(async () => undefined) as jest.Mock
 const tempStoreTransaction = jest.fn(() => ({
   open: jest.fn(async () => ({
     fetchAll: tempStoreFetchAllHolder.impl,
+    fetch: tempStoreFetchHolder.impl,
     replace: tempStoreSessionReplace,
+    insert: tempStoreSessionInsert,
     commit: tempStoreSessionCommit,
     rollback: tempStoreSessionRollback,
   })),
@@ -242,6 +248,7 @@ beforeEach(() => {
   process.env.AWS_WALLET_EXPORT_BUCKET = 'test-wallet-export-bucket'
   uploadedBytes = undefined
   tempStoreFetchAllHolder.impl = jest.fn(async () => [] as unknown[])
+  tempStoreFetchHolder.impl = jest.fn(async () => null as unknown)
 })
 
 describe('WalletPortabilityService — exportWallet', () => {
@@ -542,7 +549,9 @@ describe('WalletPortabilityService — exportWallet', () => {
         multiInstanceState: 'SingleInstanceUnused',
       },
     })
-    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(1)
+    // 2, not 1: flattenCredentialRecords and stampStorageVersion each open their own
+    // transaction, and this mock's session object is shared across both.
+    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(2)
   })
 
   it('flattens an SdJwtVcRecord to its flat compactSdJwtVc field', async () => {
@@ -608,7 +617,7 @@ describe('WalletPortabilityService — exportWallet', () => {
     await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
 
     expect(tempStoreSessionReplace).not.toHaveBeenCalled()
-    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(1)
+    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(2)
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('1 multi-instance record'))
   })
 
@@ -647,7 +656,7 @@ describe('WalletPortabilityService — exportWallet', () => {
     await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
 
     expect(tempStoreSessionReplace).not.toHaveBeenCalled()
-    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(1)
+    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(2)
   })
 
   it('does not touch the flattening transaction at all when walletID is absent', async () => {
@@ -659,6 +668,61 @@ describe('WalletPortabilityService — exportWallet', () => {
     await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
 
     expect(tempStoreTransaction).not.toHaveBeenCalled()
+  })
+
+  it('stamps a StorageVersionRecord at 0.5 when the profile has none yet', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(tempStoreSessionInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'StorageVersionRecord',
+        name: 'STORAGE_VERSION_RECORD_ID',
+        value: expect.objectContaining({ id: 'STORAGE_VERSION_RECORD_ID', storageVersion: '0.5' }),
+      }),
+    )
+  })
+
+  it('replaces an existing StorageVersionRecord, preserving its createdAt', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+    tempStoreFetchHolder.impl = jest.fn(async () => ({
+      category: 'StorageVersionRecord',
+      name: 'STORAGE_VERSION_RECORD_ID',
+      tags: {},
+      value: { id: 'STORAGE_VERSION_RECORD_ID', storageVersion: '0.4', createdAt: '2020-01-01T00:00:00.000Z' },
+    }))
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(tempStoreSessionInsert).not.toHaveBeenCalled()
+    expect(tempStoreSessionReplace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'StorageVersionRecord',
+        value: expect.objectContaining({ storageVersion: '0.5', createdAt: '2020-01-01T00:00:00.000Z' }),
+      }),
+    )
+  })
+
+  it('rolls back the storage-version stamp and fails the job if the write throws', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+    tempStoreSessionInsert.mockImplementationOnce(async () => {
+      throw new Error('insert failed')
+    })
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(tempStoreSessionRollback).toHaveBeenCalledTimes(1)
+    expect(job.error).toBeDefined()
   })
 
   it('rolls back the flattening transaction and fails the job if a replace throws', async () => {

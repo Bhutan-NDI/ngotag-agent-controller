@@ -6,22 +6,29 @@
  * catch: KdfMethod.Raw silently accepting any string in the mock while the real binding requires
  * a base58-encoded 32-byte key (Store.generateRawKey() output) and throws for a normal passphrase.
  *
- * This intentionally imports '@openwallet-foundation/askar-nodejs' + '@openwallet-foundation/
- * askar-shared' directly, NOT '@credo-ts/askar'. @credo-ts/askar is what provokes the (unrelated)
- * OOM crash under Jest's --experimental-vm-modules mode noted in WalletPortabilityService.spec.ts
- * — importing the lower-level native binding packages directly avoids that entirely, at the cost
- * of not exercising AskarStoreManager/Credo's own wrapper (which the mocked spec covers instead).
+ * Most of this file imports '@openwallet-foundation/askar-nodejs' + '@openwallet-foundation/
+ * askar-shared' directly, NOT '@credo-ts/askar', to exercise the native binding without pulling in
+ * Credo's own wrapper (which the mocked spec covers instead). The stampStorageVersion test below
+ * is the one exception — it imports WalletPortabilityService (and so @credo-ts/askar) to call the
+ * real method; confirmed this file stays small enough that it doesn't reintroduce the OOM crash
+ * under Jest's --experimental-vm-modules mode that WalletPortabilityService.spec.ts's docblock
+ * warns about.
  *
  * Uses real sqlite files under a temp dir — no Postgres, no agent, no network required.
  */
 import '@openwallet-foundation/askar-nodejs'
+import { JsonTransformer, StorageVersionRecord } from '@credo-ts/core'
 import { KdfMethod, Store, StoreKeyMethod } from '@openwallet-foundation/askar-shared'
 import { promises as fs } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 
+import { WalletPortabilityService } from '../WalletPortabilityService'
+
 const PASSPHRASE = 'MySecretPassphrase123'
 const PROFILE = 'tenant-under-test'
+
+type StampStorageVersion = (store: Store, profile: string) => Promise<void>
 
 describe('Askar native binding — export/import key-derivation and copyProfile', () => {
   let workDir: string
@@ -164,5 +171,36 @@ describe('Askar native binding — export/import key-derivation and copyProfile'
       passKey: PASSPHRASE,
     })
     await reopened.close()
+  })
+
+  it("stampStorageVersion writes a record that parses back through Credo's own class as version 0.5", async () => {
+    const dbPath = path.join(workDir, 'stamped.db')
+    const keyMethod = new StoreKeyMethod(KdfMethod.Argon2IMod)
+    const store = await Store.provision({
+      uri: `sqlite://${dbPath}`,
+      keyMethod,
+      passKey: PASSPHRASE,
+      recreate: true,
+      profile: PROFILE,
+    })
+
+    // Object.create skips the constructor (aws-sdk ESM interop breaks it unmocked); the method never uses this.
+    const service = Object.create(WalletPortabilityService.prototype) as { stampStorageVersion: StampStorageVersion }
+    await service.stampStorageVersion(store, PROFILE)
+    await store.close()
+
+    const reopened = await Store.open({ uri: `sqlite://${dbPath}`, keyMethod, passKey: PASSPHRASE, profile: PROFILE })
+    const readSession = await reopened.session(PROFILE).open()
+    const entry = await readSession.fetch({
+      category: 'StorageVersionRecord',
+      name: 'STORAGE_VERSION_RECORD_ID',
+      isJson: true,
+    })
+    await readSession.close()
+    await reopened.close()
+
+    const record = JsonTransformer.fromJSON(entry?.value, StorageVersionRecord)
+    expect(record.storageVersion).toBe('0.5')
+    expect(record.id).toBe('STORAGE_VERSION_RECORD_ID')
   })
 })
