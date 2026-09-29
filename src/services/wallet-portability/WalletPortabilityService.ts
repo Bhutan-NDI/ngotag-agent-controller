@@ -241,6 +241,18 @@ export class WalletPortabilityService {
               `[WalletPortabilityService] export job ${jobId}: ${droppedKmsKeyId} record(s) had an explicit kmsKeyId with no home in the flat 0.5.18 shape -- presentation may fail if the key isn't otherwise derivable`,
             )
           }
+
+          const { repaired, dropped } = await this.repairOrDropMalformedDidRecords(tempStore, packagedProfile)
+          if (repaired > 0) {
+            this.logger.warn(
+              `[WalletPortabilityService] export job ${jobId}: ${repaired} did record(s) had a non-DID 'did' field, repaired from didDocument.id`,
+            )
+          }
+          if (dropped > 0) {
+            this.logger.warn(
+              `[WalletPortabilityService] export job ${jobId}: ${dropped} did record(s) had no recoverable DID and were dropped from the mobile-compat artifact`,
+            )
+          }
         }
       })
 
@@ -364,6 +376,42 @@ export class WalletPortabilityService {
     } catch (error) {
       // If commit() itself is what threw, the native handle is already closing/closed --
       // rollback() would double-close and mask the real error with its own failure.
+      await session.rollback().catch(() => undefined)
+      throw error
+    }
+  }
+
+  // Same 'did' validity check Credo's own migration uses; tenant profiles never go through that
+  // migration server-side, so a malformed value can sit unnoticed until mobile's does.
+  private async repairOrDropMalformedDidRecords(
+    store: Store,
+    profile: string,
+  ): Promise<{ repaired: number; dropped: number }> {
+    const session = await store.transaction(profile).open()
+    let repaired = 0
+    let dropped = 0
+    try {
+      const entries = await session.fetchAll({ category: 'DidRecord', forUpdate: true, isJson: true })
+
+      for (const entry of entries) {
+        const value = entry.value as Record<string, unknown>
+        const did = value.did as string | undefined
+        if (did?.startsWith('did:')) continue
+
+        const didDocumentId = (value.didDocument as Record<string, unknown> | undefined)?.id as string | undefined
+        if (didDocumentId?.startsWith('did:')) {
+          value.did = didDocumentId
+          await session.replace({ category: entry.category, name: entry.name, value, tags: entry.tags })
+          repaired += 1
+        } else {
+          await session.remove({ category: entry.category, name: entry.name })
+          dropped += 1
+        }
+      }
+
+      await session.commit()
+      return { repaired, dropped }
+    } catch (error) {
       await session.rollback().catch(() => undefined)
       throw error
     }

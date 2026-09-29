@@ -87,12 +87,14 @@ const storeClose = jest.fn(async () => undefined) as jest.Mock
 // records to flatten); overridden per-test via .impl.
 const tempStoreFetchAllHolder = { impl: jest.fn(async () => [] as unknown[]) as jest.Mock }
 const tempStoreSessionReplace = jest.fn(async () => undefined) as jest.Mock
+const tempStoreSessionRemove = jest.fn(async () => undefined) as jest.Mock
 const tempStoreSessionCommit = jest.fn(async () => undefined) as jest.Mock
 const tempStoreSessionRollback = jest.fn(async () => undefined) as jest.Mock
 const tempStoreTransaction = jest.fn(() => ({
   open: jest.fn(async () => ({
     fetchAll: tempStoreFetchAllHolder.impl,
     replace: tempStoreSessionReplace,
+    remove: tempStoreSessionRemove,
     commit: tempStoreSessionCommit,
     rollback: tempStoreSessionRollback,
   })),
@@ -542,7 +544,9 @@ describe('WalletPortabilityService — exportWallet', () => {
         multiInstanceState: 'SingleInstanceUnused',
       },
     })
-    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(1)
+    // 2, not 1: flattenCredentialRecords and repairOrDropMalformedDidRecords each open their own
+    // transaction, and this mock's session object is shared across both.
+    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(2)
   })
 
   it('flattens an SdJwtVcRecord to its flat compactSdJwtVc field', async () => {
@@ -608,7 +612,7 @@ describe('WalletPortabilityService — exportWallet', () => {
     await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
 
     expect(tempStoreSessionReplace).not.toHaveBeenCalled()
-    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(1)
+    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(2)
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('1 multi-instance record'))
   })
 
@@ -647,7 +651,91 @@ describe('WalletPortabilityService — exportWallet', () => {
     await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
 
     expect(tempStoreSessionReplace).not.toHaveBeenCalled()
-    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(1)
+    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(2)
+  })
+
+  it('repairs a did record whose did field is not a valid DID, using didDocument.id', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+    mockFetchAllForCategory('DidRecord', [
+      {
+        category: 'DidRecord',
+        name: 'bad-did',
+        tags: {},
+        value: { did: 'a6560942-8a76-4287-9a27-6baeb3c01006', didDocument: { id: 'did:peer:1zQmABC' } },
+      },
+    ])
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(tempStoreSessionReplace).toHaveBeenCalledWith(
+      expect.objectContaining({ value: expect.objectContaining({ did: 'did:peer:1zQmABC' }) }),
+    )
+    expect(tempStoreSessionRemove).not.toHaveBeenCalled()
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("1 did record(s) had a non-DID 'did' field"))
+  })
+
+  it('drops a did record with no recoverable DID', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+    mockFetchAllForCategory('DidRecord', [
+      {
+        category: 'DidRecord',
+        name: 'unrecoverable-did',
+        tags: {},
+        value: { did: 'a6560942-8a76-4287-9a27-6baeb3c01006' },
+      },
+    ])
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(tempStoreSessionRemove).toHaveBeenCalledWith({ category: 'DidRecord', name: 'unrecoverable-did' })
+    expect(tempStoreSessionReplace).not.toHaveBeenCalled()
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('1 did record(s) had no recoverable DID'))
+  })
+
+  it('leaves a well-formed did record untouched', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+    mockFetchAllForCategory('DidRecord', [
+      { category: 'DidRecord', name: 'good-did', tags: {}, value: { did: 'did:peer:1zQmABC' } },
+    ])
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(tempStoreSessionReplace).not.toHaveBeenCalled()
+    expect(tempStoreSessionRemove).not.toHaveBeenCalled()
+  })
+
+  it('rolls back the did-repair transaction and fails the job if replace throws', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+    mockFetchAllForCategory('DidRecord', [
+      {
+        category: 'DidRecord',
+        name: 'bad-did',
+        tags: {},
+        value: { did: 'a6560942-8a76-4287-9a27-6baeb3c01006', didDocument: { id: 'did:peer:1zQmABC' } },
+      },
+    ])
+    tempStoreSessionReplace.mockImplementationOnce(async () => {
+      throw new Error('replace failed')
+    })
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+    expect(tempStoreSessionRollback).toHaveBeenCalledTimes(1)
+    expect(job.error).toBeDefined()
   })
 
   it('does not touch the flattening transaction at all when walletID is absent', async () => {
