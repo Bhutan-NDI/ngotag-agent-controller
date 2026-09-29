@@ -97,12 +97,21 @@ const tempStoreTransaction = jest.fn(() => ({
     rollback: tempStoreSessionRollback,
   })),
 })) as jest.Mock
+// Read-only session surface, for logMalformedDidRecords. Shares the same fetchAll holder as the
+// transaction mock above -- a test only ever configures one category's worth of fixture data.
+const tempStoreSessionClose = jest.fn(async () => undefined) as jest.Mock
+const tempStoreSession = jest.fn(() => ({
+  open: jest.fn(async () => ({
+    fetchAll: tempStoreFetchAllHolder.impl,
+    close: tempStoreSessionClose,
+  })),
+})) as jest.Mock
 // Store.provision must actually create a file at the given sqlite:// path — gzipAndChecksum
 // reads it afterwards. Content is arbitrary; only its presence/bytes matter for this test.
 const storeProvision = jest.fn(async (options: { uri: string }) => {
   const path = options.uri.replace('sqlite://', '')
   writeFileSync(path, 'fake-wallet-export-content')
-  return { close: storeClose, transaction: tempStoreTransaction }
+  return { close: storeClose, transaction: tempStoreTransaction, session: tempStoreSession }
 }) as jest.Mock
 
 // Import-side Store mock. importedStoreClose/importedStoreListProfiles/importedStoreCopyProfile
@@ -648,6 +657,55 @@ describe('WalletPortabilityService — exportWallet', () => {
 
     expect(tempStoreSessionReplace).not.toHaveBeenCalled()
     expect(tempStoreSessionCommit).toHaveBeenCalledTimes(1)
+  })
+
+  it('logs a malformed did record (read-only, nothing is changed)', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+    mockFetchAllForCategory('DidRecord', [
+      {
+        category: 'DidRecord',
+        name: 'bad-did',
+        tags: { some: 'tag' },
+        value: { did: 'a6560942-8a76-4287-9a27-6baeb3c01006', role: 'created' },
+      },
+    ])
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(tempStoreSessionReplace).not.toHaveBeenCalled()
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('1 malformed did record(s) found -- [{"name":"bad-did","role":"created"'),
+    )
+  })
+
+  it('does not log anything for a well-formed did record', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+    mockFetchAllForCategory('DidRecord', [
+      { category: 'DidRecord', name: 'good-did', tags: {}, value: { did: 'did:peer:2.Ez6...valid', role: 'created' } },
+    ])
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining('malformed did record'))
+  })
+
+  it('does not open the did-record session at all when walletID is absent', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY)
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    expect(tempStoreSession).not.toHaveBeenCalled()
   })
 
   it('does not touch the flattening transaction at all when walletID is absent', async () => {

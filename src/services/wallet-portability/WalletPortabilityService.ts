@@ -241,6 +241,8 @@ export class WalletPortabilityService {
               `[WalletPortabilityService] export job ${jobId}: ${droppedKmsKeyId} record(s) had an explicit kmsKeyId with no home in the flat 0.5.18 shape -- presentation may fail if the key isn't otherwise derivable`,
             )
           }
+
+          await this.logMalformedDidRecords(tempStore, packagedProfile, jobId)
         }
       })
 
@@ -366,6 +368,29 @@ export class WalletPortabilityService {
       // rollback() would double-close and mask the real error with its own failure.
       await session.rollback().catch(() => undefined)
       throw error
+    }
+  }
+
+  // Read-only: same 'did' validity check Credo's own storage migration uses, logged (not fixed)
+  // to identify a malformed record's origin before deciding on a fix.
+  private async logMalformedDidRecords(store: Store, profile: string, jobId: string): Promise<void> {
+    const session = await store.session(profile).open()
+    try {
+      const entries = await session.fetchAll({ category: 'DidRecord', isJson: true })
+      const malformed = entries
+        .filter((entry) => !((entry.value as Record<string, unknown>).did as string | undefined)?.startsWith('did:'))
+        .map((entry) => {
+          const value = entry.value as Record<string, unknown>
+          return { name: entry.name, role: value.role, did: value.did, tags: entry.tags }
+        })
+
+      if (malformed.length > 0) {
+        this.logger.warn(
+          `[WalletPortabilityService] export job ${jobId}: ${malformed.length} malformed did record(s) found -- ${JSON.stringify(malformed)}`,
+        )
+      }
+    } finally {
+      await session.close()
     }
   }
 
