@@ -15,6 +15,7 @@
  * Uses real sqlite files under a temp dir — no Postgres, no agent, no network required.
  */
 import '@openwallet-foundation/askar-nodejs'
+import { JsonTransformer, StorageVersionRecord } from '@credo-ts/core'
 import { KdfMethod, Store, StoreKeyMethod } from '@openwallet-foundation/askar-shared'
 import { promises as fs } from 'fs'
 import * as os from 'os'
@@ -164,5 +165,52 @@ describe('Askar native binding — export/import key-derivation and copyProfile'
       passKey: PASSPHRASE,
     })
     await reopened.close()
+  })
+
+  // Confirms stampStorageVersion's hand-written value shape is genuinely what Credo's own
+  // StorageVersionRecord expects -- parsed back through the real class, not just asserted to
+  // "look right". This is what mobile's own getStorageVersionRecord does on the other end.
+  it("a hand-stamped StorageVersionRecord parses back through Credo's own class as version 0.5", async () => {
+    const dbPath = path.join(workDir, 'stamped.db')
+    const keyMethod = new StoreKeyMethod(KdfMethod.Argon2IMod)
+    const store = await Store.provision({
+      uri: `sqlite://${dbPath}`,
+      keyMethod,
+      passKey: PASSPHRASE,
+      recreate: true,
+      profile: PROFILE,
+    })
+
+    const session = await store.transaction(PROFILE).open()
+    const now = new Date().toISOString()
+    await session.insert({
+      category: 'StorageVersionRecord',
+      name: 'STORAGE_VERSION_RECORD_ID',
+      value: {
+        id: 'STORAGE_VERSION_RECORD_ID',
+        storageVersion: '0.5',
+        createdAt: now,
+        updatedAt: now,
+        metadata: {},
+        _tags: {},
+      },
+      tags: {},
+    })
+    await session.commit()
+    await store.close()
+
+    const reopened = await Store.open({ uri: `sqlite://${dbPath}`, keyMethod, passKey: PASSPHRASE, profile: PROFILE })
+    const readSession = await reopened.session(PROFILE).open()
+    const entry = await readSession.fetch({
+      category: 'StorageVersionRecord',
+      name: 'STORAGE_VERSION_RECORD_ID',
+      isJson: true,
+    })
+    await readSession.close()
+    await reopened.close()
+
+    const record = JsonTransformer.fromJSON(entry?.value, StorageVersionRecord)
+    expect(record.storageVersion).toBe('0.5')
+    expect(record.id).toBe('STORAGE_VERSION_RECORD_ID')
   })
 })

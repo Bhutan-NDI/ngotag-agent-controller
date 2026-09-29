@@ -50,6 +50,11 @@ const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000
 // trusting the job's own metadata to say so.
 const GZIP_MAGIC_BYTES = Buffer.from([0x1f, 0x8b])
 
+// Fixed to what mobile's pinned Credo (0.5.18) understands, not read from the server's own live
+// frameworkStorageVersion -- a later server-side bump must not make mobile refuse the wallet.
+const MOBILE_STORAGE_VERSION = '0.5'
+const STORAGE_VERSION_RECORD_ID = 'STORAGE_VERSION_RECORD_ID'
+
 // Holder-credential record categories with a flat<->credentialInstances back-compat setter,
 // verified against @credo-ts/core's own source.
 const FLATTENABLE_RECORD_CATEGORIES: Array<{ category: string; flatField: string; instanceField: string }> = [
@@ -241,6 +246,8 @@ export class WalletPortabilityService {
               `[WalletPortabilityService] export job ${jobId}: ${droppedKmsKeyId} record(s) had an explicit kmsKeyId with no home in the flat 0.5.18 shape -- presentation may fail if the key isn't otherwise derivable`,
             )
           }
+
+          await this.stampStorageVersion(tempStore, packagedProfile)
         }
       })
 
@@ -364,6 +371,48 @@ export class WalletPortabilityService {
     } catch (error) {
       // If commit() itself is what threw, the native handle is already closing/closed --
       // rollback() would double-close and mask the real error with its own failure.
+      await session.rollback().catch(() => undefined)
+      throw error
+    }
+  }
+
+  // A raw copyProfile carries no storage-version marker (that lives on the tenant's TenantRecord
+  // in the root wallet, not in the profile) -- without one, mobile replays every migration since 0.1.
+  private async stampStorageVersion(store: Store, profile: string): Promise<void> {
+    const session = await store.transaction(profile).open()
+    try {
+      const category = 'StorageVersionRecord'
+      const now = new Date().toISOString()
+      const existing = await session.fetch({
+        category,
+        name: STORAGE_VERSION_RECORD_ID,
+        forUpdate: true,
+        isJson: true,
+      })
+
+      if (existing) {
+        const value = existing.value as Record<string, unknown>
+        value.storageVersion = MOBILE_STORAGE_VERSION
+        value.updatedAt = now
+        await session.replace({ category, name: STORAGE_VERSION_RECORD_ID, value, tags: existing.tags })
+      } else {
+        await session.insert({
+          category,
+          name: STORAGE_VERSION_RECORD_ID,
+          value: {
+            id: STORAGE_VERSION_RECORD_ID,
+            storageVersion: MOBILE_STORAGE_VERSION,
+            createdAt: now,
+            updatedAt: now,
+            metadata: {},
+            _tags: {},
+          },
+          tags: {},
+        })
+      }
+
+      await session.commit()
+    } catch (error) {
       await session.rollback().catch(() => undefined)
       throw error
     }
