@@ -372,22 +372,25 @@ export class WalletPortabilityService {
   }
 
   // Read-only: same 'did' validity check Credo's own storage migration uses, logged (not fixed)
-  // to identify a malformed record's origin before deciding on a fix.
+  // to identify a malformed record's origin before deciding on a fix. One log line per record,
+  // with flat fields (not a nested array), so role/did are directly filterable in CloudWatch
+  // Logs Insights without array indexing.
   private async logMalformedDidRecords(store: Store, profile: string, jobId: string): Promise<void> {
     const session = await store.session(profile).open()
     try {
       const entries = await session.fetchAll({ category: 'DidRecord', isJson: true })
-      const malformed = entries
-        .filter((entry) => !((entry.value as Record<string, unknown>).did as string | undefined)?.startsWith('did:'))
-        .map((entry) => {
-          const value = entry.value as Record<string, unknown>
-          return { name: entry.name, role: value.role, did: value.did, tags: entry.tags }
-        })
+      for (const entry of entries) {
+        const value = entry.value as Record<string, unknown>
+        const did = value.did as string | undefined
+        if (did?.startsWith('did:')) continue
 
-      if (malformed.length > 0) {
-        this.logger.warn(
-          `[WalletPortabilityService] export job ${jobId}: ${malformed.length} malformed did record(s) found -- ${JSON.stringify(malformed)}`,
-        )
+        this.logger.warn(`[WalletPortabilityService] export job ${jobId}: malformed did record found`, {
+          jobId,
+          didRecordName: entry.name,
+          did,
+          role: value.role,
+          tags: entry.tags,
+        })
       }
     } finally {
       await session.close()

@@ -678,7 +678,38 @@ describe('WalletPortabilityService — exportWallet', () => {
 
     expect(tempStoreSessionReplace).not.toHaveBeenCalled()
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('1 malformed did record(s) found -- [{"name":"bad-did","role":"created"'),
+      expect.stringContaining('malformed did record found'),
+      expect.objectContaining({
+        didRecordName: 'bad-did',
+        role: 'created',
+        did: 'a6560942-8a76-4287-9a27-6baeb3c01006',
+        tags: { some: 'tag' },
+      }),
+    )
+  })
+
+  it('logs each malformed did record as its own separate line, not one batched call', async () => {
+    const copyProfile = jest.fn(async () => undefined)
+    const { agent } = makeAgent(copyProfile)
+    const logger = makeLogger()
+    const service = new WalletPortabilityService(logger as never)
+    mockFetchAllForCategory('DidRecord', [
+      { category: 'DidRecord', name: 'bad-did-1', tags: {}, value: { did: 'not-a-did-1', role: 'created' } },
+      { category: 'DidRecord', name: 'bad-did-2', tags: {}, value: { did: 'not-a-did-2', role: 'received' } },
+    ])
+
+    const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+    await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+    const malformedDidWarnCalls = logger.warn.mock.calls.filter((call) =>
+      String(call[0]).includes('malformed did record found'),
+    )
+    expect(malformedDidWarnCalls).toHaveLength(2)
+    expect(malformedDidWarnCalls[0][1]).toEqual(
+      expect.objectContaining({ didRecordName: 'bad-did-1', role: 'created' }),
+    )
+    expect(malformedDidWarnCalls[1][1]).toEqual(
+      expect.objectContaining({ didRecordName: 'bad-did-2', role: 'received' }),
     )
   })
 
