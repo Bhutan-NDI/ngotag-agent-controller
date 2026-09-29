@@ -6,16 +6,15 @@
  * catch: KdfMethod.Raw silently accepting any string in the mock while the real binding requires
  * a base58-encoded 32-byte key (Store.generateRawKey() output) and throws for a normal passphrase.
  *
- * This intentionally imports '@openwallet-foundation/askar-nodejs' + '@openwallet-foundation/
- * askar-shared' directly, NOT '@credo-ts/askar'. @credo-ts/askar is what provokes the (unrelated)
- * OOM crash under Jest's --experimental-vm-modules mode noted in WalletPortabilityService.spec.ts
- * — importing the lower-level native binding packages directly avoids that entirely, at the cost
- * of not exercising AskarStoreManager/Credo's own wrapper (which the mocked spec covers instead).
+ * Most of this file imports '@openwallet-foundation/askar-nodejs' + '@openwallet-foundation/
+ * askar-shared' directly, NOT '@credo-ts/askar', to exercise the native binding without pulling in
+ * Credo's own wrapper (which the mocked spec covers instead). The stampStorageVersion test below
+ * is the one exception — it imports WalletPortabilityService (and so @credo-ts/askar) to call the
+ * real method; confirmed this file stays small enough that it doesn't reintroduce the OOM crash
+ * under Jest's --experimental-vm-modules mode that WalletPortabilityService.spec.ts's docblock
+ * warns about.
  *
  * Uses real sqlite files under a temp dir — no Postgres, no agent, no network required.
- *
- * The stampStorageVersion test below does import WalletPortabilityService (and so
- * @credo-ts/askar) — confirmed this file stays small enough that it doesn't reintroduce the OOM.
  */
 import '@openwallet-foundation/askar-nodejs'
 import { JsonTransformer, StorageVersionRecord } from '@credo-ts/core'
@@ -174,7 +173,6 @@ describe('Askar native binding — export/import key-derivation and copyProfile'
     await reopened.close()
   })
 
-  // Calls the real stampStorageVersion, not a hand-written copy -- catches implementation drift too.
   it("stampStorageVersion writes a record that parses back through Credo's own class as version 0.5", async () => {
     const dbPath = path.join(workDir, 'stamped.db')
     const keyMethod = new StoreKeyMethod(KdfMethod.Argon2IMod)
@@ -186,8 +184,7 @@ describe('Askar native binding — export/import key-derivation and copyProfile'
       profile: PROFILE,
     })
 
-    // Real method, but skips the constructor (Object.create, not `new`) -- stampStorageVersion
-    // never touches `this`, and the constructor drags in aws-sdk/@credo-ts/askar for no benefit here.
+    // Object.create skips the constructor (aws-sdk ESM interop breaks it unmocked); the method never uses this.
     const service = Object.create(WalletPortabilityService.prototype) as { stampStorageVersion: StampStorageVersion }
     await service.stampStorageVersion(store, PROFILE)
     await store.close()
