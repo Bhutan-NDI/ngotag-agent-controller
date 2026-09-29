@@ -13,6 +13,9 @@
  * of not exercising AskarStoreManager/Credo's own wrapper (which the mocked spec covers instead).
  *
  * Uses real sqlite files under a temp dir — no Postgres, no agent, no network required.
+ *
+ * The stampStorageVersion test below does import WalletPortabilityService (and so
+ * @credo-ts/askar) — confirmed this file stays small enough that it doesn't reintroduce the OOM.
  */
 import '@openwallet-foundation/askar-nodejs'
 import { JsonTransformer, StorageVersionRecord } from '@credo-ts/core'
@@ -21,8 +24,12 @@ import { promises as fs } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 
+import { WalletPortabilityService } from '../WalletPortabilityService'
+
 const PASSPHRASE = 'MySecretPassphrase123'
 const PROFILE = 'tenant-under-test'
+
+type StampStorageVersion = (store: Store, profile: string) => Promise<void>
 
 describe('Askar native binding — export/import key-derivation and copyProfile', () => {
   let workDir: string
@@ -167,10 +174,8 @@ describe('Askar native binding — export/import key-derivation and copyProfile'
     await reopened.close()
   })
 
-  // Confirms stampStorageVersion's hand-written value shape is genuinely what Credo's own
-  // StorageVersionRecord expects -- parsed back through the real class, not just asserted to
-  // "look right". This is what mobile's own getStorageVersionRecord does on the other end.
-  it("a hand-stamped StorageVersionRecord parses back through Credo's own class as version 0.5", async () => {
+  // Calls the real stampStorageVersion, not a hand-written copy -- catches implementation drift too.
+  it("stampStorageVersion writes a record that parses back through Credo's own class as version 0.5", async () => {
     const dbPath = path.join(workDir, 'stamped.db')
     const keyMethod = new StoreKeyMethod(KdfMethod.Argon2IMod)
     const store = await Store.provision({
@@ -181,22 +186,10 @@ describe('Askar native binding — export/import key-derivation and copyProfile'
       profile: PROFILE,
     })
 
-    const session = await store.transaction(PROFILE).open()
-    const now = new Date().toISOString()
-    await session.insert({
-      category: 'StorageVersionRecord',
-      name: 'STORAGE_VERSION_RECORD_ID',
-      value: {
-        id: 'STORAGE_VERSION_RECORD_ID',
-        storageVersion: '0.5',
-        createdAt: now,
-        updatedAt: now,
-        metadata: {},
-        _tags: {},
-      },
-      tags: {},
-    })
-    await session.commit()
+    // Real method, but skips the constructor (Object.create, not `new`) -- stampStorageVersion
+    // never touches `this`, and the constructor drags in aws-sdk/@credo-ts/askar for no benefit here.
+    const service = Object.create(WalletPortabilityService.prototype) as { stampStorageVersion: StampStorageVersion }
+    await service.stampStorageVersion(store, PROFILE)
     await store.close()
 
     const reopened = await Store.open({ uri: `sqlite://${dbPath}`, keyMethod, passKey: PASSPHRASE, profile: PROFILE })
