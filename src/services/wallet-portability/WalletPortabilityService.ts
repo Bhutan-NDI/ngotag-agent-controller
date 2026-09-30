@@ -5,6 +5,7 @@ import type { Agent } from '@credo-ts/core'
 import type { Readable } from 'stream'
 
 import { AskarStoreManager } from '@credo-ts/askar'
+import { TypedArrayEncoder } from '@credo-ts/core'
 import { KdfMethod, Store, StoreKeyMethod } from '@openwallet-foundation/askar-shared'
 import * as AWS from 'aws-sdk'
 import { createHash } from 'crypto'
@@ -248,6 +249,11 @@ export class WalletPortabilityService {
           }
 
           await this.stampStorageVersion(tempStore, packagedProfile)
+
+          const aliasedKeys = await this.aliasKeysByBase58(tempStore, packagedProfile)
+          this.logger.info(
+            `[WalletPortabilityService] export job ${jobId}: aliased ${aliasedKeys} key(s) under their base58 public-key name for Credo 0.5.18`,
+          )
         }
       })
 
@@ -412,6 +418,46 @@ export class WalletPortabilityService {
       }
 
       await session.commit()
+    } catch (error) {
+      await session.rollback().catch(() => undefined)
+      throw error
+    }
+  }
+
+  // Credo 0.5.18 looks keys up by base58(publicBytes); 0.6.x names them with a random kmsKeyId.
+  private async aliasKeysByBase58(store: Store, profile: string): Promise<number> {
+    const session = await store.transaction(profile).open()
+    try {
+      const entries = await session.fetchAllKeys({})
+      let aliased = 0
+      try {
+        for (const entry of entries) {
+          let publicBytes: Uint8Array | undefined
+          try {
+            publicBytes = entry.key.publicBytes
+          } catch {
+            // symmetric keys have no public bytes
+          }
+          if (!publicBytes || 0 === publicBytes.length) continue
+
+          const alias = TypedArrayEncoder.toBase58(publicBytes)
+          if (alias === entry.name) continue
+
+          const existing = await session.fetchKey({ name: alias })
+          if (existing) {
+            existing.key.handle.free()
+            continue
+          }
+
+          await session.insertKey({ name: alias, key: entry.key, tags: entry.tags })
+          aliased += 1
+        }
+      } finally {
+        for (const entry of entries) entry.key.handle.free()
+      }
+
+      await session.commit()
+      return aliased
     } catch (error) {
       await session.rollback().catch(() => undefined)
       throw error
