@@ -17,8 +17,9 @@
  * Uses real sqlite files under a temp dir — no Postgres, no agent, no network required.
  */
 import '@openwallet-foundation/askar-nodejs'
-import { JsonTransformer, StorageVersionRecord } from '@credo-ts/core'
-import { KdfMethod, Store, StoreKeyMethod } from '@openwallet-foundation/askar-shared'
+import { JsonTransformer, StorageVersionRecord, TypedArrayEncoder } from '@credo-ts/core'
+import { KdfMethod, Key, KeyAlgorithm, Store, StoreKeyMethod } from '@openwallet-foundation/askar-shared'
+import { randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -29,6 +30,7 @@ const PASSPHRASE = 'MySecretPassphrase123'
 const PROFILE = 'tenant-under-test'
 
 type StampStorageVersion = (store: Store, profile: string) => Promise<void>
+type AliasKeysByBase58 = (store: Store, profile: string) => Promise<number>
 
 describe('Askar native binding — export/import key-derivation and copyProfile', () => {
   let workDir: string
@@ -202,5 +204,61 @@ describe('Askar native binding — export/import key-derivation and copyProfile'
     const record = JsonTransformer.fromJSON(entry?.value, StorageVersionRecord)
     expect(record.storageVersion).toBe('0.5')
     expect(record.id).toBe('STORAGE_VERSION_RECORD_ID')
+  })
+
+  it('aliasKeysByBase58 adds a base58-named twin for every asymmetric UUID-named key, skips the rest, and is idempotent', async () => {
+    const dbPath = path.join(workDir, 'aliased.db')
+    const keyMethod = new StoreKeyMethod(KdfMethod.Argon2IMod)
+    const store = await Store.provision({
+      uri: `sqlite://${dbPath}`,
+      keyMethod,
+      passKey: PASSPHRASE,
+      recreate: true,
+      profile: PROFILE,
+    })
+
+    const uuidNamed = new Map<string, { publicBytes: Uint8Array; name: string }>()
+    const seed = await store.transaction(PROFILE).open()
+    for (const [label, algorithm] of [
+      ['ed25519', KeyAlgorithm.Ed25519],
+      ['p256', KeyAlgorithm.EcSecp256r1],
+      ['k256', KeyAlgorithm.EcSecp256k1],
+    ] as const) {
+      const key = Key.generate(algorithm)
+      const name = randomUUID()
+      await seed.insertKey({ name, key })
+      uuidNamed.set(label, { publicBytes: key.publicBytes, name })
+      key.handle.free()
+    }
+    const alreadyBase58 = Key.generate(KeyAlgorithm.Ed25519)
+    await seed.insertKey({ name: TypedArrayEncoder.toBase58(alreadyBase58.publicBytes), key: alreadyBase58 })
+    alreadyBase58.handle.free()
+    const symmetric = Key.generate(KeyAlgorithm.AesA256Gcm)
+    await seed.insertKey({ name: randomUUID(), key: symmetric })
+    symmetric.handle.free()
+    await seed.commit()
+
+    const service = Object.create(WalletPortabilityService.prototype) as { aliasKeysByBase58: AliasKeysByBase58 }
+    expect(await service.aliasKeysByBase58(store, PROFILE)).toBe(3)
+    expect(await service.aliasKeysByBase58(store, PROFILE)).toBe(0)
+    await store.close()
+
+    const reopened = await Store.open({ uri: `sqlite://${dbPath}`, keyMethod, passKey: PASSPHRASE, profile: PROFILE })
+    const readSession = await reopened.session(PROFILE).open()
+    for (const { publicBytes, name } of uuidNamed.values()) {
+      const twin = await readSession.fetchKey({ name: TypedArrayEncoder.toBase58(publicBytes) })
+      expect(twin && Buffer.from(twin.key.publicBytes).equals(Buffer.from(publicBytes))).toBe(true)
+      twin?.key.handle.free()
+      const original = await readSession.fetchKey({ name })
+      expect(original).not.toBeNull()
+      original?.key.handle.free()
+    }
+    const all = await readSession.fetchAllKeys({})
+    all.forEach((entry) => entry.key.handle.free())
+    await readSession.close()
+    await reopened.close()
+
+    // 3 originals + 3 twins + 1 already-base58 + 1 symmetric
+    expect(all).toHaveLength(8)
   })
 })

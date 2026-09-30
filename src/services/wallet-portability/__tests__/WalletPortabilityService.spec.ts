@@ -89,6 +89,10 @@ const tempStoreFetchAllHolder = { impl: jest.fn(async () => [] as unknown[]) as 
 // For stampStorageVersion. Default: no existing record, so a test only sees an insert unless it
 // overrides .impl to simulate one already being there.
 const tempStoreFetchHolder = { impl: jest.fn(async () => null as unknown) as jest.Mock }
+// For aliasKeysByBase58. Default: no keys in the profile, and no alias already present.
+const tempStoreFetchAllKeysHolder = { impl: jest.fn(async () => [] as unknown[]) as jest.Mock }
+const tempStoreFetchKeyHolder = { impl: jest.fn(async () => null as unknown) as jest.Mock }
+const tempStoreSessionInsertKey = jest.fn(async () => undefined) as jest.Mock
 const tempStoreSessionReplace = jest.fn(async () => undefined) as jest.Mock
 const tempStoreSessionInsert = jest.fn(async () => undefined) as jest.Mock
 const tempStoreSessionCommit = jest.fn(async () => undefined) as jest.Mock
@@ -97,6 +101,9 @@ const tempStoreTransaction = jest.fn(() => ({
   open: jest.fn(async () => ({
     fetchAll: tempStoreFetchAllHolder.impl,
     fetch: tempStoreFetchHolder.impl,
+    fetchAllKeys: tempStoreFetchAllKeysHolder.impl,
+    fetchKey: tempStoreFetchKeyHolder.impl,
+    insertKey: tempStoreSessionInsertKey,
     replace: tempStoreSessionReplace,
     insert: tempStoreSessionInsert,
     commit: tempStoreSessionCommit,
@@ -249,6 +256,8 @@ beforeEach(() => {
   uploadedBytes = undefined
   tempStoreFetchAllHolder.impl = jest.fn(async () => [] as unknown[])
   tempStoreFetchHolder.impl = jest.fn(async () => null as unknown)
+  tempStoreFetchAllKeysHolder.impl = jest.fn(async () => [] as unknown[])
+  tempStoreFetchKeyHolder.impl = jest.fn(async () => null as unknown)
 })
 
 describe('WalletPortabilityService — exportWallet', () => {
@@ -549,9 +558,9 @@ describe('WalletPortabilityService — exportWallet', () => {
         multiInstanceState: 'SingleInstanceUnused',
       },
     })
-    // 2, not 1: flattenCredentialRecords and stampStorageVersion each open their own
-    // transaction, and this mock's session object is shared across both.
-    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(2)
+    // 3, not 1: flattenCredentialRecords, stampStorageVersion and aliasKeysByBase58 each open
+    // their own transaction, and this mock's session object is shared across all three.
+    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(3)
   })
 
   it('flattens an SdJwtVcRecord to its flat compactSdJwtVc field', async () => {
@@ -617,7 +626,7 @@ describe('WalletPortabilityService — exportWallet', () => {
     await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
 
     expect(tempStoreSessionReplace).not.toHaveBeenCalled()
-    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(2)
+    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(3)
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('1 multi-instance record'))
   })
 
@@ -656,7 +665,7 @@ describe('WalletPortabilityService — exportWallet', () => {
     await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
 
     expect(tempStoreSessionReplace).not.toHaveBeenCalled()
-    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(2)
+    expect(tempStoreSessionCommit).toHaveBeenCalledTimes(3)
   })
 
   it('does not touch the flattening transaction at all when walletID is absent', async () => {
@@ -723,6 +732,96 @@ describe('WalletPortabilityService — exportWallet', () => {
 
     expect(tempStoreSessionRollback).toHaveBeenCalledTimes(1)
     expect(job.error).toBeDefined()
+  })
+
+  describe('key aliasing for Credo 0.5.18', () => {
+    const KEY_BYTES = new Uint8Array(Array.from({ length: 32 }, (_, i) => i + 1))
+    const KEY_BYTES_BASE58 = '4wBqpZM9xaSheZzJSMawUKKwhdpChKbZ5eu5ky4Vigw'
+    const makeKeyEntry = (name: string, publicBytes: Uint8Array | (() => never)) => ({
+      name,
+      tags: { some: 'tag' },
+      key: {
+        get publicBytes() {
+          return typeof publicBytes === 'function' ? publicBytes() : publicBytes
+        },
+        handle: { free: jest.fn() },
+      },
+    })
+
+    it('inserts a base58-named twin for a UUID-named key, keeping its tags, and logs the count', async () => {
+      const copyProfile = jest.fn(async () => undefined)
+      const { agent } = makeAgent(copyProfile)
+      const logger = makeLogger()
+      const service = new WalletPortabilityService(logger as never)
+      const entry = makeKeyEntry('3f0e6f9c-uuid', KEY_BYTES)
+      tempStoreFetchAllKeysHolder.impl = jest.fn(async () => [entry])
+
+      const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+      await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+      expect(tempStoreSessionInsertKey).toHaveBeenCalledTimes(1)
+      expect(tempStoreSessionInsertKey).toHaveBeenCalledWith({
+        name: KEY_BYTES_BASE58,
+        key: entry.key,
+        tags: { some: 'tag' },
+      })
+      expect(entry.key.handle.free).toHaveBeenCalledTimes(1)
+      expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('aliased 1 key(s)'))
+    })
+
+    it('skips a key that is already base58-named, one whose twin exists, and one without public bytes', async () => {
+      const copyProfile = jest.fn(async () => undefined)
+      const { agent } = makeAgent(copyProfile)
+      const service = new WalletPortabilityService(makeLogger() as never)
+      const alreadyBase58 = makeKeyEntry(KEY_BYTES_BASE58, KEY_BYTES)
+      const twinExists = makeKeyEntry('uuid-2', new Uint8Array(Array.from({ length: 32 }, (_, i) => i + 101)))
+      const symmetric = makeKeyEntry('uuid-3', () => {
+        throw new Error('no public bytes')
+      })
+      tempStoreFetchAllKeysHolder.impl = jest.fn(async () => [alreadyBase58, twinExists, symmetric])
+      const existingTwin = { key: { handle: { free: jest.fn() } } }
+      tempStoreFetchKeyHolder.impl = jest.fn(async () => existingTwin)
+
+      const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+      await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+      expect(tempStoreSessionInsertKey).not.toHaveBeenCalled()
+      expect(existingTwin.key.handle.free).toHaveBeenCalledTimes(1)
+      for (const entry of [alreadyBase58, twinExists, symmetric]) {
+        expect(entry.key.handle.free).toHaveBeenCalledTimes(1)
+      }
+    })
+
+    it('rolls back, frees every key handle and fails the job if an insert throws', async () => {
+      const copyProfile = jest.fn(async () => undefined)
+      const { agent } = makeAgent(copyProfile)
+      const service = new WalletPortabilityService(makeLogger() as never)
+      const first = makeKeyEntry('uuid-1', KEY_BYTES)
+      const second = makeKeyEntry('uuid-2', new Uint8Array(Array.from({ length: 32 }, (_, i) => i + 101)))
+      tempStoreFetchAllKeysHolder.impl = jest.fn(async () => [first, second])
+      tempStoreSessionInsertKey.mockImplementationOnce(async () => {
+        throw new Error('insertKey failed')
+      })
+
+      const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY, 'JigmeDorji')
+      const job = await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Failed)
+
+      expect(tempStoreSessionRollback).toHaveBeenCalledTimes(1)
+      expect(first.key.handle.free).toHaveBeenCalledTimes(1)
+      expect(second.key.handle.free).toHaveBeenCalledTimes(1)
+      expect(job.error).toBeDefined()
+    })
+
+    it('does not touch keys on a plain (no walletID) export', async () => {
+      const copyProfile = jest.fn(async () => undefined)
+      const { agent } = makeAgent(copyProfile)
+      const service = new WalletPortabilityService(makeLogger() as never)
+
+      const { jobId } = await service.exportWallet(agent as never, TENANT_ID, PASS_KEY)
+      await waitForJobStatus(service, jobId, WalletPortabilityJobStatus.Completed)
+
+      expect(tempStoreSessionInsertKey).not.toHaveBeenCalled()
+    })
   })
 
   it('rolls back the flattening transaction and fails the job if a replace throws', async () => {
