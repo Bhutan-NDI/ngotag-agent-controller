@@ -186,4 +186,27 @@ describe('parseExpiresTime', () => {
     const iso = new Date(Date.now() + 60000).toISOString()
     expect(parseExpiresTime(iso)?.toISOString()).toBe(iso)
   })
+
+  // Regression for @kinxa0's review on PR #100: new Date(value) alone accepts non-ISO formats and
+  // reads an offset-less date-time as server-local time, making the wire value depend on the pod's
+  // timezone instead of rejecting it with a 400.
+  it('rejects non-ISO-8601 formats that Date() would otherwise accept', () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000)
+    expect(() => parseExpiresTime(`${future.getMonth() + 1}/${future.getDate()}/${future.getFullYear()}`)).toThrow(
+      BadRequestError,
+    )
+    expect(() => parseExpiresTime(String(future.getFullYear() + 10))).toThrow(BadRequestError)
+  })
+
+  it('rejects a date-time with no UTC offset', () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000)
+    const offsetLess = future.toISOString().replace('Z', '')
+    expect(() => parseExpiresTime(offsetLess)).toThrow(BadRequestError)
+  })
+
+  it('accepts a future ISO-8601 time with a non-Z numeric offset', () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000)
+    const withOffset = `${future.toISOString().replace('Z', '')}+00:00`
+    expect(parseExpiresTime(withOffset)?.getTime()).toBe(future.getTime())
+  })
 })

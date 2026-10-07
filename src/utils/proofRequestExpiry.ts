@@ -30,9 +30,19 @@ import { BadRequestError } from '../errors'
  * wallet must enforce it.
  */
 
+// Full ISO-8601 date-time with a mandatory offset (`Z` or `±HH:MM`). `new Date(value)` alone also
+// accepts non-ISO formats (e.g. "12/31/2030") and reads an offset-less date-time as server-local
+// time, so the wire value would depend on the pod's timezone.
+const ISO_8601_DATE_TIME_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/
+
 /** Parses an ISO-8601 `expiresTime`; undefined when absent. Must be a valid instant in the future. */
 export const parseExpiresTime = (value?: string): Date | undefined => {
   if (value === undefined || value === null || value === '') return undefined
+  if (!ISO_8601_DATE_TIME_WITH_OFFSET.test(value)) {
+    throw new BadRequestError(
+      'expiresTime must be an ISO-8601 date-time with an explicit UTC offset (e.g. 2030-01-01T10:00:00Z)',
+    )
+  }
   const expiresTime = new Date(value)
   if (Number.isNaN(expiresTime.getTime())) {
     throw new BadRequestError('expiresTime must be an ISO-8601 date-time')
