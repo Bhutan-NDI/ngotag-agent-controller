@@ -2298,7 +2298,7 @@ const models: TsoaRoute.Models = {
             "goalCode": {"dataType":"string"},
             "parentThreadId": {"dataType":"string"},
             "willConfirm": {"dataType":"boolean"},
-            "expiresTime": {"dataType":"string"},
+            "expiresInSeconds": {"dataType":"union","subSchemas":[{"dataType":"double"},{"dataType":"enum","enums":[null]}]},
         },
         "additionalProperties": false,
     },
