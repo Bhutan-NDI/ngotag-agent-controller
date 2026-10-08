@@ -1,0 +1,15 @@
+diff --git a/node_modules/@credo-ts/core/build/storage/Repository.mjs b/node_modules/@credo-ts/core/build/storage/Repository.mjs
+--- a/node_modules/@credo-ts/core/build/storage/Repository.mjs
++++ b/node_modules/@credo-ts/core/build/storage/Repository.mjs
+@@ -125,7 +125,10 @@ var Repository = class {
+ 				if (recordJson) return JsonTransformer.fromJSON(recordJson, this.recordClass);
+ 			}
+ 		}
+-		const records = await this.findByQuery(agentContext, query);
++		// Two matches are sufficient to distinguish not found, unique, and duplicate.
++		// Bound the storage query, not just the returned array. A limit of one would
++		// silently accept duplicates and break the single-record contract.
++		const records = await this.findByQuery(agentContext, query, { limit: 2 });
+ 		if (records.length > 1) throw new RecordDuplicateError(`Multiple records found for given query '${JSON.stringify(query)}'`, { recordType: this.recordClass.type });
+ 		if (records.length < 1) return null;
+ 		if (useCacheStorage && cacheKey) {

@@ -1,8 +1,9 @@
 import axios from 'axios'
 import { Request as Req } from 'express'
-import { Body, Controller, Path, Post, Request, Route, Tags } from 'tsoa'
+import { Body, Controller, Path, Post, Request, Route, Security, Tags } from 'tsoa'
 import { injectable } from 'tsyringe'
 
+import { SCOPES } from '../../enums'
 import { BadRequestError } from '../../errors'
 
 interface OrgTokenRequest {
@@ -21,7 +22,8 @@ export class AuthController extends Controller {
   /**
    * Generate an organization token by forwarding credentials to the platform
    */
-  // @Security('jwt', [SCOPES.UNPROTECTED])
+  // Public by design: this is the endpoint a caller uses to obtain a token in the first place.
+  @Security('jwt', [SCOPES.UNPROTECTED])
   @Post('/{orgId}/token')
   public async getOrgToken(
     @Request() _request: Req,

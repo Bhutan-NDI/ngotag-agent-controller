@@ -1,0 +1,68 @@
+{
+  "jobs": 30,
+  "workMs": 2,
+  "limit": 3,
+  "acquireTimeoutMs": 150,
+  "results": [
+    {
+      "trial": 1,
+      "mode": "baseline",
+      "completed": 3,
+      "rejected": 27,
+      "peak": 3,
+      "remaining": 0,
+      "elapsedMs": 153.986398,
+      "successfulP95Ms": 3.7493520000000444
+    },
+    {
+      "trial": 1,
+      "mode": "candidate",
+      "completed": 30,
+      "rejected": 0,
+      "peak": 3,
+      "remaining": 0,
+      "elapsedMs": 21.86165799999992,
+      "successfulP95Ms": 20.200084999999945
+    },
+    {
+      "trial": 2,
+      "mode": "candidate",
+      "completed": 30,
+      "rejected": 0,
+      "peak": 3,
+      "remaining": 0,
+      "elapsedMs": 21.59678000000008,
+      "successfulP95Ms": 21.324539999999956
+    },
+    {
+      "trial": 2,
+      "mode": "baseline",
+      "completed": 3,
+      "rejected": 27,
+      "peak": 3,
+      "remaining": 0,
+      "elapsedMs": 154.36532599999998,
+      "successfulP95Ms": 2.867448999999965
+    },
+    {
+      "trial": 3,
+      "mode": "baseline",
+      "completed": 3,
+      "rejected": 27,
+      "peak": 3,
+      "remaining": 0,
+      "elapsedMs": 154.52759600000002,
+      "successfulP95Ms": 3.0722879999999577
+    },
+    {
+      "trial": 3,
+      "mode": "candidate",
+      "completed": 30,
+      "rejected": 0,
+      "peak": 3,
+      "remaining": 0,
+      "elapsedMs": 21.66973699999994,
+      "successfulP95Ms": 21.299398999999994
+    }
+  ]
+}

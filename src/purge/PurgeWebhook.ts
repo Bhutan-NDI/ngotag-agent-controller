@@ -10,6 +10,21 @@ export enum PurgeDeletionStatus {
   ALREADY_ABSENT = 'already-absent',
 }
 
+/**
+ * @deprecated Per-record purge notification, off by default (`PURGE_WEBHOOK_ENABLED` must be the
+ * literal `true`). Two reasons, per INTEGRATION-PLAN-develop.md §4.5:
+ *
+ *   1. The receiving endpoints (`POST {webhookUrl}/purge/*`) do not exist on the platform. The
+ *      platform's purge notification path is the JetStream `presentation.purged` event consumed by
+ *      `apps/notification/src/nats/jetstream.consumer.ts`, which is a different mechanism entirely.
+ *   2. A per-record push is only meaningful for holder *credential* deletion, which the purge no
+ *      longer performs at all (see `PurgeDeleteRecord.ts`). What remains is issuer/verifier
+ *      transactional cleanup, for which the per-run audit log emitted by `CronPurgeScheduler` is the
+ *      right level.
+ *
+ * Kept only so the decision stays reversible if a receiver is built. Remove once the platform side
+ * is settled.
+ */
 export async function sendPurgeWebhook(
   webhookUrl: string,
   recordId: string,

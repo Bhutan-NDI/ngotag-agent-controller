@@ -1,0 +1,89 @@
+diff --git a/node_modules/@credo-ts/core/build/agent/EventEmitter.d.mts b/node_modules/@credo-ts/core/build/agent/EventEmitter.d.mts
+index ed75c0b..20e0d6e 100644
+--- a/node_modules/@credo-ts/core/build/agent/EventEmitter.d.mts
++++ b/node_modules/@credo-ts/core/build/agent/EventEmitter.d.mts
+@@ -10,10 +10,15 @@ type EmitEvent<T extends BaseEvent> = Omit<T, 'metadata'>;
+ declare class EventEmitter {
+   private eventEmitter;
+   private stop$;
++  private asyncListeners;
+   constructor(agentDependencies: AgentDependencies, stop$: Subject<boolean>);
+   emit<T extends BaseEvent>(agentContext: AgentContext, data: EmitEvent<T>): void;
++  emitAsync<T extends BaseEvent>(agentContext: AgentContext, data: EmitEvent<T>): Promise<void>;
+   on<T extends BaseEvent>(event: T['type'], listener: (data: T) => void | Promise<void>): void;
++  onAsync<T extends BaseEvent>(event: T['type'], listener: (data: T) => Promise<void>): void;
+   off<T extends BaseEvent>(event: T['type'], listener: (data: T) => void | Promise<void>): void;
++  offAsync<T extends BaseEvent>(event: T['type'], listener: (data: T) => Promise<void>): void;
++  private fireAsyncListenersInBackground;
+   observable<T extends BaseEvent>(event: T['type']): rxjs0.Observable<T>;
+ }
+ //#endregion
+diff --git a/node_modules/@credo-ts/core/build/agent/EventEmitter.mjs b/node_modules/@credo-ts/core/build/agent/EventEmitter.mjs
+index 7e9290a..4bc7877 100644
+--- a/node_modules/@credo-ts/core/build/agent/EventEmitter.mjs
++++ b/node_modules/@credo-ts/core/build/agent/EventEmitter.mjs
+@@ -14,19 +14,62 @@ let EventEmitter = class EventEmitter {
+ 	constructor(agentDependencies, stop$) {
+ 		this.eventEmitter = new agentDependencies.EventEmitterClass();
+ 		this.stop$ = stop$;
++		this.asyncListeners = /* @__PURE__ */ new Map();
+ 	}
+ 	emit(agentContext, data) {
+-		this.eventEmitter.emit(data.type, {
++		const eventData = {
+ 			...data,
+ 			metadata: { contextCorrelationId: agentContext.contextCorrelationId }
+-		});
++		};
++		this.eventEmitter.emit(data.type, eventData);
++		// fan out to onAsync listeners too, fire-and-forget, so onAsync registration doesn't depend on the publisher using emitAsync
++		this.fireAsyncListenersInBackground(data.type, eventData);
++	}
++	// Like emit, but awaits every listener registered via onAsync before resolving. Use this when a
++	// caller needs a side effect of the event (e.g. a persisted record) to be guaranteed to have
++	// completed before it proceeds, instead of merely notifying listeners in the background.
++	//
++	// Each onAsync listener is isolated (one throwing does not stop the others from running), but if
++	// any listener rejects, emitAsync itself rejects too - deliberately fail-closed: a caller that
++	// awaits emitAsync for a specific side effect (e.g. DidCommRoutingService.getRouting awaiting the
++	// tenants module's recipient-key registration) must find out if that side effect didn't actually
++	// happen, rather than proceed as if it had.
++	async emitAsync(agentContext, data) {
++		const eventData = {
++			...data,
++			metadata: { contextCorrelationId: agentContext.contextCorrelationId }
++		};
++		this.eventEmitter.emit(data.type, eventData);
++		const listeners = this.asyncListeners.get(data.type) || [];
++		const results = await Promise.allSettled(listeners.map((listener) => listener(eventData)));
++		const rejections = results.filter((result) => result.status === "rejected").map((result) => result.reason);
++		if (rejections.length === 1) throw rejections[0];
++		if (rejections.length > 1) throw new AggregateError(rejections, `${rejections.length} onAsync listener(s) for event '${data.type}' failed`);
+ 	}
+ 	on(event, listener) {
+ 		this.eventEmitter.on(event, listener);
+ 	}
++	// like on(), but also awaited by emitAsync
++	onAsync(event, listener) {
++		const listeners = this.asyncListeners.get(event) || [];
++		listeners.push(listener);
++		this.asyncListeners.set(event, listeners);
++	}
+ 	off(event, listener) {
+ 		this.eventEmitter.off(event, listener);
+ 	}
++	offAsync(event, listener) {
++		const listeners = this.asyncListeners.get(event);
++		if (!listeners) return;
++		const index = listeners.indexOf(listener);
++		if (index !== -1) listeners.splice(index, 1);
++	}
++	// fire-and-forget dispatch to onAsync listeners for plain emit(); a rejecting listener surfaces
++	// the same way an async on() listener always has (an unhandled rejection), not a second log sink
++	fireAsyncListenersInBackground(eventType, eventData) {
++		const listeners = this.asyncListeners.get(eventType) || [];
++		for (const listener of listeners) Promise.resolve().then(() => listener(eventData));
++	}
+ 	observable(event) {
+ 		return fromEventPattern((handler) => this.on(event, handler), (handler) => this.off(event, handler)).pipe(takeUntil(this.stop$));
+ 	}

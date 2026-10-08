@@ -1,5 +1,6 @@
 import type { DidResolutionResultProps } from '../types'
 import type { PolygonDidCreateOptions } from '@ayanworks/credo-polygon-w3c-module/build/dids/PolygonDidRegistrar.mjs'
+import type { EthereumDidCreateOptions } from '@bhutan-ndi/ethr-credo-module/build/dids'
 import type { DidDocument, KeyDidCreateOptions, PeerDidNumAlgo2CreateOptions } from '@credo-ts/core'
 
 import { transformPrivateKeyToPrivateJwk, transformSeedToPrivateJwk } from '@credo-ts/askar'
@@ -14,20 +15,24 @@ import {
   LogLevel,
   Agent,
   DidKey,
+  DidRepository,
+  DidDocumentRole,
+  RecordNotFoundError,
 } from '@credo-ts/core'
 import { Key, KeyAlgorithm, askar } from '@openwallet-foundation/askar-nodejs'
 import axios from 'axios'
 import { Request as Req } from 'express'
-import { Body, Controller, Example, Get, Path, Post, Route, Tags, Security, Request } from 'tsoa'
+import { Body, Controller, Example, Get, Path, Post, Query, Route, Tags, Security, Request } from 'tsoa'
 import { injectable } from 'tsyringe'
 import { container } from 'tsyringe'
 
 import { RestMultiTenantAgentModules } from '../../cliAgent'
-import { DidMethod, KeyAlgorithmCurve, Network, Role, SCOPES } from '../../enums'
+import { DidMethod, KeyAlgorithmCurve, Network, NetworkTypes, Role, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { BadRequestError, InternalServerError } from '../../errors'
 import { AgentType } from '../../types'
 import { keyAlgorithmToCurve, p521, verkey } from '../../utils/constant'
+import { findDefaultDidRecords } from '../../utils/defaultDid'
 import { getTypeFromCurve } from '../../utils/helpers'
 import { CreateDidResponse, Did, DidRecordExample } from '../examples'
 import { DidCreate, supportedKeyTypesDID } from '../types'
@@ -102,13 +107,70 @@ export class DidController extends Controller {
           result = await this.handleDidPeer(request.agent, createDidOptions)
           break
 
+        case DidMethod.Ethereum:
+          result = await this.handleEthereum(request.agent, createDidOptions)
+          break
+
         default:
           throw new BadRequestError(`Invalid method: ${createDidOptions.method}`)
       }
 
       didRes = { ...result }
 
-      return didRes
+      // Default DID is tracked as an `isDefault` tag on the DID's own DidRecord, looked up by `did`
+      // alone (not restricted to did:key) so isDefault works for every method, with the previous
+      // default's tag cleared on every write so findSingleByQuery elsewhere never sees duplicates.
+      //
+      // Best-effort: the DID itself (already a ledger NYM for did:indy/etc.) must not be rolled back
+      // by a bookkeeping failure -- logged as a warning, surfaced as isDefaultSet: false only when
+      // the primary tag write itself didn't happen.
+      let isDefaultSet: boolean | undefined
+      try {
+        // handleIndicio's non-endorser branch returns the raw registrar result (hence the didState
+        // fallback) -- every other branch already normalizes to a top-level did.
+        const createdDid =
+          (didRes as { did?: string })?.did ?? (didRes as { didState?: { did?: string } })?.didState?.did
+        if (createDidOptions.isDefault) {
+          if (!createdDid) {
+            throw new InternalServerError('isDefault was requested but the created did could not be determined')
+          }
+          const didRepository = request.agent.dependencyManager.resolve(DidRepository)
+          const newDefaultRecord = await didRepository.findCreatedDid(request.agent.context, createdDid)
+          if (!newDefaultRecord) {
+            throw new InternalServerError(`isDefault was requested but no DidRecord could be found for ${createdDid}`)
+          }
+          // Snapshot previous defaults BEFORE tagging the new one, and tag-then-clear rather than
+          // clear-then-tag: both orders can still fail mid-sequence with no cross-record transaction,
+          // but this order's worst case is two tagged defaults (tolerated) instead of zero (a false 404).
+          const previousDefaults = await didRepository.findByQuery(request.agent.context, { isDefault: true })
+          // Per-record lock, not a whole-sequence mutex (Credo has no cross-record transaction) --
+          // two isDefault:true writes for different DIDs can still both succeed; tolerated by design, not fixed here.
+          await didRepository.updateByIdWithLock(request.agent.context, newDefaultRecord.id, async (record) => {
+            record.setTag('isDefault', true)
+            return record
+          })
+          // isDefaultSet is set true as soon as the tag write succeeds, before the clearing loop
+          // below -- a clearing-loop failure shouldn't report an honored request as failed.
+          isDefaultSet = true
+          for (const previousDefault of previousDefaults) {
+            if (previousDefault.id !== newDefaultRecord.id) {
+              await didRepository.updateByIdWithLock(request.agent.context, previousDefault.id, async (record) => {
+                record.setTag('isDefault', false)
+                return record
+              })
+            }
+          }
+        }
+      } catch (bookkeepingError) {
+        this.agent.config.logger.warn(
+          `[DidController] isDefault bookkeeping failed for a newly created DID — the DID itself was created successfully and is still returned below: ${bookkeepingError}`,
+        )
+        if (createDidOptions.isDefault && undefined === isDefaultSet) {
+          isDefaultSet = false
+        }
+      }
+
+      return isDefaultSet === undefined ? didRes : { ...didRes, isDefaultSet }
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }
@@ -618,9 +680,95 @@ export class DidController extends Controller {
     return didResponse
   }
 
+  public async handleEthereum(agent: AgentType, createDidOptions: DidCreate) {
+    const { endpoint, network, privatekey } = createDidOptions
+    const networkName = network?.split(':')[1]
+    if (networkName !== 'mainnet' && networkName !== 'sepolia') {
+      throw new BadRequestError('Invalid network type')
+    }
+    if (!privatekey || typeof privatekey !== 'string' || !privatekey.trim() || privatekey.length !== 64) {
+      throw new BadRequestError('Invalid private key or key not supported')
+    }
+
+    const createDidResponse = await agent.dids.create<EthereumDidCreateOptions>({
+      method: DidMethod.Ethereum,
+      options: {
+        network: networkName === NetworkTypes.Mainnet ? '' : networkName,
+        endpoint,
+      },
+      secret: {
+        privateKey: TypedArrayEncoder.fromHex(`${privatekey}`),
+      },
+    })
+
+    // The Ethereum registrar never throws on failure; it returns didState.state === 'failed' with a
+    // reason. Surface that reason instead of silently returning an undefined did, so partial-state
+    // failures (e.g. RPC/ledger write failed) are reported and the caller can safely retry.
+    if (createDidResponse?.didState?.state !== 'finished') {
+      const reason = (createDidResponse?.didState as { reason?: string })?.reason ?? 'Unknown error'
+      throw new InternalServerError(`Failed to create did:ethr: ${reason}`)
+    }
+
+    // EthrDidRegistrar.create() unconditionally saves a new DidRecord -- it never checks whether
+    // one already exists for the same derived identity (the same private key always derives the
+    // same did:ethr address). Calling this twice for the same tenant with the same private key
+    // silently leaves two "created" DidRecord rows for the identical did. That's invisible here --
+    // create() itself never fails -- but Credo's own findCreatedDid (findSingleByQuery) throws
+    // "Multiple records found" the next time anything looks the DID up, e.g. the Ethereum module's
+    // getPublicKeyFromDid during schema creation/migration. Confirmed in production. Detect it
+    // immediately, roll back the row this call just added, and fail loudly here instead of days
+    // later on an unrelated schema call.
+    const createdDid = createDidResponse.didState.did as string
+    const didRepository = agent.dependencyManager.resolve(DidRepository)
+    const matchingRecords = await didRepository.findByQuery(agent.context, {
+      $or: [{ alternativeDids: [createdDid] }, { did: createdDid }],
+      role: DidDocumentRole.Created,
+    })
+    if (1 < matchingRecords.length) {
+      // createdAt alone isn't a reliable ordering key -- concurrent DidRecords can share the same
+      // millisecond-resolution timestamp, and Askar's underlying scan gives no ordering guarantee.
+      // Without a tie-breaker, two racing calls seeing the same records in opposite orders could
+      // each pick a *different* record to delete, deleting both and leaving none. `id` is unique
+      // and stable regardless of query order, so it's a safe deterministic tie-breaker.
+      const duplicates = [...matchingRecords]
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))
+        .slice(1)
+      for (const duplicate of duplicates) {
+        try {
+          await didRepository.delete(agent.context, duplicate)
+        } catch (error) {
+          // Two genuinely concurrent calls for the same private key can both land here and both
+          // pick the same duplicate to delete -- whichever loses that race hits "record not found",
+          // not a real failure. Swallow only that case so the loser still gets the intended 400
+          // below instead of an unrelated 404 from ErrorHandlingService mapping RecordNotFoundError.
+          if (!(error instanceof RecordNotFoundError)) throw error
+        }
+      }
+      throw new BadRequestError(
+        `This ethereum DID already exists in this wallet: ${createdDid}. The supplied private key was already used to create a did:ethr DID here.`,
+      )
+    }
+
+    const didResponse = {
+      did: createDidResponse?.didState?.did,
+      didDocument: createDidResponse?.didState?.didDocument,
+    }
+    return didResponse
+  }
+
+  // isDefault as a query param, not a separate route: mirrors how the default is tracked (a tag on
+  // the same DidRecord) and matches this file's other list-filter endpoints.
   @Get('/')
-  public async getDids(@Request() request: Req) {
+  public async getDids(@Request() request: Req, @Query('isDefault') isDefault?: boolean) {
     try {
+      if (isDefault) {
+        // findDefaultDidRecords is shared with AgentController's self-attested lookup so the two
+        // endpoints can't disagree about which DID is default.
+        return await findDefaultDidRecords(
+          request.agent.dependencyManager.resolve(DidRepository),
+          request.agent.context,
+        )
+      }
       const createdDids = await request.agent.dids.getCreatedDids()
       return createdDids
     } catch (error) {

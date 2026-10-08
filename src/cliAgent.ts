@@ -8,6 +8,7 @@ import type { InitConfig } from '@credo-ts/core'
 import type { IndyVdrPoolConfig } from '@credo-ts/indy-vdr'
 
 import { PolygonDidRegistrar, PolygonDidResolver, PolygonModule } from '@ayanworks/credo-polygon-w3c-module'
+import { EthereumDidRegistrar, EthereumDidResolver, EthereumModule } from '@bhutan-ndi/ethr-credo-module'
 import {
   AnonCredsDidCommCredentialFormatService,
   AnonCredsModule,
@@ -24,6 +25,7 @@ import {
   KeyDidRegistrar,
   KeyDidResolver,
   CacheModule,
+  CacheModuleConfig,
   InMemoryLruCache,
   WebDidResolver,
   LogLevel,
@@ -64,6 +66,7 @@ import bodyParser from 'body-parser'
 import express from 'express'
 import { readFile } from 'fs/promises'
 
+import { mountBaseMiddleware } from './baseMiddleware'
 import { IndicioAcceptanceMechanism, IndicioTransactionAuthorAgreement, Network, NetworkName } from './enums'
 import { validatePurgeConfig } from './purge/PurgeConfigValidator'
 import {
@@ -74,9 +77,10 @@ import {
 } from './purge/PurgeSchedulerFactory'
 import { buildPurgeConfig } from './purge/PurgeTypes'
 import { setupServer } from './server'
+import { shutdownWalletPortabilityService } from './services/wallet-portability/WalletPortabilityService'
+import { CachedDocumentLoader } from './utils/CachedDocumentLoader'
+import { RedisCache } from './utils/RedisCache'
 import { AuthTypes, getAuthType } from './utils/auth'
-import { isCustomDocumentLoaderEnabled } from './utils/config'
-import { CustomDocumentLoader } from './utils/customDocumentLoader'
 import { generateSecretKey } from './utils/helpers'
 import { TsLogger } from './utils/logger'
 import {
@@ -84,6 +88,7 @@ import {
   getX509CertsByClientToken,
   getX509CertsByUrl,
 } from './utils/oid4vc-agent'
+import { tenantSessionConfig } from './utils/tenantSessionConfig'
 
 export type Transports = 'ws' | 'http'
 export type InboundTransport = {
@@ -127,6 +132,11 @@ export interface AriesRestConfig {
   rpcUrl?: string
   fileServerUrl?: string
   fileServerToken?: string
+  ethereumNetworkName?: string
+  ethereumChainId?: string | number
+  ethereumRegistry?: string
+  ethereumSchemaManagerContractAddress?: string
+  ethereumRpcUrl?: string
   walletScheme?: AskarMultiWalletDatabaseScheme
   schemaFileServerURL?: string
   apiKey: string
@@ -143,6 +153,27 @@ export async function readRestConfig(path: string) {
 export type RestMultiTenantAgentModules = Awaited<ReturnType<typeof getWithTenantModules>>
 
 export type RestAgentModules = Awaited<ReturnType<typeof getModules>>
+
+const initializeCache = (logger: TsLogger) => {
+  const redisUrl = process.env.REDIS_URL
+
+  if (redisUrl) {
+    logger.info('Redis URL found — initializing RedisCache')
+    return new RedisCache(redisUrl, logger, Number(process.env.REDIS_CACHE_TTL_SECONDS) || 600)
+  }
+
+  logger.warn('Redis URL not found — falling back to InMemoryLruCache')
+  return new InMemoryLruCache({ limit: Number(process.env.INMEMORY_LRU_CACHE_LIMIT) || Infinity })
+}
+
+interface EthereumModuleEnvironmentConfig {
+  ethereumNetworkName?: string
+  ethereumChainId?: string | number
+  ethereumRegistry?: string
+  ethereumSchemaManagerContractAddress?: string
+  ethereumRpcUrl?: string
+}
+
 function requireEnv(name: string): string {
   const value = process.env[name]
   if (!value) {
@@ -152,8 +183,8 @@ function requireEnv(name: string): string {
 }
 const expressApp = express()
 expressApp.disable('x-powered-by')
-expressApp.use(express.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
-expressApp.use(express.urlencoded({ limit: process.env.APP_URL_ENCODED_BODY_SIZE ?? '5mb', extended: true }))
+// Body parsers are mounted by mountBaseMiddleware() below, behind the rate limiter -- one mounted
+// here would answer malformed payloads 400 without the limiter ever counting them.
 // TODO: add object
 const getModules = (
   networkConfig: [IndyVdrPoolConfig, ...IndyVdrPoolConfig[]],
@@ -168,7 +199,17 @@ const getModules = (
   walletScheme: AskarMultiWalletDatabaseScheme,
   storeOptions: AskarModuleConfigStoreOptions,
   endpoints: string[],
+  logger: TsLogger,
+  ethereumModuleConfig: EthereumModuleEnvironmentConfig = {},
 ) => {
+  const ethereumNetworkName = ethereumModuleConfig.ethereumNetworkName || process.env.ETHEREUM_NETWORK_NAME
+  const ethereumChainIdRaw = ethereumModuleConfig.ethereumChainId || process.env.ETHEREUM_CHAIN_ID
+  const ethereumChainId = ethereumChainIdRaw ? Number(ethereumChainIdRaw) : undefined
+  const ethereumRpcUrl = ethereumModuleConfig.ethereumRpcUrl || process.env.ETHEREUM_RPC_URL
+  const ethereumRegistry = ethereumModuleConfig.ethereumRegistry || process.env.ETHEREUM_DID_REGISTRY_CONTRACT_ADDRESS
+  const ethereumSchemaManagerContractAddress =
+    ethereumModuleConfig.ethereumSchemaManagerContractAddress || process.env.ETHEREUM_SCHEMA_MANAGER_CONTRACT_ADDRESS
+
   const legacyIndyCredentialFormat = new LegacyIndyDidCommCredentialFormatService()
   const legacyIndyProofFormat = new LegacyIndyDidCommProofFormatService()
   const jsonLdCredentialFormatService = new DidCommJsonLdCredentialFormatService()
@@ -195,6 +236,7 @@ const getModules = (
         new KeyDidRegistrar(),
         new JwkDidRegistrar(),
         new PolygonDidRegistrar(),
+        new EthereumDidRegistrar(),
       ],
       resolvers: [
         new IndyVdrIndyDidResolver(),
@@ -202,6 +244,7 @@ const getModules = (
         new WebDidResolver(),
         new JwkDidResolver(),
         new PolygonDidResolver(),
+        new EthereumDidResolver(),
       ],
     }),
 
@@ -209,11 +252,9 @@ const getModules = (
       registries: [new IndyVdrAnonCredsRegistry()],
       anoncreds,
     }),
-    w3cCredentials: isCustomDocumentLoaderEnabled()
-      ? new W3cCredentialsModule({
-          documentLoader: CustomDocumentLoader,
-        })
-      : new W3cCredentialsModule(),
+    w3cCredentials: new W3cCredentialsModule({
+      documentLoader: CachedDocumentLoader,
+    }),
     didcomm: new DidCommModule({
       processDidCommMessagesConcurrently: true,
       mediationRecipient: true,
@@ -255,7 +296,7 @@ const getModules = (
       },
     }),
     cache: new CacheModule({
-      cache: new InMemoryLruCache({ limit: Number(process.env.INMEMORY_LRU_CACHE_LIMIT) || Infinity }),
+      cache: initializeCache(logger),
     }),
 
     questionAnswer: new QuestionAnswerModule(),
@@ -266,9 +307,12 @@ const getModules = (
       schemaManagerContractAddress:
         schemaManagerContractAddress || (process.env.SCHEMA_MANAGER_CONTRACT_ADDRESS as string),
       fileServerToken: fileServerToken ? fileServerToken : (process.env.FILE_SERVER_TOKEN as string),
-      rpcUrl: rpcUrl ? rpcUrl : (process.env.RPC_URL as string),
+      // Polygon RPC is rotated deployment configuration, so a non-empty environment
+      // value takes precedence over persisted cliConfig.json state.
+      rpcUrl: process.env.RPC_URL || rpcUrl,
       serverUrl: fileServerUrl ? fileServerUrl : (process.env.SERVER_URL as string),
     }),
+
     sdJwtVc: new SdJwtVcModule(),
     openid4vc: new OpenId4VcModule({
       app: expressApp,
@@ -313,6 +357,22 @@ const getModules = (
         return await getX509CertsByUrl()
       },
     }),
+    ethereum: new EthereumModule({
+      config: {
+        networks: [
+          {
+            name: ethereumNetworkName as string,
+            chainId: ethereumChainId,
+            rpcUrl: ethereumRpcUrl as string,
+            registry: ethereumRegistry as string,
+          },
+        ],
+      },
+      schemaManagerContractAddress: ethereumSchemaManagerContractAddress as string,
+      serverUrl: fileServerUrl ? fileServerUrl : (process.env.SERVER_URL as string),
+      fileServerToken: fileServerToken ? fileServerToken : (process.env.FILE_SERVER_TOKEN as string),
+      rpcUrl: ethereumRpcUrl as string,
+    }),
   }
 }
 
@@ -330,6 +390,8 @@ const getWithTenantModules = (
   walletScheme: AskarMultiWalletDatabaseScheme,
   walletConfig: AskarModuleConfigStoreOptions,
   endpoints: string[],
+  logger: TsLogger,
+  ethereumModuleConfig: EthereumModuleEnvironmentConfig = {},
 ) => {
   const modules = getModules(
     networkConfig,
@@ -344,11 +406,12 @@ const getWithTenantModules = (
     walletScheme,
     walletConfig,
     endpoints,
+    logger,
+    ethereumModuleConfig,
   )
   return {
     tenants: new TenantsModule<typeof modules>({
-      sessionAcquireTimeout: Number(process.env.SESSION_ACQUIRE_TIMEOUT) || Infinity,
-      sessionLimit: Number(process.env.SESSION_LIMIT) || Infinity,
+      ...tenantSessionConfig(process.env, logger),
     }),
     ...modules,
   }
@@ -386,6 +449,11 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     fileServerUrl,
     rpcUrl,
     schemaManagerContractAddress,
+    ethereumNetworkName,
+    ethereumChainId,
+    ethereumRegistry,
+    ethereumSchemaManagerContractAddress,
+    ethereumRpcUrl,
     walletConfig,
     autoAcceptConnections,
     autoAcceptCredentials,
@@ -464,6 +532,14 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   }
   let modules
 
+  const ethereumModuleConfig: EthereumModuleEnvironmentConfig = {
+    ethereumNetworkName,
+    ethereumChainId,
+    ethereumRegistry,
+    ethereumSchemaManagerContractAddress,
+    ethereumRpcUrl,
+  }
+
   if (afjConfig.tenancy) {
     modules = getWithTenantModules(
       networkConfig,
@@ -478,6 +554,8 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet,
       walletConfig,
       endpoints || [],
+      logger,
+      ethereumModuleConfig,
     )
   } else {
     modules = getModules(
@@ -493,6 +571,8 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet,
       walletConfig,
       endpoints || [],
+      logger,
+      ethereumModuleConfig,
     )
   }
 
@@ -527,6 +607,10 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       transport.app.use(bodyParser.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
     }
   }
+
+  // Before initialize(): it registers Credo's OID4VC routers, which mount their own 100 KiB
+  // json() parser. Whichever parser is mounted first sets the effective limit for those routes.
+  mountBaseMiddleware(expressApp)
 
   await agent.initialize()
 
@@ -565,7 +649,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     apiKey,
   )
 
-  logger.info(`*** API Key: ${apiKey}`)
+  logger.info('*** API Key: set')
 
   // Start purge schedulers if enabled (NATS and Cron are independent)
   const purgeConfig = buildPurgeConfig()
@@ -593,6 +677,11 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     agent.config.logger.info('[Shutdown] Stopping services...')
     server.close()
     await stopPurgeSchedulers()
+    const cache = agent.dependencyManager.resolve(CacheModuleConfig).cache
+    if (cache instanceof RedisCache) {
+      await cache.disconnect()
+    }
+    await shutdownWalletPortabilityService()
     await agent.shutdown()
     process.exit(0)
   }

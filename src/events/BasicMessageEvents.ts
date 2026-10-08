@@ -16,7 +16,7 @@ export const basicMessageEvents = async (agent: Agent, config: ServerConfig) => 
 
       // Only send webhook if webhook url is configured
       if (config.webhookUrl) {
-        await sendWebhookEvent(config.webhookUrl + '/basic-messages', body, agent.config.logger)
+        void sendWebhookEvent(config.webhookUrl + '/basic-messages', body, agent.config.logger)
       }
 
       if (config.socketServer) {

@@ -1,0 +1,788 @@
+{
+  "runtime": {
+    "node": "v22.22.2",
+    "libuv": "1.51.0",
+    "platform": "linux",
+    "architecture": "x64"
+  },
+  "nativeCallbackRaceFixAppliedToBothModes": true,
+  "results": [
+    {
+      "mode": "before",
+      "scenario": "unique",
+      "operations": 2000,
+      "warmup": 1000,
+      "repeat": 1,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "before",
+        "scenario": "unique",
+        "operations": 2000,
+        "returned": 2000,
+        "acquiredLists": 2000,
+        "releasedLists": 0,
+        "elapsedMs": 2124.278579,
+        "opsPerSecond": 941.4961012041539,
+        "p50Ms": 0.727762999999868,
+        "p95Ms": 2.0345729999999094,
+        "p99Ms": 4.844196000000011,
+        "applicationCpuMs": 2286.109,
+        "maxRssKiB": 247936,
+        "statements": [
+          {
+            "calls": 2000,
+            "rows": 2000,
+            "total_exec_time": 84.43144199999992,
+            "shared_blks_hit": 44451,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "after",
+      "scenario": "unique",
+      "operations": 2000,
+      "warmup": 1000,
+      "repeat": 1,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "after",
+        "scenario": "unique",
+        "operations": 2000,
+        "returned": 2000,
+        "acquiredLists": 2000,
+        "releasedLists": 2000,
+        "elapsedMs": 2173.455415,
+        "opsPerSecond": 920.1937091495388,
+        "p50Ms": 0.7693269999999757,
+        "p95Ms": 1.7535259999999653,
+        "p99Ms": 8.490096999999878,
+        "applicationCpuMs": 2325.208,
+        "maxRssKiB": 247072,
+        "statements": [
+          {
+            "calls": 2000,
+            "rows": 2000,
+            "total_exec_time": 89.17915100000009,
+            "shared_blks_hit": 44451,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "before",
+      "scenario": "missing",
+      "operations": 2000,
+      "warmup": 1000,
+      "repeat": 1,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "before",
+        "scenario": "missing",
+        "operations": 2000,
+        "returned": 0,
+        "acquiredLists": 0,
+        "releasedLists": 0,
+        "elapsedMs": 1132.580645,
+        "opsPerSecond": 1765.8786672979036,
+        "p50Ms": 0.40592700000024706,
+        "p95Ms": 1.0191960000001927,
+        "p99Ms": 2.6047190000003866,
+        "applicationCpuMs": 1228.507,
+        "maxRssKiB": 199172,
+        "statements": [
+          {
+            "calls": 2000,
+            "rows": 0,
+            "total_exec_time": 18.892418000000028,
+            "shared_blks_hit": 6000,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "after",
+      "scenario": "missing",
+      "operations": 2000,
+      "warmup": 1000,
+      "repeat": 1,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "after",
+        "scenario": "missing",
+        "operations": 2000,
+        "returned": 0,
+        "acquiredLists": 0,
+        "releasedLists": 0,
+        "elapsedMs": 883.2105020000001,
+        "opsPerSecond": 2264.465827196425,
+        "p50Ms": 0.31983500000001186,
+        "p95Ms": 0.8908390000001418,
+        "p99Ms": 1.2875730000000658,
+        "applicationCpuMs": 942.273,
+        "maxRssKiB": 195464,
+        "statements": [
+          {
+            "calls": 2000,
+            "rows": 0,
+            "total_exec_time": 13.964215999999995,
+            "shared_blks_hit": 6000,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "before",
+      "scenario": "duplicate",
+      "operations": 200,
+      "warmup": 20,
+      "repeat": 1,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "before",
+        "scenario": "duplicate",
+        "operations": 200,
+        "returned": 200000,
+        "acquiredLists": 6400,
+        "releasedLists": 0,
+        "elapsedMs": 49759.262584000004,
+        "opsPerSecond": 4.01935216910368,
+        "p50Ms": 219.74321300000156,
+        "p95Ms": 427.1820869999974,
+        "p99Ms": 640.3921120000014,
+        "applicationCpuMs": 53362.612,
+        "maxRssKiB": 1478472,
+        "statements": [
+          {
+            "calls": 200,
+            "rows": 200000,
+            "total_exec_time": 3289.3690250000013,
+            "shared_blks_hit": 3663800,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "after",
+      "scenario": "duplicate",
+      "operations": 200,
+      "warmup": 20,
+      "repeat": 1,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "after",
+        "scenario": "duplicate",
+        "operations": 200,
+        "returned": 400,
+        "acquiredLists": 200,
+        "releasedLists": 200,
+        "elapsedMs": 365.18458799999996,
+        "opsPerSecond": 547.6682383978374,
+        "p50Ms": 1.237344000000121,
+        "p95Ms": 3.8726179999999886,
+        "p99Ms": 12.539301999999907,
+        "applicationCpuMs": 299.72,
+        "maxRssKiB": 177128,
+        "statements": [
+          {
+            "calls": 200,
+            "rows": 400,
+            "total_exec_time": 86.92585200000002,
+            "shared_blks_hit": 26200,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "after",
+      "scenario": "unique",
+      "operations": 2000,
+      "warmup": 1000,
+      "repeat": 2,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "after",
+        "scenario": "unique",
+        "operations": 2000,
+        "returned": 2000,
+        "acquiredLists": 2000,
+        "releasedLists": 2000,
+        "elapsedMs": 2040.166066,
+        "opsPerSecond": 980.3123546316253,
+        "p50Ms": 0.706112999999732,
+        "p95Ms": 1.6953050000001895,
+        "p99Ms": 6.963681000000179,
+        "applicationCpuMs": 2179.932,
+        "maxRssKiB": 245900,
+        "statements": [
+          {
+            "calls": 2000,
+            "rows": 2000,
+            "total_exec_time": 78.20098299999995,
+            "shared_blks_hit": 44451,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "before",
+      "scenario": "unique",
+      "operations": 2000,
+      "warmup": 1000,
+      "repeat": 2,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "before",
+        "scenario": "unique",
+        "operations": 2000,
+        "returned": 2000,
+        "acquiredLists": 2000,
+        "releasedLists": 0,
+        "elapsedMs": 1764.0770850000001,
+        "opsPerSecond": 1133.7373049092125,
+        "p50Ms": 0.59537999999975,
+        "p95Ms": 1.5998639999997977,
+        "p99Ms": 4.747296000000006,
+        "applicationCpuMs": 1954.2,
+        "maxRssKiB": 251220,
+        "statements": [
+          {
+            "calls": 2000,
+            "rows": 2000,
+            "total_exec_time": 70.85487599999993,
+            "shared_blks_hit": 44451,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "after",
+      "scenario": "missing",
+      "operations": 2000,
+      "warmup": 1000,
+      "repeat": 2,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "after",
+        "scenario": "missing",
+        "operations": 2000,
+        "returned": 0,
+        "acquiredLists": 0,
+        "releasedLists": 0,
+        "elapsedMs": 1748.324429,
+        "opsPerSecond": 1143.9524420212742,
+        "p50Ms": 0.5947949999999764,
+        "p95Ms": 1.7555669999999282,
+        "p99Ms": 4.324277000000166,
+        "applicationCpuMs": 1812.89,
+        "maxRssKiB": 200232,
+        "statements": [
+          {
+            "calls": 2000,
+            "rows": 0,
+            "total_exec_time": 27.449436000000023,
+            "shared_blks_hit": 6000,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "before",
+      "scenario": "missing",
+      "operations": 2000,
+      "warmup": 1000,
+      "repeat": 2,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "before",
+        "scenario": "missing",
+        "operations": 2000,
+        "returned": 0,
+        "acquiredLists": 0,
+        "releasedLists": 0,
+        "elapsedMs": 753.5715670000002,
+        "opsPerSecond": 2654.0279484828275,
+        "p50Ms": 0.2927359999998771,
+        "p95Ms": 0.6212600000001203,
+        "p99Ms": 0.8595090000001164,
+        "applicationCpuMs": 821.291,
+        "maxRssKiB": 194928,
+        "statements": [
+          {
+            "calls": 2000,
+            "rows": 0,
+            "total_exec_time": 11.760141000000006,
+            "shared_blks_hit": 6000,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "after",
+      "scenario": "duplicate",
+      "operations": 200,
+      "warmup": 20,
+      "repeat": 2,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "after",
+        "scenario": "duplicate",
+        "operations": 200,
+        "returned": 400,
+        "acquiredLists": 200,
+        "releasedLists": 200,
+        "elapsedMs": 394.581942,
+        "opsPerSecond": 506.86556760876806,
+        "p50Ms": 1.4945199999999659,
+        "p95Ms": 3.717139999999972,
+        "p99Ms": 8.303266000000008,
+        "applicationCpuMs": 370.201,
+        "maxRssKiB": 179272,
+        "statements": [
+          {
+            "calls": 200,
+            "rows": 400,
+            "total_exec_time": 98.91586300000002,
+            "shared_blks_hit": 26200,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "before",
+      "scenario": "duplicate",
+      "operations": 200,
+      "warmup": 20,
+      "repeat": 2,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "before",
+        "scenario": "duplicate",
+        "operations": 200,
+        "returned": 200000,
+        "acquiredLists": 6400,
+        "releasedLists": 0,
+        "elapsedMs": 46472.420282,
+        "opsPerSecond": 4.30362780303623,
+        "p50Ms": 213.17640299999948,
+        "p95Ms": 325.5340269999997,
+        "p99Ms": 646.0323619999981,
+        "applicationCpuMs": 51752.879,
+        "maxRssKiB": 1477576,
+        "statements": [
+          {
+            "calls": 200,
+            "rows": 200000,
+            "total_exec_time": 3138.7940959999983,
+            "shared_blks_hit": 3663800,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "before",
+      "scenario": "unique",
+      "operations": 2000,
+      "warmup": 1000,
+      "repeat": 3,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "before",
+        "scenario": "unique",
+        "operations": 2000,
+        "returned": 2000,
+        "acquiredLists": 2000,
+        "releasedLists": 0,
+        "elapsedMs": 2550.529043,
+        "opsPerSecond": 784.1510393653651,
+        "p50Ms": 1.061055999999553,
+        "p95Ms": 2.2582860000002256,
+        "p99Ms": 4.025810999999976,
+        "applicationCpuMs": 2691.541,
+        "maxRssKiB": 250012,
+        "statements": [
+          {
+            "calls": 2000,
+            "rows": 2000,
+            "total_exec_time": 104.39505800000032,
+            "shared_blks_hit": 44451,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "after",
+      "scenario": "unique",
+      "operations": 2000,
+      "warmup": 1000,
+      "repeat": 3,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "after",
+        "scenario": "unique",
+        "operations": 2000,
+        "returned": 2000,
+        "acquiredLists": 2000,
+        "releasedLists": 2000,
+        "elapsedMs": 2024.7682449999998,
+        "opsPerSecond": 987.7673679142475,
+        "p50Ms": 0.6799540000001798,
+        "p95Ms": 1.7500669999999445,
+        "p99Ms": 5.843445999999858,
+        "applicationCpuMs": 2215.755,
+        "maxRssKiB": 244308,
+        "statements": [
+          {
+            "calls": 2000,
+            "rows": 2000,
+            "total_exec_time": 75.18679699999993,
+            "shared_blks_hit": 44451,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "before",
+      "scenario": "missing",
+      "operations": 2000,
+      "warmup": 1000,
+      "repeat": 3,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "before",
+        "scenario": "missing",
+        "operations": 2000,
+        "returned": 0,
+        "acquiredLists": 0,
+        "releasedLists": 0,
+        "elapsedMs": 686.079383,
+        "opsPerSecond": 2915.1145618961123,
+        "p50Ms": 0.2812539999999899,
+        "p95Ms": 0.4360679999999775,
+        "p99Ms": 0.8477219999999761,
+        "applicationCpuMs": 758.973,
+        "maxRssKiB": 201188,
+        "statements": [
+          {
+            "calls": 2000,
+            "rows": 0,
+            "total_exec_time": 9.631074000000012,
+            "shared_blks_hit": 6000,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "after",
+      "scenario": "missing",
+      "operations": 2000,
+      "warmup": 1000,
+      "repeat": 3,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "after",
+        "scenario": "missing",
+        "operations": 2000,
+        "returned": 0,
+        "acquiredLists": 0,
+        "releasedLists": 0,
+        "elapsedMs": 1052.261065,
+        "opsPerSecond": 1900.6690131597716,
+        "p50Ms": 0.3658290000000761,
+        "p95Ms": 0.9280039999998735,
+        "p99Ms": 1.4175740000000587,
+        "applicationCpuMs": 1127.976,
+        "maxRssKiB": 195372,
+        "statements": [
+          {
+            "calls": 2000,
+            "rows": 0,
+            "total_exec_time": 17.054482000000007,
+            "shared_blks_hit": 6000,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "before",
+      "scenario": "duplicate",
+      "operations": 200,
+      "warmup": 20,
+      "repeat": 3,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "before",
+        "scenario": "duplicate",
+        "operations": 200,
+        "returned": 200000,
+        "acquiredLists": 6400,
+        "releasedLists": 0,
+        "elapsedMs": 46708.098155,
+        "opsPerSecond": 4.281912728201939,
+        "p50Ms": 205.304071999999,
+        "p95Ms": 384.94124699999884,
+        "p99Ms": 659.543362000004,
+        "applicationCpuMs": 50750.183,
+        "maxRssKiB": 1481408,
+        "statements": [
+          {
+            "calls": 200,
+            "rows": 200000,
+            "total_exec_time": 2911.018479999999,
+            "shared_blks_hit": 3663800,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "after",
+      "scenario": "duplicate",
+      "operations": 200,
+      "warmup": 20,
+      "repeat": 3,
+      "extended": false,
+      "completed": true,
+      "measurement": {
+        "mode": "after",
+        "scenario": "duplicate",
+        "operations": 200,
+        "returned": 400,
+        "acquiredLists": 200,
+        "releasedLists": 200,
+        "elapsedMs": 477.33643299999994,
+        "opsPerSecond": 418.9916925951471,
+        "p50Ms": 1.8390759999999773,
+        "p95Ms": 4.651610000000005,
+        "p99Ms": 10.950114999999983,
+        "applicationCpuMs": 363.063,
+        "maxRssKiB": 176484,
+        "statements": [
+          {
+            "calls": 200,
+            "rows": 400,
+            "total_exec_time": 126.5372070000001,
+            "shared_blks_hit": 26200,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "after",
+      "scenario": "duplicate",
+      "operations": 2000,
+      "warmup": 1000,
+      "repeat": 1,
+      "extended": true,
+      "completed": true,
+      "measurement": {
+        "mode": "after",
+        "scenario": "duplicate",
+        "operations": 2000,
+        "returned": 4000,
+        "acquiredLists": 2000,
+        "releasedLists": 2000,
+        "elapsedMs": 4773.562868999999,
+        "opsPerSecond": 418.97426615834524,
+        "p50Ms": 2.2256719999995767,
+        "p95Ms": 3.778980000000047,
+        "p99Ms": 9.914856000000327,
+        "applicationCpuMs": 3464.275,
+        "maxRssKiB": 255308,
+        "statements": [
+          {
+            "calls": 2000,
+            "rows": 4000,
+            "total_exec_time": 1164.6640749999974,
+            "shared_blks_hit": 262000,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "after",
+      "scenario": "duplicate",
+      "operations": 2000,
+      "warmup": 1000,
+      "repeat": 2,
+      "extended": true,
+      "completed": true,
+      "measurement": {
+        "mode": "after",
+        "scenario": "duplicate",
+        "operations": 2000,
+        "returned": 4000,
+        "acquiredLists": 2000,
+        "releasedLists": 2000,
+        "elapsedMs": 3999.873535,
+        "opsPerSecond": 500.01580862480944,
+        "p50Ms": 1.4989969999996902,
+        "p95Ms": 3.7146529999999984,
+        "p99Ms": 15.073386000000028,
+        "applicationCpuMs": 2932.125,
+        "maxRssKiB": 250136,
+        "statements": [
+          {
+            "calls": 2000,
+            "rows": 4000,
+            "total_exec_time": 1018.3454600000005,
+            "shared_blks_hit": 262000,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "after",
+      "scenario": "duplicate",
+      "operations": 2000,
+      "warmup": 1000,
+      "repeat": 3,
+      "extended": true,
+      "completed": true,
+      "measurement": {
+        "mode": "after",
+        "scenario": "duplicate",
+        "operations": 2000,
+        "returned": 4000,
+        "acquiredLists": 2000,
+        "releasedLists": 2000,
+        "elapsedMs": 4204.879868,
+        "opsPerSecond": 475.6378452617424,
+        "p50Ms": 1.6906049999997776,
+        "p95Ms": 3.5027319999999236,
+        "p99Ms": 14.725870000000214,
+        "applicationCpuMs": 3096.603,
+        "maxRssKiB": 257464,
+        "statements": [
+          {
+            "calls": 2000,
+            "rows": 4000,
+            "total_exec_time": 1058.5043829999986,
+            "shared_blks_hit": 262000,
+            "shared_blks_read": 0,
+            "temp_blks_read": 0,
+            "temp_blks_written": 0,
+            "blk_read_time": 0,
+            "blk_write_time": 0
+          }
+        ]
+      }
+    }
+  ]
+}

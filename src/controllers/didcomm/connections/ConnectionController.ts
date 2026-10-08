@@ -1,6 +1,6 @@
 import type { DidCommConnectionRecordProps } from '@credo-ts/didcomm'
 
-import { DidCommDidExchangeState } from '@credo-ts/didcomm'
+import { DidCommDidExchangeState, DidCommOutOfBandState } from '@credo-ts/didcomm'
 import { Request as Req } from 'express'
 import { Controller, Delete, Example, Get, Path, Post, Query, Route, Tags, Security, Request } from 'tsoa'
 import { injectable } from 'tsyringe'
@@ -129,14 +129,20 @@ export class ConnectionController extends Controller {
     }
   }
 
+  // Public by design: a wallet resolves an invitation before any connection exists, so it has no
+  // credential to present. Returns the invitation alone -- the record is not public.
+  @Security('jwt', [SCOPES.UNPROTECTED])
   @Get('/didcomm/url/:invitationId')
   public async getInvitation(@Request() request: Req, @Path('invitationId') invitationId: string) {
     try {
-      const outOfBandRecord = await request.agent.modules.didcomm.connections.findByInvitationDid(invitationId)
+      const outOfBandRecord = await request.agent.modules.didcomm.oob.findByCreatedInvitationId(invitationId)
 
-      if (!outOfBandRecord) throw new NotFoundError(`connection with invitationId "${invitationId}" not found.`)
+      if (!outOfBandRecord || outOfBandRecord.state !== DidCommOutOfBandState.AwaitResponse)
+        throw new NotFoundError(`connection with invitationId "${invitationId}" not found.`)
 
-      return outOfBandRecord
+      return outOfBandRecord.outOfBandInvitation.toJSON({
+        useDidSovPrefixWhereAllowed: request.agent.modules.didcomm.config.useDidSovPrefixWhereAllowed,
+      })
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }

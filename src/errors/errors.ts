@@ -1,6 +1,10 @@
 class BaseError extends Error {
   public statusCode: number
 
+  // The pre-conversion error. captureStackTrace below re-roots this error's own stack at the
+  // conversion site, so without this the original throw location is unrecoverable.
+  public cause?: unknown
+
   public constructor(message: string, statusCode: number) {
     super(message)
     this.name = this.constructor.name

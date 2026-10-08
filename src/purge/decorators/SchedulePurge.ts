@@ -2,6 +2,14 @@ import type { AgentMode, PurgeRecordType } from '../PurgeTypes'
 
 import { getNatsPurgeScheduler } from '../PurgeSchedulerFactory'
 
+/**
+ * @deprecated Registers a record for state-blind deletion at TTL via the dormant NATS
+ * schedule-at-create flow. `getNatsPurgeScheduler()` returns null unless `PURGE_NATS_ENABLED=true`,
+ * so with the default configuration this decorator is a no-op wrapper on the controller method.
+ *
+ * Retention is decided by the cron flow instead, which re-reads state at delete time. See
+ * `NatsPurgeScheduler` and INTEGRATION-PLAN-develop.md §4.4; the call sites go away with the flow.
+ */
 export function SchedulePurge(recordType: PurgeRecordType, idExtractor: (result: unknown) => string | undefined) {
   return function (_target: object, _key: string, descriptor: PropertyDescriptor) {
     const original = descriptor.value as (...args: unknown[]) => Promise<unknown>

@@ -1,16 +1,39 @@
-import type { BaseError } from './errors/errors'
-
 import { AnonCredsError, AnonCredsRsError, AnonCredsStoreRecordError } from '@credo-ts/anoncreds'
 import { CredoError, RecordNotFoundError, RecordDuplicateError, ClassValidationError } from '@credo-ts/core'
 import { MessageSendingError } from '@credo-ts/didcomm'
 import { IndyVdrError } from '@hyperledger/indy-vdr-nodejs'
 
-import { RecordDuplicateError as CustomRecordDuplicateError, NotFoundError, InternalServerError } from './errors/errors'
+import {
+  BaseError,
+  RecordDuplicateError as CustomRecordDuplicateError,
+  NotFoundError,
+  InternalServerError,
+} from './errors/errors'
 import convertError from './utils/errorConverter'
+import { isTenantAdmissionError, tenantCapacityResponse } from './utils/tenantSessionConfig'
 
 class ErrorHandlingService {
-  public static handle(error: unknown) {
-    if (error instanceof RecordDuplicateError) {
+  public static handle(error: unknown): never {
+    try {
+      this.convert(error)
+    } catch (converted) {
+      // Keep the original: BaseError re-roots its own stack at the conversion site, so this is
+      // the only surviving reference to where the failure actually came from. server.ts logs it.
+      //
+      // Only an Error is preserved. A non-Error rejection has no stack worth keeping and the
+      // transport cannot sanitise its contents, so carrying it forward would put an arbitrary
+      // value into the log record.
+      if (converted instanceof BaseError && undefined === converted.cause && error instanceof Error) {
+        converted.cause = error
+      }
+      throw converted
+    }
+  }
+
+  private static convert(error: unknown): never {
+    if (isTenantAdmissionError(error)) {
+      throw new BaseError(tenantCapacityResponse.message, tenantCapacityResponse.status)
+    } else if (error instanceof RecordDuplicateError) {
       throw this.handleRecordDuplicateError(error)
     } else if (error instanceof ClassValidationError) {
       throw this.handleClassValidationError(error)
@@ -31,7 +54,10 @@ class ErrorHandlingService {
     } else if (error instanceof Error) {
       throw convertError(error.constructor.name, error.message)
     } else {
-      throw new InternalServerError(`An unknown error occurred ${error}`)
+      // The value is deliberately not interpolated: a rejected string can be an upstream
+      // response body carrying a token or a seed, and this message reaches the log line, the
+      // OpenTelemetry body, the file sink and the HTTP response. Only its type is safe to keep.
+      throw new InternalServerError(`An unknown error occurred (${typeof error})`)
     }
   }
   private static handleIndyVdrError(error: IndyVdrError) {

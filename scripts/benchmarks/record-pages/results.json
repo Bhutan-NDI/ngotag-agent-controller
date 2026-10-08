@@ -1,0 +1,471 @@
+{
+  "nativePrerequisites": {
+    "ffiSha256": "cbd20d37b6bc4277b08b2afad6226418f3200f0620e493d9f568c7cfe7c281c3",
+    "scanSha256": "0fc7a9ccfa13fda657a134245627f08d66b1be14aa889247c17172cd8cb0ef77",
+    "note": "Priority-1 FFI and scan cleanup are shared by every mode; they are not priority-4 changes."
+  },
+  "node": "v22.22.2",
+  "postgres": "16.13",
+  "countPerCategory": 2000,
+  "iterations": 20,
+  "pageSize": 100,
+  "concurrency": 1,
+  "results": [
+    {
+      "kind": "proofs",
+      "trial": 1,
+      "mode": "complete-list",
+      "p50Ms": 316.3759709999995,
+      "p95Ms": 388.3193149999988,
+      "p99Ms": 437.95034400000077,
+      "decodedRecords": 40000,
+      "idArrayBytes": 497820,
+      "clientCpuMs": 7026.569,
+      "database": {
+        "calls": 20,
+        "rows": 40000,
+        "executionMs": 165.62065699999994,
+        "planningMs": 2.124954999999999,
+        "bufferHits": 125531,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "proofs",
+      "trial": 1,
+      "mode": "first-page",
+      "p50Ms": 15.010209000000032,
+      "p95Ms": 35.11869200000001,
+      "p99Ms": 35.47383500000069,
+      "decodedRecords": 2020,
+      "idArrayBytes": 21820,
+      "clientCpuMs": 416.37,
+      "database": {
+        "calls": 20,
+        "rows": 2020,
+        "executionMs": 13.682468,
+        "planningMs": 3.2027390000000002,
+        "bufferHits": 7780,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "proofs",
+      "trial": 1,
+      "mode": "last-page",
+      "p50Ms": 28.39168300000165,
+      "p95Ms": 46.32374900000286,
+      "p99Ms": 46.88307799999893,
+      "decodedRecords": 2000,
+      "idArrayBytes": 26020,
+      "clientCpuMs": 484.781,
+      "database": {
+        "calls": 20,
+        "rows": 2000,
+        "executionMs": 159.427638,
+        "planningMs": 0.1547299999999998,
+        "bufferHits": 200941,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "proofs",
+      "trial": 1,
+      "mode": "full-traversal",
+      "p50Ms": 523.9709010000006,
+      "p95Ms": 681.3217229999973,
+      "p99Ms": 1552.2009440000002,
+      "decodedRecords": 40380,
+      "idArrayBytes": 497820,
+      "clientCpuMs": 11309.107,
+      "database": {
+        "calls": 400,
+        "rows": 40380,
+        "executionMs": 1504.5675760000006,
+        "planningMs": 0,
+        "bufferHits": 1727280,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "proofs",
+      "trial": 2,
+      "mode": "full-traversal",
+      "p50Ms": 578.6523270000034,
+      "p95Ms": 769.7012799999939,
+      "p99Ms": 1005.764221999998,
+      "decodedRecords": 40380,
+      "idArrayBytes": 497820,
+      "clientCpuMs": 11780.345,
+      "database": {
+        "calls": 400,
+        "rows": 40380,
+        "executionMs": 1625.141119999997,
+        "planningMs": 0,
+        "bufferHits": 1727280,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "proofs",
+      "trial": 2,
+      "mode": "last-page",
+      "p50Ms": 26.857344999996712,
+      "p95Ms": 74.4530900000027,
+      "p99Ms": 78.0576779999974,
+      "decodedRecords": 2000,
+      "idArrayBytes": 26020,
+      "clientCpuMs": 610.718,
+      "database": {
+        "calls": 20,
+        "rows": 2000,
+        "executionMs": 182.67482399999926,
+        "planningMs": 0,
+        "bufferHits": 200940,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "proofs",
+      "trial": 2,
+      "mode": "first-page",
+      "p50Ms": 15.46955500000331,
+      "p95Ms": 43.982051999999385,
+      "p99Ms": 63.057913999997254,
+      "decodedRecords": 2020,
+      "idArrayBytes": 21820,
+      "clientCpuMs": 513.862,
+      "database": {
+        "calls": 20,
+        "rows": 2020,
+        "executionMs": 11.564656000001378,
+        "planningMs": 0,
+        "bufferHits": 7760,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "proofs",
+      "trial": 2,
+      "mode": "complete-list",
+      "p50Ms": 329.3781050000034,
+      "p95Ms": 400.5265789999976,
+      "p99Ms": 758.8832110000003,
+      "decodedRecords": 40000,
+      "idArrayBytes": 497820,
+      "clientCpuMs": 7674.203,
+      "database": {
+        "calls": 20,
+        "rows": 40000,
+        "executionMs": 161.92948500000057,
+        "planningMs": 0,
+        "bufferHits": 125520,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "proofs",
+      "trial": 3,
+      "mode": "complete-list",
+      "p50Ms": 450.21643899999617,
+      "p95Ms": 523.7204229999988,
+      "p99Ms": 1818.7983260000037,
+      "decodedRecords": 40000,
+      "idArrayBytes": 497820,
+      "clientCpuMs": 10923.265,
+      "database": {
+        "calls": 20,
+        "rows": 40000,
+        "executionMs": 183.82770200000004,
+        "planningMs": 0,
+        "bufferHits": 125520,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "proofs",
+      "trial": 3,
+      "mode": "first-page",
+      "p50Ms": 19.822742000003927,
+      "p95Ms": 56.273746999999275,
+      "p99Ms": 58.54757700000482,
+      "decodedRecords": 2020,
+      "idArrayBytes": 21820,
+      "clientCpuMs": 618.946,
+      "database": {
+        "calls": 20,
+        "rows": 2020,
+        "executionMs": 11.758088999999018,
+        "planningMs": 0,
+        "bufferHits": 7760,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "proofs",
+      "trial": 3,
+      "mode": "last-page",
+      "p50Ms": 33.77689700000337,
+      "p95Ms": 73.84423800000513,
+      "p99Ms": 89.3953720000136,
+      "decodedRecords": 2000,
+      "idArrayBytes": 26020,
+      "clientCpuMs": 671.008,
+      "database": {
+        "calls": 20,
+        "rows": 2000,
+        "executionMs": 174.2515599999997,
+        "planningMs": 0,
+        "bufferHits": 200940,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "proofs",
+      "trial": 3,
+      "mode": "full-traversal",
+      "p50Ms": 436.4447119999968,
+      "p95Ms": 518.6293449999939,
+      "p99Ms": 614.5821400000132,
+      "decodedRecords": 40380,
+      "idArrayBytes": 497820,
+      "clientCpuMs": 8248.83,
+      "database": {
+        "calls": 400,
+        "rows": 40380,
+        "executionMs": 1267.8418770000126,
+        "planningMs": 0,
+        "bufferHits": 1727280,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "oob",
+      "trial": 1,
+      "mode": "complete-list",
+      "p50Ms": 402.7786780000024,
+      "p95Ms": 637.563215000002,
+      "p99Ms": 1876.9750899999926,
+      "decodedRecords": 40000,
+      "idArrayBytes": 417820,
+      "clientCpuMs": 11623.441,
+      "database": {
+        "calls": 20,
+        "rows": 40000,
+        "executionMs": 192.08244000000013,
+        "planningMs": 0,
+        "bufferHits": 125660,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "oob",
+      "trial": 1,
+      "mode": "first-page",
+      "p50Ms": 35.579392999992706,
+      "p95Ms": 59.2758429999958,
+      "p99Ms": 68.66926300000341,
+      "decodedRecords": 2020,
+      "idArrayBytes": 17820,
+      "clientCpuMs": 762.651,
+      "database": {
+        "calls": 20,
+        "rows": 2020,
+        "executionMs": 25.416488999999274,
+        "planningMs": 0,
+        "bufferHits": 47900,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "oob",
+      "trial": 1,
+      "mode": "last-page",
+      "p50Ms": 41.69286200001079,
+      "p95Ms": 52.29520899998897,
+      "p99Ms": 87.38834399999178,
+      "decodedRecords": 2000,
+      "idArrayBytes": 22020,
+      "clientCpuMs": 759.391,
+      "database": {
+        "calls": 20,
+        "rows": 2000,
+        "executionMs": 147.76970299999812,
+        "planningMs": 0,
+        "bufferHits": 201080,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "oob",
+      "trial": 1,
+      "mode": "full-traversal",
+      "p50Ms": 586.5324530000071,
+      "p95Ms": 745.7921919999935,
+      "p99Ms": 830.661884000001,
+      "decodedRecords": 40380,
+      "idArrayBytes": 417820,
+      "clientCpuMs": 10936.509,
+      "database": {
+        "calls": 400,
+        "rows": 40380,
+        "executionMs": 1868.6786069999907,
+        "planningMs": 0,
+        "bufferHits": 2490640,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "oob",
+      "trial": 2,
+      "mode": "full-traversal",
+      "p50Ms": 447.8019290000084,
+      "p95Ms": 605.3008330000011,
+      "p99Ms": 1373.5280839999905,
+      "decodedRecords": 40380,
+      "idArrayBytes": 417820,
+      "clientCpuMs": 8920.713,
+      "database": {
+        "calls": 400,
+        "rows": 40380,
+        "executionMs": 1648.756156000005,
+        "planningMs": 0,
+        "bufferHits": 2490640,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "oob",
+      "trial": 2,
+      "mode": "last-page",
+      "p50Ms": 46.347838999994565,
+      "p95Ms": 122.05405900000187,
+      "p99Ms": 1269.600774999999,
+      "decodedRecords": 2000,
+      "idArrayBytes": 22020,
+      "clientCpuMs": 2511.433,
+      "database": {
+        "calls": 20,
+        "rows": 2000,
+        "executionMs": 186.91803100000106,
+        "planningMs": 0,
+        "bufferHits": 201080,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "oob",
+      "trial": 2,
+      "mode": "first-page",
+      "p50Ms": 39.92359600000782,
+      "p95Ms": 54.05019800001173,
+      "p99Ms": 86.15010499999335,
+      "decodedRecords": 2020,
+      "idArrayBytes": 17820,
+      "clientCpuMs": 860.201,
+      "database": {
+        "calls": 20,
+        "rows": 2020,
+        "executionMs": 26.514548000001014,
+        "planningMs": 0,
+        "bufferHits": 47900,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "oob",
+      "trial": 2,
+      "mode": "complete-list",
+      "p50Ms": 600.5653549999988,
+      "p95Ms": 714.8657329999987,
+      "p99Ms": 1641.9671600000001,
+      "decodedRecords": 40000,
+      "idArrayBytes": 417820,
+      "clientCpuMs": 13973.28,
+      "database": {
+        "calls": 20,
+        "rows": 40000,
+        "executionMs": 217.89867699999922,
+        "planningMs": 0,
+        "bufferHits": 125660,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "oob",
+      "trial": 3,
+      "mode": "complete-list",
+      "p50Ms": 585.4808149999881,
+      "p95Ms": 671.5836499999859,
+      "p99Ms": 764.066290000017,
+      "decodedRecords": 40000,
+      "idArrayBytes": 417820,
+      "clientCpuMs": 12352.207,
+      "database": {
+        "calls": 20,
+        "rows": 40000,
+        "executionMs": 195.43819099999928,
+        "planningMs": 0,
+        "bufferHits": 125660,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "oob",
+      "trial": 3,
+      "mode": "first-page",
+      "p50Ms": 27.110691999987466,
+      "p95Ms": 38.41187300000456,
+      "p99Ms": 43.25236099999165,
+      "decodedRecords": 2020,
+      "idArrayBytes": 17820,
+      "clientCpuMs": 597.161,
+      "database": {
+        "calls": 20,
+        "rows": 2020,
+        "executionMs": 23.86716599999818,
+        "planningMs": 0,
+        "bufferHits": 47900,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "oob",
+      "trial": 3,
+      "mode": "last-page",
+      "p50Ms": 29.350063000019873,
+      "p95Ms": 40.90706900000805,
+      "p99Ms": 42.436109000002034,
+      "decodedRecords": 2000,
+      "idArrayBytes": 22020,
+      "clientCpuMs": 500.113,
+      "database": {
+        "calls": 20,
+        "rows": 2000,
+        "executionMs": 156.5999559999982,
+        "planningMs": 0,
+        "bufferHits": 201080,
+        "bufferReads": 0
+      }
+    },
+    {
+      "kind": "oob",
+      "trial": 3,
+      "mode": "full-traversal",
+      "p50Ms": 582.8005709999998,
+      "p95Ms": 848.9490229999938,
+      "p99Ms": 1972.7127289999917,
+      "decodedRecords": 40380,
+      "idArrayBytes": 417820,
+      "clientCpuMs": 12444.026,
+      "database": {
+        "calls": 400,
+        "rows": 40380,
+        "executionMs": 1952.5920649999935,
+        "planningMs": 0,
+        "bufferHits": 2490640,
+        "bufferReads": 0
+      }
+    }
+  ]
+}

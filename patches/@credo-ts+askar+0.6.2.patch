@@ -1,0 +1,29 @@
+diff --git a/node_modules/@credo-ts/askar/build/AskarStorageConfig.d.mts b/node_modules/@credo-ts/askar/build/AskarStorageConfig.d.mts
+index 9bb0452..23670ea 100644
+--- a/node_modules/@credo-ts/askar/build/AskarStorageConfig.d.mts
++++ b/node_modules/@credo-ts/askar/build/AskarStorageConfig.d.mts
+@@ -1,6 +1,8 @@
+ //#region src/AskarStorageConfig.d.ts
+ interface AskarPostgresConfig {
+   host: string;
++  /** Prepared statements cached per connection. Zero disables caching. Omit to retain the native default. */
++  statementCacheCapacity?: number;
+   connectTimeout?: number;
+   idleTimeout?: number;
+   maxConnections?: number;
+diff --git a/node_modules/@credo-ts/askar/build/utils/askarStoreConfig.mjs b/node_modules/@credo-ts/askar/build/utils/askarStoreConfig.mjs
+index 42f910c..1ddc93b 100644
+--- a/node_modules/@credo-ts/askar/build/utils/askarStoreConfig.mjs
++++ b/node_modules/@credo-ts/askar/build/utils/askarStoreConfig.mjs
+@@ -21,6 +21,11 @@ const uriFromStoreConfig = (storeConfig, credoDataPath) => {
+ 	}
+ 	else if (isAskarPostgresStorageConfig(database)) {
+ 		if (!database.config || !database.credentials) throw new AskarError$1("Invalid storage configuration for postgres wallet");
++		if (database.config.statementCacheCapacity !== void 0) {
++			const capacity = database.config.statementCacheCapacity;
++			if (!Number.isInteger(capacity) || capacity < 0 || capacity > 10000) throw new AskarError$1("Postgres statementCacheCapacity must be an integer from 0 through 10000");
++			urlParams.push(`statement-cache-capacity=${capacity}`);
++		}
+ 		if (database.config.connectTimeout !== void 0) urlParams.push(`connect_timeout=${encodeURIComponent(database.config.connectTimeout)}`);
+ 		if (database.config.idleTimeout !== void 0) urlParams.push(`idle_timeout=${encodeURIComponent(database.config.idleTimeout)}`);
+ 		if (database.credentials.adminAccount !== void 0) urlParams.push(`admin_account=${encodeURIComponent(database.credentials.adminAccount)}`);

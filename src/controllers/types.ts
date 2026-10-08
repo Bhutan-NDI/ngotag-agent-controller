@@ -138,6 +138,7 @@ export interface CreateOfferOptions {
   comment?: string
   goalCode?: string
   goal?: string
+  parentThreadId?: string
 }
 
 type CredentialFormatType =
@@ -235,6 +236,10 @@ export interface ReceiveInvitationProps extends ReceiveOutOfBandInvitationProps 
 
 export interface ReceiveInvitationByUrlProps extends ReceiveOutOfBandInvitationProps {
   invitationUrl: string
+  // Not part of ReceiveOutOfBandInvitationConfig -- pulled out of the config before it reaches
+  // Credo's own receiveInvitationFromUrl, then used only to tag the resulting connection
+  // afterward (addConnectionType). See receiveInvitationFromUrl below.
+  connectionType?: string
 }
 
 export interface AcceptInvitationConfig {
@@ -330,6 +335,8 @@ export interface DidCreate {
   didDocument?: DidDocument
   privatekey?: string
   endpoint?: string
+  // Marks the newly created DID as this wallet's default issuer DID (see DidController.writeDid).
+  isDefault?: boolean
 }
 
 export interface CreateTenantOptions {
@@ -452,6 +459,20 @@ export interface jsonLdCredentialOptions {
   type: Array<string>
   credentialSubject: SingleOrArray<JsonObject>
   proofType: string
+  // ISO 8601; defaulted server-side when omitted (W3cCredential requires a real date once signed).
+  expirationDate?: string
+}
+
+// Runtime shape of createW3cSelfAttestedCredential's response: JsonTransformer.toJSON() of the
+// stored W3cCredentialRecord, plus a back-compat `credential` field for consumers reading it
+// directly. Index signature covers Credo's own dynamic tag fields (issuerId, subjectIds, etc.).
+export interface SelfAttestedW3cCredentialResponse {
+  id: string
+  createdAt: string
+  // [{ credential }] wrapper, not credential objects directly; credential can be a JWT string for ClaimFormat.JwtVc.
+  credentialInstances: Array<{ credential: JsonObject | string }>
+  credential: JsonObject
+  [key: string]: unknown
 }
 
 export interface credentialPayloadToSign {
@@ -528,6 +549,8 @@ export const supportedKeyTypesDID: Record<DidMethod, readonly { kty: string; crv
   ],
 
   [DidMethod.Polygon]: [{ kty: 'EC', crv: 'secp256k1' }],
+
+  [DidMethod.Ethereum]: [{ kty: 'EC', crv: 'secp256k1' }],
 }
 
 export type Curve = 'Ed25519' | 'X25519' | 'P-256' | 'P-384' | 'P-521' | 'secp256k1'

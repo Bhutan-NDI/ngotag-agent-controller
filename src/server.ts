@@ -6,8 +6,7 @@ import type { ApiError } from './errors'
 import type { ServerConfig } from './utils/ServerConfig'
 import type { Response as ExResponse, Request as ExRequest, NextFunction, ErrorRequestHandler } from 'express'
 
-import { Agent } from '@credo-ts/core'
-import { TenantAgent } from '@credo-ts/tenants'
+import { Agent, type Logger } from '@credo-ts/core'
 import bodyParser from 'body-parser'
 import cors from 'cors'
 import dotenv from 'dotenv'
@@ -19,7 +18,9 @@ import { ValidateError } from 'tsoa'
 import { container } from 'tsyringe'
 
 import { setDynamicApiKey } from './authentication'
+import { mountBaseMiddleware } from './baseMiddleware'
 import { ErrorMessages } from './enums'
+import { createErrorHandler } from './errorHandler'
 import { BaseError } from './errors/errors'
 import { basicMessageEvents } from './events/BasicMessageEvents'
 import { connectionEvents } from './events/ConnectionEvents'
@@ -31,7 +32,10 @@ import { openId4VcIssuanceSessionEvents } from './events/openId4VcIssuanceSessio
 import { openId4VcVerificationSessionEvents } from './events/openId4VcVerificationSessionEvents'
 import { RegisterRoutes } from './routes/routes'
 import { SecurityMiddleware } from './securityMiddleware'
+import { toSerializableConfig } from './utils/ServerConfig'
 import { validateAuthConfig } from './utils/auth'
+import { validateApiKey } from './utils/config'
+import { tenantSessionLifecycle } from './utils/tenantSessionLifecycle'
 
 dotenv.config()
 
@@ -40,6 +44,9 @@ export const setupServer = async (
   config: ServerConfig,
   apiKey?: string,
 ) => {
+  // Before any side effect: a caught-and-retried boot would otherwise duplicate registrations.
+  const validatedApiKey = validateApiKey(apiKey)
+
   if (process.env.OTEL_ENABLED === 'true') {
     await otelSDK.start()
     agent.config.logger.info('OpenTelemetry SDK started')
@@ -48,10 +55,12 @@ export const setupServer = async (
   }
   validateAuthConfig()
   container.registerInstance(Agent, agent as Agent)
-  fs.writeFileSync('config.json', JSON.stringify(config, null, 2))
+  fs.writeFileSync('config.json', JSON.stringify(toSerializableConfig(config), null, 2))
 
   const app = config.app ?? express()
-  if (config.cors) app.use(cors())
+  if (config.cors) {
+    app.use(cors({ exposedHeaders: ['X-Has-More', 'X-Page-Limit', 'X-Page-Offset', 'X-Next-Offset', 'Retry-After'] }))
+  }
 
   if (config.socketServer || config.webhookUrl) {
     questionAnswerEvents(agent, config)
@@ -64,17 +73,9 @@ export const setupServer = async (
     reuseConnectionEvents(agent, config)
   }
 
-  // Use body parser to read sent json payloads
-  app.use(
-    bodyParser.urlencoded({
-      extended: true,
-      limit: process.env.APP_URL_ENCODED_BODY_SIZE ?? '5mb',
-    }),
-  )
+  setDynamicApiKey(validatedApiKey)
 
-  setDynamicApiKey(apiKey ? apiKey : '')
-
-  app.use(bodyParser.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
+  mountBaseMiddleware(app)
   app.use('/docs', serve, (_req: ExRequest, res: ExResponse, next: NextFunction) => {
     import('./routes/swagger.json')
       .then((swaggerJson) => {
@@ -82,15 +83,6 @@ export const setupServer = async (
       })
       .catch(next)
   })
-  const windowMs = Number(process.env.windowMs)
-  const maxRateLimit = Number(process.env.maxRateLimit)
-  const limiter = rateLimit({
-    windowMs, // 1 second
-    max: maxRateLimit, // max 800 requests per second
-  })
-
-  // apply rate limiter to all requests
-  app.use(limiter)
 
   // Note: Having used it above, redirects accordingly
   app.use((req, res, next) => {
@@ -101,57 +93,13 @@ export const setupServer = async (
     next()
   })
 
-  app.use(async (req: ExRequest, res: ExResponse, next: NextFunction) => {
-    res.on('finish', async () => {
-      await endTenantSessionIfActive(req)
-    })
-    next()
-  })
+  app.use(tenantSessionLifecycle)
 
   const securityMiddleware = new SecurityMiddleware()
   app.use(securityMiddleware.use)
   RegisterRoutes(app)
 
-  app.use((async (err: unknown, req: ExRequest, res: ExResponse, next: NextFunction): Promise<ExResponse | void> => {
-    // End tenant session if active
-    if (err instanceof ValidateError) {
-      agent.config.logger.warn(`Caught Validation Error for ${req.path}:`, err.fields)
-      return res.status(422).json({
-        message: 'Validation Failed',
-        details: err?.fields,
-      })
-    } else if (err instanceof BaseError) {
-      return res.status(err.statusCode).json({
-        message: err.message,
-      })
-    } else if (err instanceof Error) {
-      // Extend the Error type with custom properties
-      const error = err as Error & { statusCode?: number; status?: number; stack?: string }
-      if (error.status === 401) {
-        return res.status(401).json({
-          message: `Unauthorized`,
-          details: err.message !== ErrorMessages.Unauthorized ? err.message : undefined,
-        } satisfies ApiError)
-      }
-      const statusCode = error.statusCode || error.status || 500
-      return res.status(statusCode).json({
-        message: error.message || 'Internal Server Error',
-      })
-    }
-    next()
-  }) as ErrorRequestHandler)
+  app.use(createErrorHandler(agent.config.logger))
 
   return app
-}
-
-async function endTenantSessionIfActive(request: ExRequest) {
-  if ('agent' in request) {
-    const agent = request?.agent
-    if (agent instanceof TenantAgent) {
-      agent.config.logger.debug(`Ending tenant session for tenant:: ${agent.context.contextCorrelationId}`)
-      // TODO: we can also not wait for the ending of session
-      // This can further imporve the response time
-      await agent.endSession()
-    }
-  }
 }

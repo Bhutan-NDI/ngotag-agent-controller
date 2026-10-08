@@ -23,7 +23,11 @@
       "environment": [
         {
           "name": "AFJ_REST_LOG_LEVEL",
-          "value": "1"
+          "value": "3"
+        },
+        {
+          "name": "LOG_FORMAT",
+          "value": "json"
         }
       ],
       "environmentFiles": [
@@ -40,7 +44,17 @@
         }
       ],
       "volumesFrom": [],
-      "ulimits": []
+      "ulimits": [],
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "node -e \"require('http').get('http://127.0.0.1:8001/health', (r) => process.exit(200 === r.statusCode ? 0 : 1)).on('error', () => process.exit(1))\""
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 180
+      }
     }
   ],
   "executionRoleArn": "arn:aws:iam::${ACCOUNT_ID}:role/ecsTaskExecutionRole",

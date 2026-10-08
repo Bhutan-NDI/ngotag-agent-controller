@@ -2451,6 +2451,101 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"WalletPortabilityJobStatus": {
+				"enum": [
+					"pending",
+					"in-progress",
+					"completed",
+					"failed"
+				],
+				"type": "string"
+			},
+			"ExportWalletResult": {
+				"properties": {
+					"jobId": {
+						"type": "string"
+					},
+					"status": {
+						"$ref": "#/components/schemas/WalletPortabilityJobStatus"
+					}
+				},
+				"required": [
+					"jobId",
+					"status"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"WalletPortabilityJobType": {
+				"enum": [
+					"export",
+					"import"
+				],
+				"type": "string"
+			},
+			"WalletPortabilityJobRecord": {
+				"properties": {
+					"jobId": {
+						"type": "string"
+					},
+					"tenantId": {
+						"type": "string"
+					},
+					"type": {
+						"$ref": "#/components/schemas/WalletPortabilityJobType"
+					},
+					"status": {
+						"$ref": "#/components/schemas/WalletPortabilityJobStatus"
+					},
+					"createdAt": {
+						"type": "string"
+					},
+					"updatedAt": {
+						"type": "string"
+					},
+					"s3Key": {
+						"type": "string"
+					},
+					"checksum": {
+						"type": "string"
+					},
+					"downloadUrl": {
+						"type": "string"
+					},
+					"backupProfile": {
+						"type": "string"
+					},
+					"error": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"jobId",
+					"tenantId",
+					"type",
+					"status",
+					"createdAt",
+					"updatedAt"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"ImportWalletResult": {
+				"properties": {
+					"jobId": {
+						"type": "string"
+					},
+					"status": {
+						"$ref": "#/components/schemas/WalletPortabilityJobStatus"
+					}
+				},
+				"required": [
+					"jobId",
+					"status"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"QuestionAnswerRole": {
 				"enum": [
 					"questioner",
@@ -2987,6 +3082,9 @@
 					},
 					"invitationUrl": {
 						"type": "string"
+					},
+					"connectionType": {
+						"type": "string"
 					}
 				},
 				"required": [
@@ -3037,9 +3135,6 @@
 					"completed"
 				],
 				"type": "string"
-			},
-			"DidCommConnectionRecord": {
-				"$ref": "#/components/schemas/Record_string.unknown_"
 			},
 			"DidResolutionMetadata": {
 				"properties": {
@@ -3166,6 +3261,9 @@
 					},
 					"endpoint": {
 						"type": "string"
+					},
+					"isDefault": {
+						"type": "boolean"
 					}
 				},
 				"required": [
@@ -3590,6 +3688,101 @@
 				"required": [
 					"credential",
 					"proof"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"SelfAttestedW3cCredentialResponse": {
+				"properties": {
+					"id": {
+						"type": "string"
+					},
+					"createdAt": {
+						"type": "string"
+					},
+					"credentialInstances": {
+						"items": {
+							"properties": {
+								"credential": {
+									"anyOf": [
+										{
+											"$ref": "#/components/schemas/JsonObject"
+										},
+										{
+											"type": "string"
+										}
+									]
+								}
+							},
+							"required": [
+								"credential"
+							],
+							"type": "object"
+						},
+						"type": "array"
+					},
+					"credential": {
+						"$ref": "#/components/schemas/JsonObject"
+					}
+				},
+				"required": [
+					"id",
+					"createdAt",
+					"credentialInstances",
+					"credential"
+				],
+				"type": "object",
+				"additionalProperties": {}
+			},
+			"SingleOrArray_JsonObject_": {
+				"anyOf": [
+					{
+						"$ref": "#/components/schemas/JsonObject"
+					},
+					{
+						"items": {
+							"$ref": "#/components/schemas/JsonObject"
+						},
+						"type": "array"
+					}
+				]
+			},
+			"jsonLdCredentialOptions": {
+				"properties": {
+					"@context": {
+						"items": {
+							"anyOf": [
+								{
+									"type": "string"
+								},
+								{
+									"$ref": "#/components/schemas/JsonObject"
+								}
+							]
+						},
+						"type": "array"
+					},
+					"type": {
+						"items": {
+							"type": "string"
+						},
+						"type": "array"
+					},
+					"credentialSubject": {
+						"$ref": "#/components/schemas/SingleOrArray_JsonObject_"
+					},
+					"proofType": {
+						"type": "string"
+					},
+					"expirationDate": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"@context",
+					"type",
+					"credentialSubject",
+					"proofType"
 				],
 				"type": "object",
 				"additionalProperties": false
@@ -4158,19 +4351,6 @@
 				"type": "object",
 				"additionalProperties": false
 			},
-			"SingleOrArray_JsonObject_": {
-				"anyOf": [
-					{
-						"$ref": "#/components/schemas/JsonObject"
-					},
-					{
-						"items": {
-							"$ref": "#/components/schemas/JsonObject"
-						},
-						"type": "array"
-					}
-				]
-			},
 			"JsonCredential": {
 				"properties": {
 					"@context": {
@@ -4471,6 +4651,9 @@
 						"type": "string"
 					},
 					"goal": {
+						"type": "string"
+					},
+					"parentThreadId": {
 						"type": "string"
 					}
 				},
@@ -5210,6 +5393,14 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"Record_string.string_": {
+				"properties": {},
+				"additionalProperties": {
+					"type": "string"
+				},
+				"type": "object",
+				"description": "Construct a type with a set of properties K of type T"
+			},
 			"ProofFormatDataMessagePayload__40_LegacyIndyDidCommProofFormat-or-AnonCredsDidCommProofFormat-or-DidCommDifPresentationExchangeProofFormat_41_-Array.proposal_": {
 				"properties": {},
 				"type": "object",
@@ -5238,6 +5429,23 @@
 					}
 				},
 				"type": "object"
+			},
+			"DidCommProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_": {
+				"properties": {},
+				"type": "object",
+				"description": "Get the input or output for the getCredentialsForRequest and selectCredentialsForRequest method with specific format data"
+			},
+			"GetCredentialsForProofRequestReturn__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_": {
+				"properties": {
+					"proofFormats": {
+						"$ref": "#/components/schemas/DidCommProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_"
+					}
+				},
+				"required": [
+					"proofFormats"
+				],
+				"type": "object",
+				"additionalProperties": false
 			},
 			"OpenId4VcVerifierRecord": {
 				"$ref": "#/components/schemas/Record_string.unknown_",
@@ -7453,6 +7661,437 @@
 				]
 			}
 		},
+		"/multi-tenancy/export/{tenantId}": {
+			"post": {
+				"operationId": "ExportTenantWallet",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ExportWalletResult"
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Tenant not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "A wallet portability job is already running for this tenant",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Export a tenant's (cloud) wallet — native replacement for the legacy per-request raw-NATS\ncall to the separate askar-wallet-tools Python service. Async job: returns a job id\nimmediately, the actual export runs in the background — poll via the status endpoint below.\n\n`passKey` is caller-supplied (matches the legacy contract) and protects the exported\nartifact — the caller must retain it to import the artifact later; it is never generated\nor persisted server-side.\n\nReturns jobId/status; status is always 'pending' on this response.",
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"walletID": {
+										"type": "string"
+									},
+									"passKey": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"passKey"
+								],
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/multi-tenancy/export/{tenantId}/status/{jobId}": {
+			"get": {
+				"operationId": "GetExportWalletStatus",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/WalletPortabilityJobRecord"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Poll the status of an export job started via POST /export/:tenantId. On completion, the\nresponse carries a short-lived pre-signed S3 URL and the artifact's SHA-256 checksum.",
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "jobId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"/multi-tenancy/import/{tenantId}": {
+			"post": {
+				"operationId": "ImportTenantWallet",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ImportWalletResult"
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Tenant not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "A wallet portability job is already running for this tenant",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Import a tenant's (cloud) wallet from a prior export. Async job: returns a job id\nimmediately — poll via the status endpoint below.\n\nThe tenant's current profile is never deleted outright: it's renamed aside (see\n`backupProfile` on the completed job) before the imported profile takes its place, so a bad\nimport always leaves a recovery path. checksum is verified before anything live is touched.\n\nA second export/import already running for the same tenant is rejected with 409 — but that\nguards only against a second portability job, not ordinary tenant traffic: the tenant's\nprofile does not exist between the rename and the copy completing, so a normal REST/DIDComm\nrequest landing in that window fails outright rather than queuing or waiting. See\nWalletPortabilityService.runImport's docblock; not yet resolved.\n\nReturns jobId/status; status is always 'pending' on this response.",
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"checksum": {
+										"type": "string"
+									},
+									"passKey": {
+										"type": "string"
+									},
+									"exportUrl": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"checksum",
+									"passKey",
+									"exportUrl"
+								],
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/multi-tenancy/import/{tenantId}/status/{jobId}": {
+			"get": {
+				"operationId": "GetImportWalletStatus",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/WalletPortabilityJobRecord"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Poll the status of an import job started via POST /import/:tenantId. On completion, the\nresponse carries the name the tenant's pre-import profile was renamed to (backupProfile) —\nit is never deleted automatically.",
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "jobId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
 		"/didcomm/question-answer": {
 			"get": {
 				"operationId": "GetQuestionAnswerRecords",
@@ -7761,6 +8400,26 @@
 						"required": false,
 						"schema": {
 							"$ref": "#/components/schemas/RecordId"
+						}
+					},
+					{
+						"description": "Opt into live pagination (1–1000). Omit both paging parameters for the complete legacy list.",
+						"in": "query",
+						"name": "limit",
+						"required": false,
+						"schema": {
+							"format": "double",
+							"type": "number"
+						}
+					},
+					{
+						"description": "Zero-based offset, used with limit. Read X-Has-More and X-Next-Offset headers.\nPages use internal insertion order. Concurrent deletion or insertion can change traversal;\nuse the complete-list endpoint when a single-query view is required. Deep offsets cost more.",
+						"in": "query",
+						"name": "offset",
+						"required": false,
+						"schema": {
+							"format": "double",
+							"type": "number"
 						}
 					}
 				]
@@ -8771,10 +9430,7 @@
 						"content": {
 							"application/json": {
 								"schema": {
-									"items": {
-										"$ref": "#/components/schemas/DidCommConnectionRecord"
-									},
-									"type": "array"
+									"$ref": "#/components/schemas/DidCommPlaintextMessage"
 								}
 							}
 						}
@@ -8783,7 +9439,13 @@
 				"tags": [
 					"DIDComm - Connections"
 				],
-				"security": [],
+				"security": [
+					{
+						"jwt": [
+							"skip"
+						]
+					}
+				],
 				"parameters": [
 					{
 						"in": "path",
@@ -8988,7 +9650,16 @@
 						]
 					}
 				],
-				"parameters": []
+				"parameters": [
+					{
+						"in": "query",
+						"name": "isDefault",
+						"required": false,
+						"schema": {
+							"type": "boolean"
+						}
+					}
+				]
 			}
 		},
 		"/v1/orgs/{orgId}/token": {
@@ -9010,7 +9681,13 @@
 				"tags": [
 					"Auth"
 				],
-				"security": [],
+				"security": [
+					{
+						"jwt": [
+							"skip"
+						]
+					}
+				],
 				"parameters": [
 					{
 						"in": "path",
@@ -9106,7 +9783,7 @@
 						}
 					}
 				},
-				"description": "Verify an Ed25519 signature against the key resolved from the holder's DID.",
+				"description": "Verify a DID-bound challenge-response signature.\n\nThe signing algorithm is determined by the key type in the holder's DID Document\n(e.g. EdDSA for Ed25519 did:key, ES256 for P-256) — the endpoint is not\nrestricted to Ed25519. Any algorithm supported by the resolved authentication\nkey is accepted.",
 				"tags": [
 					"Agent"
 				],
@@ -9171,6 +9848,46 @@
 									},
 									{}
 								]
+							}
+						}
+					}
+				}
+			}
+		},
+		"/agent/credential/self-attested": {
+			"post": {
+				"operationId": "CreateW3cSelfAttestedCredential",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/SelfAttestedW3cCredentialResponse"
+								}
+							}
+						}
+					}
+				},
+				"description": "Create and store a self-attested W3C JSON-LD credential — the agent issues a credential to\nitself using its own default DID, rather than an external issuer signing over a subject DID.\n\nLives on request.agent, not /multi-tenancy/:tenantId + withTenantAgent(): the auth layer\nalready resolves the tenant agent per request for a tenant token, matching verifyCredential/\nverify above.\n\ncredentialSubject's claims are nested under a `claims` key — W3cCredentialSubject's\nconstructor only reads options.id/options.claims, so spreading claims at the top level would\nsilently drop them. The response restores a top-level `credential` field for back-compat,\nsince 0.6.2's W3cCredentialRecord otherwise only exposes `credentialInstances`.",
+				"tags": [
+					"Agent"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/jsonLdCredentialOptions"
 							}
 						}
 					}
@@ -9645,6 +10362,36 @@
 						}
 					}
 				]
+			},
+			"delete": {
+				"operationId": "DeleteW3cById",
+				"responses": {
+					"204": {
+						"description": "No content"
+					}
+				},
+				"description": "Delete a W3C credential record by id. Ported from the legacy\n`/multi-tenancy/credential/w3c/:credentialRecordId/:tenantId` endpoint -- this agent's\ncontract never had an equivalent under `/didcomm/credentials`.",
+				"tags": [
+					"DIDComm - Credentials"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
 			}
 		},
 		"/didcomm/credentials/{credentialRecordId}": {
@@ -9687,6 +10434,36 @@
 					}
 				},
 				"description": "Retrieve credential exchange record by credential record id",
+				"tags": [
+					"DIDComm - Credentials"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "credentialRecordId",
+						"required": true,
+						"schema": {
+							"$ref": "#/components/schemas/RecordId"
+						}
+					}
+				]
+			},
+			"delete": {
+				"operationId": "DeleteById",
+				"responses": {
+					"204": {
+						"description": "No content"
+					}
+				},
+				"description": "Delete a credential exchange record (and, by default, its associated stored credential) by\nid. Ported from the legacy `/multi-tenancy/credential/:credentialRecordId/:tenantId`\nendpoint -- this agent's contract never had an equivalent under `/didcomm/credentials`.",
 				"tags": [
 					"DIDComm - Credentials"
 				],
@@ -9915,6 +10692,9 @@
 										"invitationDid": {
 											"type": "string"
 										},
+										"credentialRequestParentThId": {
+											"type": "string"
+										},
 										"credentialRequestThId": {
 											"type": "string"
 										},
@@ -9936,6 +10716,7 @@
 									},
 									"required": [
 										"invitationDid",
+										"credentialRequestParentThId",
 										"credentialRequestThId",
 										"credentialExchangeRecordId",
 										"outOfBandRecordId",
@@ -10255,6 +11036,26 @@
 						"required": false,
 						"schema": {
 							"type": "string"
+						}
+					},
+					{
+						"description": "Opt into live pagination (1–1000). Omit both paging parameters for the complete legacy list.",
+						"in": "query",
+						"name": "limit",
+						"required": false,
+						"schema": {
+							"format": "double",
+							"type": "number"
+						}
+					},
+					{
+						"description": "Zero-based offset, used with limit. Read X-Has-More and X-Next-Offset headers.\nPages use internal insertion order. Concurrent deletion or insertion can change traversal;\nuse the complete-list endpoint when a single-query view is required. Deep offsets cost more.",
+						"in": "query",
+						"name": "offset",
+						"required": false,
+						"schema": {
+							"format": "double",
+							"type": "number"
 						}
 					}
 				]
@@ -10623,6 +11424,94 @@
 				}
 			}
 		},
+		"/didcomm/proofs/{proofRecordId}/accept-request-with-cred": {
+			"post": {
+				"operationId": "AcceptRequestWithCred",
+				"responses": {
+					"200": {
+						"description": "ProofRecord",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/Record_string.unknown_"
+								},
+								"examples": {
+									"Example 1": {
+										"value": {
+											"metadata": {},
+											"id": "821f9b26-ad04-4f56-89b6-e2ef9c72b36e",
+											"createdAt": "2022-01-01T00:00:00.000Z",
+											"connectionId": "2aecf74c-3073-4f98-9acb-92415d096834",
+											"threadId": "0019d466-5eea-4269-8c40-031b4896c5b7",
+											"protocolVersion": "v1"
+										}
+									}
+								}
+							}
+						}
+					}
+				},
+				"description": "Accept a presentation request as prover, submitting the caller's own credential choice per\ninput descriptor instead of auto-selecting (see acceptRequest above). Ported from the legacy\n`/multi-tenancy/proofs/accept-request-with-cred/:tenantId` endpoint -- this agent's contract\nnever had an equivalent under `/didcomm/proofs`. Real chosen-credential matching is required\nsince the legacy version only forwarded a bare `credentialRecord`; the currently-installed\nCredo expects the full `SubmissionEntryCredential` (with `claimFormat`) in its place.",
+				"tags": [
+					"DIDComm - Proofs"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "proofRecordId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"proofFormats": {
+										"properties": {
+											"presentationExchange": {
+												"properties": {
+													"credentials": {
+														"$ref": "#/components/schemas/Record_string.string_"
+													}
+												},
+												"required": [
+													"credentials"
+												],
+												"type": "object"
+											}
+										},
+										"required": [
+											"presentationExchange"
+										],
+										"type": "object"
+									},
+									"comment": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"proofFormats"
+								],
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
 		"/didcomm/proofs/{proofRecordId}/accept-presentation": {
 			"post": {
 				"operationId": "AcceptPresentation",
@@ -10717,6 +11606,438 @@
 					{
 						"in": "path",
 						"name": "proofRecordId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"/didcomm/proofs/{proofRecordId}/decline-request": {
+			"post": {
+				"operationId": "DeclineRequest",
+				"responses": {
+					"200": {
+						"description": "ProofRecord",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/Record_string.unknown_"
+								},
+								"examples": {
+									"Example 1": {
+										"value": {
+											"metadata": {},
+											"id": "821f9b26-ad04-4f56-89b6-e2ef9c72b36e",
+											"createdAt": "2022-01-01T00:00:00.000Z",
+											"connectionId": "2aecf74c-3073-4f98-9acb-92415d096834",
+											"threadId": "0019d466-5eea-4269-8c40-031b4896c5b7",
+											"protocolVersion": "v1"
+										}
+									}
+								}
+							}
+						}
+					}
+				},
+				"description": "Decline a received presentation request as prover, optionally sending a problem-report\nmessage to the verifier associated with the proof record.",
+				"tags": [
+					"DIDComm - Proofs"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "proofRecordId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"problemReportDescription": {
+										"type": "string"
+									},
+									"sendProblemReport": {
+										"type": "boolean"
+									}
+								},
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/didcomm/proofs/{proofRecordId}/credentials-for-request": {
+			"get": {
+				"operationId": "GetCredentialsForRequest",
+				"responses": {
+					"200": {
+						"description": "the credentials satisfying each requested attribute/predicate",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/GetCredentialsForProofRequestReturn__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_"
+								}
+							}
+						}
+					}
+				},
+				"description": "Retrieve the credentials that satisfy a received presentation request, without selecting or\naccepting any of them — lets the holder choose among multiple matching credentials before\naccepting. acceptRequest (above) already auto-selects via selectCredentialsForRequest; this is\nthe corresponding \"let the caller choose first\" read path.",
+				"tags": [
+					"DIDComm - Proofs"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "proofRecordId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"/ethereum/create-keys": {
+			"post": {
+				"operationId": "CreateKeyPair",
+				"responses": {
+					"200": {
+						"description": "Secp256k1KeyPair",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"address": {
+											"type": "string"
+										},
+										"publicKeyBase58": {
+											"type": "string"
+										},
+										"privateKey": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"address",
+										"publicKeyBase58",
+										"privateKey"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Create Ethereum key pair for ethereum DID",
+				"tags": [
+					"Ethereum"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated",
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": []
+			}
+		},
+		"/ethereum/create-schema": {
+			"post": {
+				"operationId": "CreateSchema",
+				"responses": {
+					"200": {
+						"description": "Schema JSON",
+						"content": {
+							"application/json": {
+								"schema": {}
+							}
+						}
+					},
+					"400": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Create ethereum based W3C schema",
+				"tags": [
+					"Ethereum"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"schema": {
+										"properties": {},
+										"additionalProperties": {},
+										"type": "object"
+									},
+									"schemaName": {
+										"type": "string"
+									},
+									"did": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"schema",
+									"schemaName",
+									"did"
+								],
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/ethereum/migrate-schema": {
+			"post": {
+				"operationId": "MigrateSchema",
+				"responses": {
+					"200": {
+						"description": "Schema JSON",
+						"content": {
+							"application/json": {
+								"schema": {}
+							}
+						}
+					},
+					"400": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Migrate W3C based schema to ethereum",
+				"tags": [
+					"Ethereum"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"schemaId": {
+										"type": "string"
+									},
+									"did": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"schemaId",
+									"did"
+								],
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/ethereum/{did}/{schemaId}": {
+			"get": {
+				"operationId": "GetSchemaById",
+				"responses": {
+					"200": {
+						"description": "Schema Object",
+						"content": {
+							"application/json": {
+								"schema": {}
+							}
+						}
+					},
+					"401": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Fetch schema details",
+				"tags": [
+					"Ethereum"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "did",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "schemaId",
 						"required": true,
 						"schema": {
 							"type": "string"
