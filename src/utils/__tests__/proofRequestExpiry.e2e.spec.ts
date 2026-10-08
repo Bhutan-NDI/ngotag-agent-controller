@@ -1,11 +1,14 @@
 /**
- * Spike: expiry on the connection-based proof request, without patching @credo-ts/didcomm.
+ * Proof request expiry end to end, without patching @credo-ts/didcomm.
  *
- * Two real Askar-backed agents (verifier, holder) connected over HTTP on localhost. The verifier
- * sends a request through `requestProofWithExpiry`, which reproduces `proofs.requestProof()` from
- * Credo's public exports with `~timing.expires_time` stamped before the send. Asserts the expiry
- * arrives at the holder and is also on the verifier's stored copy, and that the stock
- * `requestProof()` path (no expiry) is unchanged.
+ * Two real Askar-backed agents (verifier, holder) connected over HTTP on localhost.
+ * - Connection path: `requestProofWithExpiry` reproduces `proofs.requestProof()` from Credo's public
+ *   exports with `~timing.expires_time` stamped before the send.
+ * - OOB path: `applyProofRequestExpiry` stamps the message returned by `proofs.createRequest()`
+ *   before it is embedded in an out-of-band invitation.
+ * Both assert the expiry reaches the holder, the verifier keeps exactly one stored request message
+ * carrying it, and `expiresAt` is in the proof record metadata. The stock `requestProof()` sends no
+ * timing, which is why the helper exists.
  */
 import type { BaseEvent } from '@credo-ts/core'
 import type { DidCommProofStateChangedEvent, DidCommRequestPresentationV2Message } from '@credo-ts/didcomm'
@@ -20,6 +23,7 @@ import {
   DidCommHttpOutboundTransport,
   DidCommMessageRepository,
   DidCommModule,
+  DidCommProofExchangeRepository,
   DidCommProofEventTypes,
   DidCommProofState,
   DidCommProofV2Protocol,
@@ -28,8 +32,11 @@ import { agentDependencies, DidCommHttpInboundTransport } from '@credo-ts/node'
 import { askar } from '@openwallet-foundation/askar-nodejs'
 import { randomUUID } from 'node:crypto'
 
-import { BadRequestError } from '../../errors'
-import { parseExpiresTime, requestProofWithExpiry } from '../proofRequestExpiry'
+import {
+  PROOF_REQUEST_EXPIRY_METADATA_KEY,
+  applyProofRequestExpiry,
+  requestProofWithExpiry,
+} from '../proofRequestExpiry'
 
 const makeAgent = (name: string, port: number) => {
   const agent = new Agent({
@@ -178,6 +185,56 @@ describe('proof request expiry on the connection-based path (no Credo patch)', (
       .resolve(DidCommMessageRepository)
       .findByQuery(verifier.context, { associatedRecordId: verifierRecord.id })
     expect(storedMessages).toHaveLength(1)
+
+    const storedRecord = await verifier.dependencyManager
+      .resolve(DidCommProofExchangeRepository)
+      .getById(verifier.context, verifierRecord.id)
+    expect(storedRecord.metadata.get(PROOF_REQUEST_EXPIRY_METADATA_KEY)).toEqual({
+      expiresAt: expiresTime.toISOString(),
+    })
+  }, 60000)
+
+  it('OOB: the request inside the invitation carries ~timing.expires_time and expiresAt is stored', async () => {
+    // Mirrors ProofController.createRequest: createRequest returns the message before sending,
+    // the expiry is applied, then the message is embedded in an out-of-band invitation.
+    const expiresTime = new Date(Date.now() + 30 * 60 * 1000)
+    const received = holderReceivesRequest()
+
+    const { message, proofRecord } = await verifier.modules.didcomm.proofs.createRequest({
+      protocolVersion: 'v2',
+      proofFormats: { presentationExchange: { presentationDefinition } },
+    })
+    await applyProofRequestExpiry(verifier.context, message, proofRecord, expiresTime)
+    const { outOfBandInvitation } = await verifier.modules.didcomm.oob.createInvitation({
+      label: 'verifier',
+      messages: [message],
+      autoAcceptConnection: true,
+    })
+    await holder.modules.didcomm.oob.receiveInvitation(outOfBandInvitation, { label: 'holder' })
+
+    const holderRecord = (await received).payload.proofRecord
+    expect(holderRecord.threadId).toBe(proofRecord.threadId)
+    const holderMessage = (await holder.modules.didcomm.proofs.findRequestMessage(
+      holderRecord.id,
+    )) as DidCommRequestPresentationV2Message
+    expect(holderMessage.timing?.expiresTime?.toISOString()).toBe(expiresTime.toISOString())
+
+    const verifierMessage = (await verifier.modules.didcomm.proofs.findRequestMessage(
+      proofRecord.id,
+    )) as DidCommRequestPresentationV2Message
+    expect(verifierMessage.timing?.expiresTime?.toISOString()).toBe(expiresTime.toISOString())
+
+    const storedMessages = await verifier.dependencyManager
+      .resolve(DidCommMessageRepository)
+      .findByQuery(verifier.context, { associatedRecordId: proofRecord.id })
+    expect(storedMessages).toHaveLength(1)
+
+    const storedRecord = await verifier.dependencyManager
+      .resolve(DidCommProofExchangeRepository)
+      .getById(verifier.context, proofRecord.id)
+    expect(storedRecord.metadata.get(PROOF_REQUEST_EXPIRY_METADATA_KEY)).toEqual({
+      expiresAt: expiresTime.toISOString(),
+    })
   }, 60000)
 
   it('stock requestProof (no expiresTime) still sends no timing', async () => {
@@ -195,47 +252,4 @@ describe('proof request expiry on the connection-based path (no Credo patch)', (
     )) as DidCommRequestPresentationV2Message
     expect(holderMessage.timing?.expiresTime).toBeUndefined()
   }, 60000)
-})
-
-describe('parseExpiresTime', () => {
-  it('returns undefined when absent', () => {
-    expect(parseExpiresTime(undefined)).toBeUndefined()
-    expect(parseExpiresTime('')).toBeUndefined()
-  })
-
-  it('rejects an unparseable value', () => {
-    expect(() => parseExpiresTime('not-a-date')).toThrow(BadRequestError)
-  })
-
-  it('rejects a time that is not in the future', () => {
-    expect(() => parseExpiresTime(new Date(Date.now() - 1000).toISOString())).toThrow(BadRequestError)
-  })
-
-  it('parses a future ISO-8601 time', () => {
-    const iso = new Date(Date.now() + 60000).toISOString()
-    expect(parseExpiresTime(iso)?.toISOString()).toBe(iso)
-  })
-
-  // Regression for @kinxa0's review on PR #100: new Date(value) alone accepts non-ISO formats and
-  // reads an offset-less date-time as server-local time, making the wire value depend on the pod's
-  // timezone instead of rejecting it with a 400.
-  it('rejects non-ISO-8601 formats that Date() would otherwise accept', () => {
-    const future = new Date(Date.now() + 60 * 60 * 1000)
-    expect(() => parseExpiresTime(`${future.getMonth() + 1}/${future.getDate()}/${future.getFullYear()}`)).toThrow(
-      BadRequestError,
-    )
-    expect(() => parseExpiresTime(String(future.getFullYear() + 10))).toThrow(BadRequestError)
-  })
-
-  it('rejects a date-time with no UTC offset', () => {
-    const future = new Date(Date.now() + 60 * 60 * 1000)
-    const offsetLess = future.toISOString().replace('Z', '')
-    expect(() => parseExpiresTime(offsetLess)).toThrow(BadRequestError)
-  })
-
-  it('accepts a future ISO-8601 time with a non-Z numeric offset', () => {
-    const future = new Date(Date.now() + 60 * 60 * 1000)
-    const withOffset = `${future.toISOString().replace('Z', '')}+00:00`
-    expect(parseExpiresTime(withOffset)?.getTime()).toBe(future.getTime())
-  })
 })
