@@ -18,6 +18,7 @@ import {
   DidCommDidExchangeState,
   DidCommDifPresentationExchangeProofFormatService,
   DidCommHttpOutboundTransport,
+  DidCommMessageRepository,
   DidCommModule,
   DidCommProofEventTypes,
   DidCommProofState,
@@ -71,6 +72,15 @@ const presentationDefinition = {
   ],
 }
 
+// Cleanups for waits that have not settled yet. A wait is often started before the action that
+// should satisfy it; if that action throws, nothing awaits the wait any more, and its pending timer
+// would keep Jest from exiting and later surface as a stray rejection. cancelPendingWaits() runs
+// after every test and after the suite.
+const pendingWaits = new Set<() => void>()
+const cancelPendingWaits = () => {
+  for (const cancel of pendingWaits) cancel()
+}
+
 const waitFor = <T extends BaseEvent>(
   agent: Agent,
   eventType: string,
@@ -78,14 +88,24 @@ const waitFor = <T extends BaseEvent>(
   timeoutMs = 20000,
 ) =>
   new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`timed out waiting for ${eventType}`)), timeoutMs)
-    const listener = (event: BaseEvent) => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let listener: ((event: BaseEvent) => void) | undefined
+    const cleanup = () => {
+      clearTimeout(timer)
+      if (listener) agent.events.off(eventType, listener)
+      pendingWaits.delete(cleanup)
+    }
+    listener = (event: BaseEvent) => {
       const e = event as T
       if (!predicate(e)) return
-      clearTimeout(timer)
-      agent.events.off(eventType, listener)
+      cleanup()
       resolve(e)
     }
+    timer = setTimeout(() => {
+      cleanup()
+      reject(new Error(`timed out waiting for ${eventType}`))
+    }, timeoutMs)
+    pendingWaits.add(cleanup)
     agent.events.on(eventType, listener)
   })
 
@@ -108,7 +128,10 @@ describe('proof request expiry on the connection-based path (no Credo patch)', (
     verifierConnectionId = (await verifierConnected).payload.connectionRecord.id
   }, 60000)
 
+  afterEach(cancelPendingWaits)
+
   afterAll(async () => {
+    cancelPendingWaits()
     await holder.shutdown()
     await verifier.shutdown()
   })
@@ -149,6 +172,12 @@ describe('proof request expiry on the connection-based path (no Credo patch)', (
       verifierRecord.id,
     )) as DidCommRequestPresentationV2Message
     expect(verifierMessage.timing?.expiresTime?.toISOString()).toBe(expiresTime.toISOString())
+
+    // The re-save must update Credo's stored request message, not add a second record for it.
+    const storedMessages = await verifier.dependencyManager
+      .resolve(DidCommMessageRepository)
+      .findByQuery(verifier.context, { associatedRecordId: verifierRecord.id })
+    expect(storedMessages).toHaveLength(1)
   }, 60000)
 
   it('stock requestProof (no expiresTime) still sends no timing', async () => {
