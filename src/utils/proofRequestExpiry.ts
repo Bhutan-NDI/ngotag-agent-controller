@@ -12,10 +12,12 @@ import {
   DidCommMessageRepository,
   DidCommMessageRole,
   DidCommMessageSender,
+  DidCommProofExchangeRepository,
   getOutboundDidCommMessageContext,
 } from '@credo-ts/didcomm'
 
 import { BadRequestError } from '../errors'
+import { buildPurgeConfig, parsePositiveInt } from '../purge/PurgeTypes'
 
 /**
  * Proof-request expiry (RFC 0032 `~timing.expires_time`).
@@ -117,4 +119,109 @@ export const requestProofWithExpiry = async (
   await agentContext.dependencyManager.resolve(DidCommMessageSender).sendMessage(outboundMessageContext)
 
   return proofRecord
+}
+
+/*
+ * Deployment default and bounds for `expiresInSeconds` (phase 2 decision, option c, 2 Oct 2026).
+ *
+ * - DIDCOMM_PROOF_REQUEST_EXPIRY is the deployment default: 1800 s in PROD/STAGE, 300 s in QA/dev.
+ * - Minimum 300 s: delivery time plus a person reading the request.
+ * - Maximum: the purge ceiling. While the cron purge sweeps stale proof exchanges, a request must
+ *   expire before purge can delete it, or the holder never gets the problem-report. Without that
+ *   sweep a fixed 7-day ceiling applies.
+ */
+export const DIDCOMM_PROOF_REQUEST_EXPIRY_ENV = 'DIDCOMM_PROOF_REQUEST_EXPIRY'
+export const DEFAULT_PROOF_REQUEST_EXPIRY_SECONDS = 1_800
+export const MIN_PROOF_REQUEST_EXPIRY_SECONDS = 300
+export const NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS = 7 * 24 * 60 * 60
+// TODO: placeholder margin below PURGE_CRON_ABANDONED_TTL_SECONDS, pending confirmation.
+export const PURGE_CEILING_MARGIN_SECONDS = 60 * 60
+
+/** Record metadata key holding the absolute deadline, for the verifier-side (D4) job. */
+export const PROOF_REQUEST_EXPIRY_METADATA_KEY = 'proofRequestExpiry'
+
+export interface ProofRequestExpiryConfig {
+  defaultSeconds: number
+  maxSeconds: number
+}
+
+/**
+ * Reads the deployment default and the ceiling from the environment. Throws when the default is
+ * not a positive integer or falls outside [MIN, max], so a bad deployment fails at startup instead
+ * of on the first request.
+ */
+export const resolveProofRequestExpiryConfig = (): ProofRequestExpiryConfig => {
+  let defaultSeconds: number
+  try {
+    defaultSeconds = parsePositiveInt(
+      process.env[DIDCOMM_PROOF_REQUEST_EXPIRY_ENV],
+      DIDCOMM_PROOF_REQUEST_EXPIRY_ENV,
+      DEFAULT_PROOF_REQUEST_EXPIRY_SECONDS,
+    )
+  } catch {
+    throw new Error(
+      `${DIDCOMM_PROOF_REQUEST_EXPIRY_ENV} must be a positive integer number of seconds, got: "${process.env[DIDCOMM_PROOF_REQUEST_EXPIRY_ENV]}"`,
+    )
+  }
+
+  const cronConfig = buildPurgeConfig()?.cronConfig
+  const maxSeconds =
+    cronConfig?.enabled && cronConfig.staleProofEnabled
+      ? cronConfig.abandonedTtlSeconds - PURGE_CEILING_MARGIN_SECONDS
+      : NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS
+
+  if (defaultSeconds < MIN_PROOF_REQUEST_EXPIRY_SECONDS || defaultSeconds > maxSeconds) {
+    throw new Error(
+      `${DIDCOMM_PROOF_REQUEST_EXPIRY_ENV}=${defaultSeconds} is out of bounds: it must be between ` +
+        `${MIN_PROOF_REQUEST_EXPIRY_SECONDS} and ${maxSeconds} seconds (the purge ceiling).`,
+    )
+  }
+  return { defaultSeconds, maxSeconds }
+}
+
+let cachedConfig: ProofRequestExpiryConfig | undefined
+
+/** The resolved config, read from the environment once. Called at startup so a bad value fails fast. */
+export const getProofRequestExpiryConfig = (): ProofRequestExpiryConfig => {
+  cachedConfig ??= resolveProofRequestExpiryConfig()
+  return cachedConfig
+}
+
+/** Testing only: forget the cached config so the next call re-reads the environment. */
+export const resetProofRequestExpiryConfig = () => {
+  cachedConfig = undefined
+}
+
+/**
+ * Validates a caller-supplied `expiresInSeconds`; missing or null means the deployment default.
+ * Anything else that is not a whole number within bounds is rejected, never clamped, because
+ * clamping hides caller bugs.
+ */
+export const parseExpiresInSeconds = (value: unknown, config: ProofRequestExpiryConfig): number => {
+  if (value === undefined || value === null) return config.defaultSeconds
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    throw new BadRequestError('expiresInSeconds must be a whole number of seconds')
+  }
+  if (value < MIN_PROOF_REQUEST_EXPIRY_SECONDS || value > config.maxSeconds) {
+    throw new BadRequestError(
+      `expiresInSeconds must be between ${MIN_PROOF_REQUEST_EXPIRY_SECONDS} and ${config.maxSeconds} seconds`,
+    )
+  }
+  return value
+}
+
+/**
+ * Stamps `~timing.expires_time` on the request (see `stampExpiry`) and stores the absolute
+ * deadline in the proof record's metadata as `expiresAt`, so a verifier-side job can find expired
+ * requests without reading every message.
+ */
+export const applyProofRequestExpiry = async (
+  agentContext: AgentContext,
+  message: DidCommMessage,
+  proofRecord: DidCommProofExchangeRecord,
+  expiresTime: Date,
+) => {
+  await stampExpiry(agentContext, message, proofRecord.id, expiresTime)
+  proofRecord.metadata.set(PROOF_REQUEST_EXPIRY_METADATA_KEY, { expiresAt: expiresTime.toISOString() })
+  await agentContext.dependencyManager.resolve(DidCommProofExchangeRepository).update(agentContext, proofRecord)
 }

@@ -178,8 +178,12 @@ export interface CreateProofRequestOobOptions {
   imageUrl?: string
   recipientKey?: string
   invitationDid?: string
-  /** ISO-8601 date-time after which the request expires (sent as `~timing.expires_time`). */
-  expiresTime?: string
+  /**
+   * Seconds until the request expires (sent as `~timing.expires_time`). Whole number, at least
+   * 300, at most the purge ceiling. Omit (or null) for the deployment default,
+   * DIDCOMM_PROOF_REQUEST_EXPIRY.
+   */
+  expiresInSeconds?: number | null
 }
 
 export interface OfferCredentialOptions {

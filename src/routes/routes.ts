@@ -2317,7 +2317,7 @@ const models: TsoaRoute.Models = {
             "imageUrl": {"dataType":"string"},
             "recipientKey": {"dataType":"string"},
             "invitationDid": {"dataType":"string"},
-            "expiresTime": {"dataType":"string"},
+            "expiresInSeconds": {"dataType":"union","subSchemas":[{"dataType":"double"},{"dataType":"enum","enums":[null]}]},
         },
         "additionalProperties": false,
     },
