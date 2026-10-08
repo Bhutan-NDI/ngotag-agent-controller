@@ -5340,6 +5340,10 @@
 					},
 					"willConfirm": {
 						"type": "boolean"
+					},
+					"expiresTime": {
+						"type": "string",
+						"description": "ISO-8601 date-time after which the request expires (sent as `~timing.expires_time`)."
 					}
 				},
 				"required": [
@@ -5384,6 +5388,10 @@
 					},
 					"invitationDid": {
 						"type": "string"
+					},
+					"expiresTime": {
+						"type": "string",
+						"description": "ISO-8601 date-time after which the request expires (sent as `~timing.expires_time`)."
 					}
 				},
 				"required": [
