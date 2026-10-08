@@ -88,6 +88,7 @@ import {
   getX509CertsByClientToken,
   getX509CertsByUrl,
 } from './utils/oid4vc-agent'
+import { getProofRequestExpiryConfig } from './utils/proofRequestExpiry'
 import { tenantSessionConfig } from './utils/tenantSessionConfig'
 
 export type Transports = 'ws' | 'http'
@@ -650,6 +651,13 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   )
 
   logger.info('*** API Key: set')
+
+  // Fail at startup, not on the first request, if DIDCOMM_PROOF_REQUEST_EXPIRY is invalid or above
+  // the purge ceiling.
+  const proofRequestExpiry = getProofRequestExpiryConfig()
+  logger.info(
+    `Proof request expiry: default ${proofRequestExpiry.defaultSeconds}s, max ${proofRequestExpiry.maxSeconds}s`,
+  )
 
   // Start purge schedulers if enabled (NATS and Cron are independent)
   const purgeConfig = buildPurgeConfig()

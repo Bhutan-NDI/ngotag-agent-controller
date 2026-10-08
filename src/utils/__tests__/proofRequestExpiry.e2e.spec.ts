@@ -20,6 +20,7 @@ import {
   DidCommHttpOutboundTransport,
   DidCommMessageRepository,
   DidCommModule,
+  DidCommProofExchangeRepository,
   DidCommProofEventTypes,
   DidCommProofState,
   DidCommProofV2Protocol,
@@ -29,7 +30,12 @@ import { askar } from '@openwallet-foundation/askar-nodejs'
 import { randomUUID } from 'node:crypto'
 
 import { BadRequestError } from '../../errors'
-import { parseExpiresTime, requestProofWithExpiry } from '../proofRequestExpiry'
+import {
+  PROOF_REQUEST_EXPIRY_METADATA_KEY,
+  applyProofRequestExpiry,
+  parseExpiresTime,
+  requestProofWithExpiry,
+} from '../proofRequestExpiry'
 
 const makeAgent = (name: string, port: number) => {
   const agent = new Agent({
@@ -178,6 +184,49 @@ describe('proof request expiry on the connection-based path (no Credo patch)', (
       .resolve(DidCommMessageRepository)
       .findByQuery(verifier.context, { associatedRecordId: verifierRecord.id })
     expect(storedMessages).toHaveLength(1)
+  }, 60000)
+
+  it('OOB: the request inside the invitation carries ~timing.expires_time and expiresAt is stored', async () => {
+    // Mirrors ProofController.createRequest: createRequest returns the message before sending,
+    // the expiry is applied, then the message is embedded in an out-of-band invitation.
+    const expiresTime = new Date(Date.now() + 30 * 60 * 1000)
+    const received = holderReceivesRequest()
+
+    const { message, proofRecord } = await verifier.modules.didcomm.proofs.createRequest({
+      protocolVersion: 'v2',
+      proofFormats: { presentationExchange: { presentationDefinition } },
+    })
+    await applyProofRequestExpiry(verifier.context, message, proofRecord, expiresTime)
+    const { outOfBandInvitation } = await verifier.modules.didcomm.oob.createInvitation({
+      label: 'verifier',
+      messages: [message],
+      autoAcceptConnection: true,
+    })
+    await holder.modules.didcomm.oob.receiveInvitation(outOfBandInvitation, { label: 'holder' })
+
+    const holderRecord = (await received).payload.proofRecord
+    expect(holderRecord.threadId).toBe(proofRecord.threadId)
+    const holderMessage = (await holder.modules.didcomm.proofs.findRequestMessage(
+      holderRecord.id,
+    )) as DidCommRequestPresentationV2Message
+    expect(holderMessage.timing?.expiresTime?.toISOString()).toBe(expiresTime.toISOString())
+
+    const verifierMessage = (await verifier.modules.didcomm.proofs.findRequestMessage(
+      proofRecord.id,
+    )) as DidCommRequestPresentationV2Message
+    expect(verifierMessage.timing?.expiresTime?.toISOString()).toBe(expiresTime.toISOString())
+
+    const storedMessages = await verifier.dependencyManager
+      .resolve(DidCommMessageRepository)
+      .findByQuery(verifier.context, { associatedRecordId: proofRecord.id })
+    expect(storedMessages).toHaveLength(1)
+
+    const storedRecord = await verifier.dependencyManager
+      .resolve(DidCommProofExchangeRepository)
+      .getById(verifier.context, proofRecord.id)
+    expect(storedRecord.metadata.get(PROOF_REQUEST_EXPIRY_METADATA_KEY)).toEqual({
+      expiresAt: expiresTime.toISOString(),
+    })
   }, 60000)
 
   it('stock requestProof (no expiresTime) still sends no timing', async () => {
