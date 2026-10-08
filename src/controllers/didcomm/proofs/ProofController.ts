@@ -22,7 +22,6 @@ import {
   applyProofRequestExpiry,
   getProofRequestExpiryConfig,
   parseExpiresInSeconds,
-  parseExpiresTime,
   requestProofWithExpiry,
 } from '../../../utils/proofRequestExpiry'
 import { recordPageOptions, fetchRecordPage } from '../../../utils/recordPagination'
@@ -165,10 +164,13 @@ export class ProofController extends Controller {
         parentThreadId: requestProofOptions.parentThreadId,
         willConfirm: requestProofOptions.willConfirm,
       }
-      const expiresTime = parseExpiresTime(requestProofOptions.expiresTime)
-      const proof = expiresTime
-        ? await requestProofWithExpiry(request.agent, requestProofPayload, expiresTime)
-        : await request.agent.modules.didcomm.proofs.requestProof(requestProofPayload)
+      // Every proof request expires: the caller's expiresInSeconds, or the deployment default.
+      const expiresInSeconds = parseExpiresInSeconds(
+        requestProofOptions.expiresInSeconds,
+        getProofRequestExpiryConfig(),
+      )
+      const expiresTime = new Date(Date.now() + expiresInSeconds * 1000)
+      const proof = await requestProofWithExpiry(request.agent, requestProofPayload, expiresTime)
 
       return proof
     } catch (error) {
