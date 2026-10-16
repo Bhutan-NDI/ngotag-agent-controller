@@ -8,11 +8,11 @@ GitHub Environments.
 
 ## Release flow
 
-| Environment | Source | Image | GitHub Release |
-| --- | --- | --- | --- |
-| QA | current `develop` head | built for `linux/arm64` | pre-release `agent-controller/vX.Y.Z-qa.N` |
-| Stage | current `main` head | built for `linux/arm64` | pre-release `agent-controller/vX.Y.Z-rc.N` |
-| Prod | the commit Stage runs | Stage's image, copied unchanged by digest | release `agent-controller/vX.Y.Z` |
+| Environment | Source                 | Image                                     | GitHub Release                             |
+| ----------- | ---------------------- | ----------------------------------------- | ------------------------------------------ |
+| QA          | current `develop` head | built for `linux/arm64`                   | pre-release `agent-controller/vX.Y.Z-qa.N` |
+| Stage       | current `main` head    | built for `linux/arm64`                   | pre-release `agent-controller/vX.Y.Z-rc.N` |
+| Prod        | the commit Stage runs  | Stage's image, copied unchanged by digest | release `agent-controller/vX.Y.Z`          |
 
 A DevOps operator starts every release from a clean checkout of the environment's
 branch:
