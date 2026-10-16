@@ -1,0 +1,506 @@
+name: Deploy Agent Controller
+run-name: Deploy Agent Controller [${{ github.ref_name }}]
+
+# Releases the NGOTAG agent controller to its ECS environments. Only
+# `make deploy-qa`, `make deploy-stage` and `make deploy-prod` create these
+# trigger tags; CI keeps the globs synchronized with
+# .github/agent-controller-release-contract.json.
+#
+# QA builds from develop and Stage from main: one linux/arm64 image, built on a
+# native arm64 runner. Prod never rebuilds; it copies the exact image Stage runs.
+#
+# This repository is public, and so are these logs. Cluster, service,
+# container, task definition and image repository names come from the private
+# deployment manifest and are masked before use. Release notes carry no
+# infrastructure details.
+on:
+  push:
+    tags:
+      - agent-controller-qa-*
+      - agent-controller-stage-*
+      - agent-controller-prod-*
+
+# AWS access is obtained only through short-lived OIDC credentials after the
+# release checks pass.
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve release target
+    runs-on: ubuntu-latest
+    # Runs before any job output exists, so the group can only use github.ref_name.
+    # queue: max keeps pending resolvers in FIFO order instead of cancelling older ones.
+    concurrency:
+      group: agent-controller-release-resolver-${{ startsWith(github.ref_name, 'agent-controller-qa-') && 'qa' || startsWith(github.ref_name, 'agent-controller-stage-') && 'stage' || startsWith(github.ref_name, 'agent-controller-prod-') && 'prod' || 'invalid' }}
+      cancel-in-progress: false
+      queue: max
+    outputs:
+      target_environment: ${{ steps.release.outputs.target_environment }}
+      channel: ${{ steps.release.outputs.channel }}
+      manifest_ref: ${{ steps.release.outputs.manifest_ref }}
+      source_sha: ${{ steps.release.outputs.source_sha }}
+      trigger_time: ${{ steps.release.outputs.trigger_time }}
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate the Makefile release trigger
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          contract=.github/agent-controller-release-contract.json
+          sh .github/scripts/validate-release-contract.sh "$contract"
+
+          target_environment="$(jq -er --arg tag "$GITHUB_REF_NAME" '
+            [.environments | to_entries[] | select(.value.tag_prefix as $prefix | $tag | startswith($prefix)) | .key]
+            | if length == 1 then .[0] else empty end' "$contract")" || {
+            echo "unsupported release tag" >&2
+            exit 1
+          }
+          expected_branch="$(jq -er --arg environment "$target_environment" '.environments[$environment].allowed_branch' "$contract")"
+          channel="$(jq -er --arg environment "$target_environment" '.environments[$environment].channel' "$contract")"
+          tag_prefix="$(jq -er --arg environment "$target_environment" '.environments[$environment].tag_prefix' "$contract")"
+
+          tag_pattern='^([0-9a-f]{40})-([0-9a-f]{12})-([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2})([0-9]{2})Z$'
+          [[ "${GITHUB_REF_NAME#"$tag_prefix"}" =~ $tag_pattern ]] || {
+            echo "release tag does not match the Makefile contract" >&2
+            exit 1
+          }
+          manifest_ref="${BASH_REMATCH[1]}"
+          test "${GITHUB_SHA:0:12}" = "${BASH_REMATCH[2]}" || {
+            echo "tag-embedded source commit does not match the tagged commit" >&2
+            exit 1
+          }
+          trigger_time="${BASH_REMATCH[3]}-${BASH_REMATCH[4]}-${BASH_REMATCH[5]}T${BASH_REMATCH[6]}:${BASH_REMATCH[7]}:${BASH_REMATCH[8]}Z"
+
+          branch_sha="$(git rev-parse --verify "refs/remotes/origin/${expected_branch}^{commit}")"
+          if [ "$channel" = "stable" ]; then
+            # Prod promotes the commit Stage runs, which must belong to main.
+            git merge-base --is-ancestor "$GITHUB_SHA" "$branch_sha" || {
+              echo "prod releases must promote a commit on $expected_branch" >&2
+              exit 1
+            }
+          else
+            test "$GITHUB_SHA" = "$branch_sha" || {
+              echo "$target_environment releases must use the current $expected_branch head" >&2
+              exit 1
+            }
+          fi
+
+          {
+            echo "target_environment=$target_environment"
+            echo "channel=$channel"
+            echo "manifest_ref=$manifest_ref"
+            echo "source_sha=$GITHUB_SHA"
+            echo "trigger_time=$trigger_time"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    if: needs.resolve.outputs.channel != 'stable'
+    name: Build arm64 image (${{ needs.resolve.outputs.target_environment }})
+    runs-on: ubuntu-24.04-arm
+    environment: ${{ needs.resolve.outputs.target_environment }}
+    concurrency:
+      group: agent-controller-build-${{ needs.resolve.outputs.target_environment }}-${{ needs.resolve.outputs.source_sha }}
+      cancel-in-progress: false
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TARGET_ENVIRONMENT: ${{ needs.resolve.outputs.target_environment }}
+      CONFIG_REPOSITORY: ${{ secrets.DEPLOYMENT_CONFIG_REPOSITORY }}
+      CONFIG_PATH: agent-controller/environments/${{ needs.resolve.outputs.target_environment }}.json
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          persist-credentials: false
+
+      # Scoped to the private manifest repository and revoked after the job.
+      - name: Create manifest-reader GitHub App token
+        id: manifest_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.IAC_MANIFEST_APP_ID }}
+          private-key: ${{ secrets.IAC_MANIFEST_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ secrets.DEPLOYMENT_CONFIG_REPOSITORY_NAME }}
+          permission-contents: read
+
+      - name: Check out deployment manifest
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.CONFIG_REPOSITORY }}
+          ref: ${{ needs.resolve.outputs.manifest_ref }}
+          token: ${{ steps.manifest_token.outputs.token }}
+          path: deployment-config
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate deployment manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="deployment-config/$CONFIG_PATH"
+          git -C deployment-config merge-base --is-ancestor HEAD origin/main || {
+            echo "the manifest commit is not on the reviewed manifest main branch" >&2
+            exit 1
+          }
+          sh .github/scripts/validate-deployment-manifest.sh \
+            .github/agent-controller-release-contract.json "$TARGET_ENVIRONMENT" "$manifest"
+          ecr_repository="$(jq -r '.deployment.ecr_repository' "$manifest")"
+          echo "::add-mask::$ecr_repository"
+          {
+            echo "ECR_REPOSITORY=$ecr_repository"
+            echo "DEPLOY_AWS_REGION=$(jq -r '.deployment.aws_region' "$manifest")"
+            echo "IMAGE_TAG=$(jq -r '.release.image_tag_prefix' .github/agent-controller-release-contract.json)${GITHUB_SHA:0:12}"
+          } >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials through GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ secrets.AWS_AGENT_CONTROLLER_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.DEPLOY_AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Verify assumed AWS account
+        shell: bash
+        env:
+          EXPECTED_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: test "$(aws sts get-caller-identity --query Account --output text)" = "$EXPECTED_ACCOUNT"
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Build, check and publish the arm64 image
+        shell: bash
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          image="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          # The tag names the source commit, so an existing image is this commit's
+          # earlier build. Reuse it only if it really is that commit's arm64 image.
+          if aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$IMAGE_TAG" >/dev/null 2>&1; then
+            docker buildx imagetools inspect --format '{{json .Image}}' "$image" | jq -e --arg sha "$GITHUB_SHA" '
+              .os == "linux" and .architecture == "arm64" and
+              .config.Labels["org.opencontainers.image.revision"] == $sha' >/dev/null || {
+              echo "the existing image tag is not this commit's arm64 build; refusing to reuse it" >&2
+              exit 1
+            }
+            echo "Reusing this commit's existing arm64 image"
+            exit 0
+          fi
+          docker buildx build --platform linux/arm64 --provenance=false --sbom=false --load \
+            --cache-from type=gha,scope=agent-controller-arm64 \
+            --cache-to type=gha,mode=max,scope=agent-controller-arm64 \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "$image" .
+          # Nothing is pushed unless the native libraries work on arm64.
+          sh .github/scripts/check-native-image.sh "$image" arm64
+          docker push "$image" >/dev/null
+          media_type="$(docker buildx imagetools inspect --raw "$image" | jq -r '.mediaType // empty')"
+          case "$media_type" in
+            application/vnd.docker.distribution.manifest.v2+json|application/vnd.oci.image.manifest.v1+json) ;;
+            *) echo "expected one arm64 image manifest, got ${media_type:-unknown}" >&2; exit 1 ;;
+          esac
+          echo "Published this commit's arm64 image"
+
+  deploy:
+    needs: [resolve, build]
+    if: >-
+      always() && needs.resolve.result == 'success' &&
+      (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.resolve.outputs.channel == 'stable'))
+    name: Deploy (${{ needs.resolve.outputs.target_environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve.outputs.target_environment }}
+    concurrency:
+      group: agent-controller-${{ needs.resolve.outputs.target_environment }}
+      cancel-in-progress: false
+      queue: max
+    timeout-minutes: 120
+    permissions:
+      checks: read
+      contents: read
+      id-token: write
+    env:
+      TARGET_ENVIRONMENT: ${{ needs.resolve.outputs.target_environment }}
+      CHANNEL: ${{ needs.resolve.outputs.channel }}
+      MANIFEST_REF: ${{ needs.resolve.outputs.manifest_ref }}
+      TRIGGER_TIME: ${{ needs.resolve.outputs.trigger_time }}
+      CONFIG_REPOSITORY: ${{ secrets.DEPLOYMENT_CONFIG_REPOSITORY }}
+      CONFIG_PATH: agent-controller/environments/${{ needs.resolve.outputs.target_environment }}.json
+      CONTRACT: .github/agent-controller-release-contract.json
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require successful CI for the exact source commit
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          sh .github/scripts/wait-for-ci.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$CONTRACT"
+
+      - name: Create manifest-reader GitHub App token
+        id: manifest_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.IAC_MANIFEST_APP_ID }}
+          private-key: ${{ secrets.IAC_MANIFEST_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ secrets.DEPLOYMENT_CONFIG_REPOSITORY_NAME }}
+          permission-contents: read
+
+      - name: Check out deployment manifest
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.CONFIG_REPOSITORY }}
+          ref: ${{ needs.resolve.outputs.manifest_ref }}
+          token: ${{ steps.manifest_token.outputs.token }}
+          path: deployment-config
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate deployment manifest
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="deployment-config/$CONFIG_PATH"
+          git -C deployment-config merge-base --is-ancestor HEAD origin/main || {
+            echo "the manifest commit is not on the reviewed manifest main branch" >&2
+            exit 1
+          }
+          # Ledger updates are expected; any other change since the trigger must be redeployed.
+          test "$(jq -cS 'del(.release.deployed)' "$manifest")" = \
+            "$(git -C deployment-config show "origin/main:$CONFIG_PATH" | jq -cS 'del(.release.deployed)')" || {
+            echo "the manifest changed after the release was triggered; run make deploy-$TARGET_ENVIRONMENT again" >&2
+            exit 1
+          }
+          sh .github/scripts/validate-deployment-manifest.sh "$CONTRACT" "$TARGET_ENVIRONMENT" "$manifest"
+
+          private_names="$RUNNER_TEMP/private-names"
+          jq -r '.deployment | .cluster, .ecr_repository, (.controllers[] | .service, .container, .task_definition_family)' \
+            "$manifest" | sort -u > "$private_names"
+          if [ "$CHANNEL" = "stable" ]; then
+            source_environment="$(jq -er '.environments.prod.promote_from' "$CONTRACT")"
+            source_manifest="$RUNNER_TEMP/source-manifest.json"
+            # The newest Stage ledger is the promotion source, not the trigger's snapshot.
+            git -C deployment-config show "origin/main:agent-controller/environments/${source_environment}.json" > "$source_manifest"
+            sh .github/scripts/validate-deployment-manifest.sh "$CONTRACT" "$source_environment" "$source_manifest"
+            jq -r '.deployment | .cluster, .ecr_repository, (.controllers[] | .service, .container, .task_definition_family)' \
+              "$source_manifest" | sort -u >> "$private_names"
+            echo "SOURCE_MANIFEST=$source_manifest" >> "$GITHUB_ENV"
+          fi
+          sort -u -o "$private_names" "$private_names"
+          while IFS= read -r private_name; do
+            echo "::add-mask::$private_name"
+          done < "$private_names"
+
+          jq '.deployment.controllers' "$manifest" > "$RUNNER_TEMP/controllers.json"
+          {
+            echo "MANIFEST=$manifest"
+            echo "PRIVATE_NAMES_FILE=$private_names"
+            echo "CONTROLLERS_FILE=$RUNNER_TEMP/controllers.json"
+            echo "CLUSTER=$(jq -r '.deployment.cluster' "$manifest")"
+            echo "ECR_REPOSITORY=$(jq -r '.deployment.ecr_repository' "$manifest")"
+            echo "CPU_ARCHITECTURE=$(jq -r '.deployment.cpu_architecture' "$manifest")"
+            echo "DEPLOY_AWS_REGION=$(jq -r '.deployment.aws_region' "$manifest")"
+            echo "MANIFEST_COMMIT=$(git -C deployment-config rev-parse HEAD)"
+          } >> "$GITHUB_ENV"
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANNEL" = "stable" ]; then
+            jq -e --arg sha "$GITHUB_SHA" '
+              .release.deployed | type == "object" and .commit == $sha and
+              (.github_release | type == "string") and (.image_tag | type == "string") and
+              (.image_digest | test("^sha256:[0-9a-f]{64}$"))' "$SOURCE_MANIFEST" >/dev/null || {
+              echo "Stage has no automated release of this commit to promote; run make deploy-prod again" >&2
+              exit 1
+            }
+            requested="$(jq -r '.release.deployed.github_release' "$SOURCE_MANIFEST")"
+            source_release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$requested")"
+            jq -e --arg sha "$GITHUB_SHA" '.draft == false and .prerelease == true and .target_commitish == $sha' \
+              <<<"$source_release" >/dev/null || {
+              echo "the Stage release candidate is not a published pre-release of this commit" >&2
+              exit 1
+            }
+            echo "PROMOTED_FROM=$requested" >> "$GITHUB_ENV"
+          else
+            requested="$(jq -r '.release.next_version' "$MANIFEST")"
+          fi
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
+          sh .github/scripts/resolve-release-version.sh "$CONTRACT" "$TARGET_ENVIRONMENT" "$requested" \
+            "$RUNNER_TEMP/releases.json" "$GITHUB_SHA" "$TRIGGER_TIME" > "$RUNNER_TEMP/version.env"
+          cat "$RUNNER_TEMP/version.env"
+          cat "$RUNNER_TEMP/version.env" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials through GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ secrets.AWS_AGENT_CONTROLLER_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.DEPLOY_AWS_REGION }}
+          mask-aws-account-id: true
+          # A Prod rollout of every controller can outlast the default one-hour session.
+          role-duration-seconds: 7200
+
+      - name: Verify assumed AWS account
+        shell: bash
+        env:
+          EXPECTED_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: test "$(aws sts get-caller-identity --query Account --output text)" = "$EXPECTED_ACCOUNT"
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - name: Promote the Stage image unchanged
+        if: needs.resolve.outputs.channel == 'stable'
+        shell: bash
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          command -v skopeo >/dev/null || { echo "skopeo is required to copy images by digest" >&2; exit 1; }
+          aws ecr get-login-password | skopeo login --username AWS --password-stdin "$REGISTRY" >/dev/null
+          jq '.deployment.controllers' "$SOURCE_MANIFEST" > "$RUNNER_TEMP/source-controllers.json"
+          image_tag="$(jq -r '.release.image_tag_prefix' "$CONTRACT")${VERSION}-${GITHUB_SHA:0:12}"
+          REGISTRY="$REGISTRY" \
+          SOURCE_CLUSTER="$(jq -r '.deployment.cluster' "$SOURCE_MANIFEST")" \
+          SOURCE_CONTROLLERS_FILE="$RUNNER_TEMP/source-controllers.json" \
+          SOURCE_REPOSITORY="$(jq -r '.deployment.ecr_repository' "$SOURCE_MANIFEST")" \
+          SOURCE_TAG="$(jq -r '.release.deployed.image_tag' "$SOURCE_MANIFEST")" \
+          SOURCE_DIGEST="$(jq -r '.release.deployed.image_digest' "$SOURCE_MANIFEST")" \
+          TARGET_REPOSITORY="$ECR_REPOSITORY" \
+          TARGET_TAG="$image_tag" \
+            bash .github/scripts/promote-stage-image.sh
+          echo "IMAGE_TAG=$image_tag" >> "$GITHUB_ENV"
+
+      - name: Resolve the image to deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$CHANNEL" != "stable" ]; then
+            echo "IMAGE_TAG=$(jq -r '.release.image_tag_prefix' "$CONTRACT")${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Deploy controllers one at a time
+        shell: bash
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          digest="$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$IMAGE_TAG" \
+            --query 'imageDetails[0].imageDigest' --output text)"
+          docker buildx imagetools inspect --format '{{json .Image}}' "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            | jq -e --arg sha "$GITHUB_SHA" '.os == "linux" and .architecture == "arm64" and
+                .config.Labels["org.opencontainers.image.revision"] == $sha' >/dev/null || {
+            echo "the release image is not this commit's arm64 build" >&2
+            exit 1
+          }
+          echo "IMAGE_DIGEST=$digest" >> "$GITHUB_ENV"
+          IMAGE="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" IMAGE_DIGEST="$digest" \
+            RESULT_FILE="$RUNNER_TEMP/task-definitions.json" \
+            bash .github/scripts/deploy-controllers.sh
+
+      # Scoped only to this repository and revoked after the job. Release tags
+      # match no workflow trigger in this repository (checked by CI).
+      - name: Create release-publisher GitHub App token
+        id: release_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.RELEASE_PUBLISHER_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PUBLISHER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.release_token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          REUSE: ${{ steps.version.outputs.reuse }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          TITLE="$(jq -r '.release.title' "$CONTRACT")" bash .github/scripts/publish-github-release.sh
+
+      - name: Create manifest-writer GitHub App token
+        id: manifest_writer_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.IAC_MANIFEST_WRITER_APP_ID }}
+          private-key: ${{ secrets.IAC_MANIFEST_WRITER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ secrets.DEPLOYMENT_CONFIG_REPOSITORY_NAME }}
+          permission-contents: write
+
+      - name: Record the deployment in the private ledger
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.manifest_writer_token.outputs.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg version "$VERSION" \
+            --arg github_release "$RELEASE_TAG" \
+            --arg image_tag "$IMAGE_TAG" \
+            --arg image_digest "$IMAGE_DIGEST" \
+            --arg platform "$(jq -r '.release.platform' "$CONTRACT")" \
+            --arg commit "$GITHUB_SHA" \
+            --arg manifest_commit "$MANIFEST_COMMIT" \
+            --arg promoted_from "${PROMOTED_FROM:-}" \
+            --arg workflow_run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg deployed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --slurpfile task_definitions "$RUNNER_TEMP/task-definitions.json" '{
+              version: $version, github_release: $github_release, image_tag: $image_tag,
+              image_digest: $image_digest, platform: $platform, commit: $commit,
+              manifest_commit: $manifest_commit,
+              promoted_from: (if $promoted_from == "" then null else $promoted_from end),
+              task_definitions: $task_definitions[0], workflow_run: $workflow_run,
+              deployed_at: $deployed_at
+            }' > "$RUNNER_TEMP/deployed.json"
+          VALIDATED_MANIFEST="$MANIFEST" DEPLOYED_RECORD="$RUNNER_TEMP/deployed.json" \
+            ENVIRONMENT="$TARGET_ENVIRONMENT" bash .github/scripts/record-deployment.sh
+
+      - name: Summarize
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+        run: |
+          printf '### Agent controller %s deployed\n\nRelease: %s/%s/releases/tag/%s\n' \
+            "$TARGET_ENVIRONMENT" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
