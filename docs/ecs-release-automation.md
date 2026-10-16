@@ -29,12 +29,14 @@ commit. It then pushes an immutable trigger tag
 (`agent-controller-<environment>-<manifest commit>-<source commit>-<UTC time>`) and
 watches the workflow (`DEPLOY_WAIT=false` skips watching). Pushing trigger tags by
 hand or running the workflow any other way is not an approved release path: a tag
-ruleset lets only repository administrators create `agent-controller-*` tags, and
-each GitHub Environment accepts only its own trigger tags.
+ruleset lets only repository administrators and the `devops` team create
+`agent-controller-*` tags, and each GitHub Environment accepts only its own trigger
+tags.
 
 `deploy-prod` promotes the release candidate recorded in Stage's private ledger; it
 never builds. It shows the release candidate and commit and asks the operator to
-type `prod` (or pass `CONFIRM=prod`).
+type `prod` (or pass `CONFIRM=prod`). Any one release operator can release to Prod;
+there is no separate approval step.
 
 ## What the workflow does
 
