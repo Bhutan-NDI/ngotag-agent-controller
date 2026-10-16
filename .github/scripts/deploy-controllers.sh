@@ -18,12 +18,17 @@
 #   IMAGE_DIGEST       expected manifest digest of IMAGE
 #   CPU_ARCHITECTURE   ECS runtime CPU architecture (ARM64)
 #   RESULT_FILE        receives {"<controller>": "<task definition ARN>"}
+#   ROLLOUT_DEADLINE   optional epoch seconds; a controller is not started unless
+#                      its full rollout window fits before this time
 
 set -euo pipefail
 
 : "${CLUSTER:?}" "${CONTROLLERS_FILE:?}" "${IMAGE:?}" "${IMAGE_DIGEST:?}" "${CPU_ARCHITECTURE:?}" "${RESULT_FILE:?}"
 poll_seconds=${POLL_SECONDS:-15}
 rollout_attempts=${ROLLOUT_ATTEMPTS:-80}
+rollout_deadline=${ROLLOUT_DEADLINE:-}
+# Registration, the service update and the digest check add about a minute.
+rollout_window=$((rollout_attempts * poll_seconds + 60))
 script_dir=$(cd "$(dirname "$0")" && pwd)
 
 case "$CPU_ARCHITECTURE" in
@@ -84,6 +89,14 @@ for ((index = 0; index < count; index++)); do
   name=$(controller "$index" name)
   service=$(controller "$index" service)
   container=$(controller "$index" container)
+
+  # Never start a rollout the job could be cancelled in the middle of.
+  if [ -n "$rollout_deadline" ] && [ "$(($(date +%s) + rollout_window))" -gt "$rollout_deadline" ]; then
+    completed=$(jq -r 'keys_unsorted | join(", ")' "$RESULT_FILE")
+    echo "controller $name: not enough time left in this job for a full rollout; it was not changed." >&2
+    echo "Already updated: ${completed:-none}. Run the release again to finish." >&2
+    exit 1
+  fi
 
   task_definition=$(aws ecs register-task-definition \
     --cli-input-json "file://$work/$index-register.json" \

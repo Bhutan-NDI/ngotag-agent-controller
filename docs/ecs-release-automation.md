@@ -28,7 +28,9 @@ private deployment manifest, and that the `Validate` CI check passed for the exa
 commit. It then pushes an immutable trigger tag
 (`agent-controller-<environment>-<manifest commit>-<source commit>-<UTC time>`) and
 watches the workflow (`DEPLOY_WAIT=false` skips watching). Pushing trigger tags by
-hand or running the workflow any other way is not an approved release path.
+hand or running the workflow any other way is not an approved release path: a tag
+ruleset lets only repository administrators create `agent-controller-*` tags, and
+each GitHub Environment accepts only its own trigger tags.
 
 `deploy-prod` promotes the release candidate recorded in Stage's private ledger; it
 never builds. It shows the release candidate and commit and asks the operator to
@@ -39,6 +41,8 @@ type `prod` (or pass `CONFIRM=prod`).
 1. A job without secrets validates the trigger tag against
    `.github/agent-controller-release-contract.json`: the environment, that QA and
    Stage use the current branch head, and that Prod promotes a commit on `main`.
+   The release version is resolved and the complete release notes are built and
+   checked for infrastructure identifiers before anything in AWS changes.
 2. QA and Stage: a native arm64 runner builds one single-platform `linux/arm64`
    image and starts it to prove that the Askar, AnonCreds, Indy VDR and FFI native
    libraries load and that Askar can generate a key. Nothing is pushed otherwise.
@@ -56,10 +60,11 @@ type `prod` (or pass `CONFIRM=prod`).
    rollback enabled. The next controller starts only after ECS reports the rollout
    COMPLETED and every running task runs the released image digest. On the first
    failure ECS rolls that controller back and the run stops; controllers already
-   updated keep the new image, and no release is published.
-6. The GitHub Release is created as a draft. Its complete notes are checked for
-   infrastructure identifiers before it is published, and the live notes are
-   checked again afterwards.
+   updated keep the new image, and no release is published. A controller is not
+   started unless its full rollout window fits in the job's remaining time; the
+   run then stops cleanly and can be repeated.
+6. The GitHub Release is created as a draft with the notes checked in step 1,
+   checked again, and published; the live notes are checked once more.
 7. The private manifest records the version, release, image tag and digest, source
    and manifest commits, task definitions and time of the deployment.
 

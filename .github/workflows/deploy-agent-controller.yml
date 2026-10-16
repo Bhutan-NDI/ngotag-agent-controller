@@ -232,7 +232,10 @@ jobs:
       group: agent-controller-${{ needs.resolve.outputs.target_environment }}
       cancel-in-progress: false
       queue: max
-    timeout-minutes: 120
+    # Every controller can take up to about 21 minutes to roll out. The rollout
+    # script stops before a controller whose window would outlast this job, and
+    # keeps 20 minutes for the release and the ledger.
+    timeout-minutes: 180
     permissions:
       checks: read
       contents: read
@@ -246,6 +249,10 @@ jobs:
       CONFIG_PATH: agent-controller/environments/${{ needs.resolve.outputs.target_environment }}.json
       CONTRACT: .github/agent-controller-release-contract.json
     steps:
+      - name: Set the rollout deadline
+        shell: bash
+        run: echo "ROLLOUT_DEADLINE=$(($(date +%s) + (180 - 20) * 60))" >> "$GITHUB_ENV"
+
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -300,23 +307,34 @@ jobs:
           }
           sh .github/scripts/validate-deployment-manifest.sh "$CONTRACT" "$TARGET_ENVIRONMENT" "$manifest"
 
+          # Every name is masked in these public logs. Container names are generic
+          # labels, so only the distinctive names are checked in release notes.
+          masked_names="$RUNNER_TEMP/masked-names"
           private_names="$RUNNER_TEMP/private-names"
-          jq -r '.deployment | .cluster, .ecr_repository, (.controllers[] | .service, .container, .task_definition_family)' \
-            "$manifest" | sort -u > "$private_names"
+          names='.deployment | .cluster, .ecr_repository, (.controllers[] | .service, .task_definition_family)'
+          jq -r "$names" "$manifest" > "$private_names"
+          jq -r '.deployment.controllers[].container' "$manifest" > "$masked_names"
           if [ "$CHANNEL" = "stable" ]; then
             source_environment="$(jq -er '.environments.prod.promote_from' "$CONTRACT")"
             source_manifest="$RUNNER_TEMP/source-manifest.json"
             # The newest Stage ledger is the promotion source, not the trigger's snapshot.
             git -C deployment-config show "origin/main:agent-controller/environments/${source_environment}.json" > "$source_manifest"
             sh .github/scripts/validate-deployment-manifest.sh "$CONTRACT" "$source_environment" "$source_manifest"
-            jq -r '.deployment | .cluster, .ecr_repository, (.controllers[] | .service, .container, .task_definition_family)' \
-              "$source_manifest" | sort -u >> "$private_names"
+            # Promotion reads the Stage image and services with the Prod role, so both
+            # environments must be in the same region (and AWS account; the workflow
+            # verifies the account it assumed).
+            test "$(jq -r '.deployment.aws_region' "$source_manifest")" = "$(jq -r '.deployment.aws_region' "$manifest")" || {
+              echo "Prod promotion requires $source_environment in the same AWS region" >&2
+              exit 1
+            }
+            jq -r "$names" "$source_manifest" >> "$private_names"
+            jq -r '.deployment.controllers[].container' "$source_manifest" >> "$masked_names"
             echo "SOURCE_MANIFEST=$source_manifest" >> "$GITHUB_ENV"
           fi
           sort -u -o "$private_names" "$private_names"
-          while IFS= read -r private_name; do
+          sort -u "$private_names" "$masked_names" | while IFS= read -r private_name; do
             echo "::add-mask::$private_name"
-          done < "$private_names"
+          done
 
           jq '.deployment.controllers' "$manifest" > "$RUNNER_TEMP/controllers.json"
           {
@@ -361,6 +379,35 @@ jobs:
             "$RUNNER_TEMP/releases.json" "$GITHUB_SHA" "$TRIGGER_TIME" > "$RUNNER_TEMP/version.env"
           cat "$RUNNER_TEMP/version.env"
           cat "$RUNNER_TEMP/version.env" >> "$GITHUB_OUTPUT"
+
+      # The notes are built and checked before anything in AWS changes, so a
+      # rejected note can never leave an environment deployed without a release.
+      # App tokens expire after an hour, so publishing mints a fresh one later.
+      - name: Create release-notes GitHub App token
+        id: notes_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.RELEASE_PUBLISHER_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PUBLISHER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Prepare and check release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.notes_token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          REUSE: ${{ steps.version.outputs.reuse }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          echo "NOTES_FILE=$RUNNER_TEMP/release-notes.md" >> "$GITHUB_ENV"
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md" TITLE="$(jq -r '.release.title' "$CONTRACT")" \
+            bash .github/scripts/publish-github-release.sh prepare
 
       - name: Configure AWS credentials through GitHub OIDC
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
@@ -455,7 +502,7 @@ jobs:
           SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
         run: |
           set -euo pipefail
-          TITLE="$(jq -r '.release.title' "$CONTRACT")" bash .github/scripts/publish-github-release.sh
+          TITLE="$(jq -r '.release.title' "$CONTRACT")" bash .github/scripts/publish-github-release.sh publish
 
       - name: Create manifest-writer GitHub App token
         id: manifest_writer_token

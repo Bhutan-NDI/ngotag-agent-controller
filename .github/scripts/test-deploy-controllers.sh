@@ -129,4 +129,9 @@ grep -q 'update-service\|register-task-definition' "$work/state/calls" && fail "
 if run env FAKE_SIDECAR=amd64-only:v1 > "$work/out" 2>&1; then fail "amd64-only sidecar was accepted"; fi
 grep -q 'update-service\|register-task-definition' "$work/state/calls" && fail "a change was made after a failed sidecar check"
 
+# A controller whose rollout window does not fit before the deadline is not changed.
+if run env ROLLOUT_DEADLINE="$(($(date +%s) + 30))" > "$work/out" 2>&1; then fail "rollout past the deadline was accepted"; fi
+grep -q 'not enough time left' "$work/out" || fail "deadline stop was not reported"
+grep -q 'update-service\|register-task-definition' "$work/state/calls" && fail "a controller changed after the deadline check"
+
 echo "deploy-controllers: all tests passed"
