@@ -180,6 +180,15 @@ export class TsLogger extends BaseLogger {
     message: string | { message: string },
     data?: Record<string, any>,
   ): void {
+    // BaseLogger contract, as in Credo's own ConsoleLogger: a disabled level costs nothing. Credo
+    // makes most of its logger calls at debug/trace, so without this every one of them paid for
+    // the sanitising copy, a tslog record and an OpenTelemetry emit before being dropped, and
+    // with OTEL enabled they were exported regardless of the configured level. Also makes
+    // LogLevel.off silent: tslog treats the undefined minLevel it maps to as "log everything".
+    if (!this.isEnabled(level)) {
+      return
+    }
+
     const tsLogLevel = this.tsLogLevelMap[level]
 
     // Sanitised once, here, so no call site can leak by forgetting to. tslog inspects a plain
