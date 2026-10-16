@@ -223,7 +223,7 @@ jobs:
   deploy:
     needs: [resolve, build]
     if: >-
-      always() && needs.resolve.result == 'success' &&
+      !cancelled() && needs.resolve.result == 'success' &&
       (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.resolve.outputs.channel == 'stable'))
     name: Deploy (${{ needs.resolve.outputs.target_environment }})
     runs-on: ubuntu-latest
@@ -233,8 +233,8 @@ jobs:
       cancel-in-progress: false
       queue: max
     # Every controller can take up to about 21 minutes to roll out. The rollout
-    # script stops before a controller whose window would outlast this job, and
-    # keeps 20 minutes for the release and the ledger.
+    # script stops before a controller whose window would outlast this job (minus
+    # 20 minutes kept for the release and the ledger) or the AWS session.
     timeout-minutes: 180
     permissions:
       checks: read
@@ -409,13 +409,24 @@ jobs:
           NOTES_FILE="$RUNNER_TEMP/release-notes.md" TITLE="$(jq -r '.release.title' "$CONTRACT")" \
             bash .github/scripts/publish-github-release.sh prepare
 
+      # Recorded before the session starts, so the deadline errs early. The last
+      # AWS call is the digest check after each rollout; 5 minutes stay spare.
+      - name: Bound the rollout by the AWS session
+        shell: bash
+        run: |
+          session_deadline=$(($(date +%s) + 7200 - 5 * 60))
+          if [ "$session_deadline" -lt "$ROLLOUT_DEADLINE" ]; then
+            echo "ROLLOUT_DEADLINE=$session_deadline" >> "$GITHUB_ENV"
+          fi
+
       - name: Configure AWS credentials through GitHub OIDC
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ secrets.AWS_AGENT_CONTROLLER_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.DEPLOY_AWS_REGION }}
           mask-aws-account-id: true
-          # A Prod rollout of every controller can outlast the default one-hour session.
+          # A Prod rollout of every controller can outlast the default one-hour
+          # session. Keep in step with the session bound above and the roles' maximum.
           role-duration-seconds: 7200
 
       - name: Verify assumed AWS account

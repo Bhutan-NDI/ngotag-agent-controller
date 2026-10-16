@@ -41,19 +41,20 @@ type `prod` (or pass `CONFIRM=prod`).
 1. A job without secrets validates the trigger tag against
    `.github/agent-controller-release-contract.json`: the environment, that QA and
    Stage use the current branch head, and that Prod promotes a commit on `main`.
-   The release version is resolved and the complete release notes are built and
-   checked for infrastructure identifiers before anything in AWS changes.
 2. QA and Stage: a native arm64 runner builds one single-platform `linux/arm64`
    image and starts it to prove that the Askar, AnonCreds, Indy VDR and FFI native
    libraries load and that Askar can generate a key. Nothing is pushed otherwise.
    The image tag names the source commit, so a retry reuses the same image.
-3. Prod: the workflow proves that every Stage controller runs the release
+3. The deploy job resolves the release version, then builds the complete release
+   notes and checks them for infrastructure identifiers. It changes nothing in ECS
+   until this check passes.
+4. Prod: the workflow proves that every Stage controller runs the release
    candidate's image digest on ARM64 and copies that image, byte for byte, into the
    Prod image repository.
-4. Every controller of the environment is checked before any is changed: active
+5. Every controller of the environment is checked before any is changed: active
    service, expected task definition family, no deployment in progress, and every
    kept sidecar image available for arm64.
-5. Controllers are then deployed one at a time. Each gets a copy of its current
+6. Controllers are then deployed one at a time. Each gets a copy of its current
    task definition with only the controller image replaced and the CPU architecture
    set to ARM64; environment files, volumes, roles, CPU, memory and sidecars stay
    as they are. The service is updated with the deployment circuit breaker and
@@ -61,11 +62,11 @@ type `prod` (or pass `CONFIRM=prod`).
    COMPLETED and every running task runs the released image digest. On the first
    failure ECS rolls that controller back and the run stops; controllers already
    updated keep the new image, and no release is published. A controller is not
-   started unless its full rollout window fits in the job's remaining time; the
-   run then stops cleanly and can be repeated.
-6. The GitHub Release is created as a draft with the notes checked in step 1,
+   started unless its full rollout window fits in both the job's remaining time
+   and the AWS session; the run then stops cleanly and can be repeated.
+7. The GitHub Release is created as a draft with the notes checked in step 3,
    checked again, and published; the live notes are checked once more.
-7. The private manifest records the version, release, image tag and digest, source
+8. The private manifest records the version, release, image tag and digest, source
    and manifest commits, task definitions and time of the deployment.
 
 AWS access uses short-lived GitHub OIDC credentials from a role per environment
