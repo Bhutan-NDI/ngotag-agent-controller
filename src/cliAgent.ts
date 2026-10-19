@@ -77,6 +77,7 @@ import {
 } from './purge/PurgeSchedulerFactory'
 import { buildPurgeConfig } from './purge/PurgeTypes'
 import { setupServer } from './server'
+import { initRelayRuntime, shutdownRelayRuntime } from './services/migration-relay/relayRuntime'
 import { shutdownWalletPortabilityService } from './services/wallet-portability/WalletPortabilityService'
 import { CachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
@@ -590,6 +591,9 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     agent.modules.didcomm.registerOutboundTransport(new OutboundTransport())
   }
 
+  // The migration relay only exists on a shared (multi-tenant) agent, and only when it is explicitly enabled.
+  const relay = afjConfig.tenancy ? initRelayRuntime(logger) : undefined
+
   // Register inbound transports
   for (const inboundTransport of inboundTransports) {
     const InboundTransport = inboundTransportMapping[inboundTransport.transport]
@@ -605,6 +609,9 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
         }),
       )
       transport.app.use(bodyParser.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
+      // After the transport's own text parser, so the middleware reads the raw envelope; before its POST handler,
+      // which is only registered by agent.initialize().
+      if (relay) transport.app.use(relay.middleware)
     }
   }
 
@@ -613,6 +620,14 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   mountBaseMiddleware(expressApp)
 
   await agent.initialize()
+
+  if (relay) {
+    relay.service.watchRoutingKeys(agent as unknown as Agent<RestMultiTenantAgentModules>)
+    await relay.service
+      .rehydrate(agent as unknown as Agent<RestMultiTenantAgentModules>)
+      .then((count) => logger.info(`[Relay] restored ${count} relay entr${1 === count ? 'y' : 'ies'}`))
+      .catch((error) => logger.error(`[Relay] could not restore relay state: ${error}`))
+  }
 
   const genericRecord = await agent.genericRecords.findAllByQuery({ hasSecretKey: 'true' })
   const recordsWithSecretKey = genericRecord[0]
@@ -682,6 +697,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       await cache.disconnect()
     }
     await shutdownWalletPortabilityService()
+    await shutdownRelayRuntime()
     await agent.shutdown()
     process.exit(0)
   }
