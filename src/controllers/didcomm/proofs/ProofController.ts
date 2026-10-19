@@ -18,6 +18,7 @@ import ErrorHandlingService from '../../../errorHandlingService'
 import { BadRequestError } from '../../../errors'
 import { PurgeRecordType } from '../../../purge/PurgeTypes'
 import { SchedulePurge } from '../../../purge/decorators/SchedulePurge'
+import { addAdditionalInvitationDids, validateAdditionalInvitationDids } from '../../../utils/additionalInvitationDids'
 import { recordPageOptions, fetchRecordPage } from '../../../utils/recordPagination'
 import { ProofRecordExample, RecordId } from '../../examples'
 import {
@@ -176,6 +177,12 @@ export class ProofController extends Controller {
     try {
       let routing: DidCommRouting
       let invitationDid: string | undefined
+      // Checked first, so a bad request leaves no proof exchange behind.
+      const extraInvitationDids = await validateAdditionalInvitationDids(
+        request.agent,
+        createRequestOptions?.additionalInvitationDids,
+        createRequestOptions?.invitationDid,
+      )
 
       if (createRequestOptions?.invitationDid) {
         invitationDid = createRequestOptions?.invitationDid
@@ -221,6 +228,7 @@ export class ProofController extends Controller {
         goalCode: createRequestOptions?.goalCode,
         invitationDid,
       })
+      await addAdditionalInvitationDids(request.agent, outOfBandRecord, extraInvitationDids)
 
       return {
         invitationUrl: outOfBandRecord.outOfBandInvitation.toUrl({
