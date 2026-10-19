@@ -30,10 +30,25 @@ export interface WalletPortabilityJobRecord {
   // Populated on Completed (import only): the timestamped profile the tenant's pre-import data
   // was renamed to, in case it ever needs to be inspected/restored. Never deleted automatically.
   backupProfile?: string
+  // Populated on Completed (sealed export only): the store key sealed to the recipient's public key, and
+  // the tenant's storage version read after the tenant was opened. The sealed key is useless without the
+  // recipient's private half, which never leaves the target agent.
+  sealedStoreKey?: string
+  storageVersion?: string
+  // Populated on Completed (root wallet import only): what the merge inserted. dryRun jobs report the same
+  // counts but roll the transaction back.
+  counts?: WalletImportCounts
+  dryRun?: boolean
   // Populated on Failed — a stable, sanitized code (e.g. EXPORT_FAILED, IMPORT_FAILED), never the
   // raw Askar/filesystem/AWS error text, since this field is externally readable via getJobStatus.
   // The real error is logged server-side with the job id at the point of failure.
   error?: string
+}
+
+export interface WalletImportCounts {
+  entries: number
+  keys: number
+  skipped: number
 }
 
 export interface ExportWalletResult {
@@ -67,5 +82,33 @@ export class WalletPortabilityJobConflictError extends Error {
     this.name = 'WalletPortabilityJobConflictError'
     this.tenantId = tenantId
     this.activeJobId = activeJobId
+  }
+}
+
+export class TargetNotPristineError extends Error {
+  public constructor() {
+    super('TARGET_NOT_PRISTINE')
+    this.name = 'TargetNotPristineError'
+  }
+}
+
+export class StorageVersionMismatchError extends Error {
+  public constructor() {
+    super('STORAGE_VERSION_MISMATCH')
+    this.name = 'StorageVersionMismatchError'
+  }
+}
+
+export class ImportSessionNotFoundError extends Error {
+  public constructor() {
+    super('Import session not found or expired.')
+    this.name = 'ImportSessionNotFoundError'
+  }
+}
+
+export class ArtifactChecksumMismatchError extends Error {
+  public constructor() {
+    super('The uploaded artifact does not match the supplied checksum.')
+    this.name = 'ArtifactChecksumMismatchError'
   }
 }
