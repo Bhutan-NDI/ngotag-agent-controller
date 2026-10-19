@@ -77,12 +77,14 @@ import {
 } from './purge/PurgeSchedulerFactory'
 import { buildPurgeConfig } from './purge/PurgeTypes'
 import { setupServer } from './server'
+import { initRotationRuntime, shutdownRotationRuntime } from './services/did-rotation/rotationRuntime'
 import { shutdownWalletPortabilityService } from './services/wallet-portability/WalletPortabilityService'
 import { CachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
 import { AuthTypes, getAuthType } from './utils/auth'
 import { generateSecretKey } from './utils/helpers'
 import { TsLogger } from './utils/logger'
+import { withNetworkErrorCodes } from './utils/networkErrorCodes'
 import {
   getMixedCredentialRequestToCredentialMapper,
   getX509CertsByClientToken,
@@ -581,7 +583,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     modules: {
       ...modules,
     },
-    dependencies: agentDependencies,
+    dependencies: { ...agentDependencies, fetch: withNetworkErrorCodes(agentDependencies.fetch) },
   })
 
   // Register outbound transports
@@ -613,6 +615,11 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   mountBaseMiddleware(expressApp)
 
   await agent.initialize()
+
+  // A dedicated agent can receive an organisation's wallet and then rotate its connections to this agent.
+  if (!afjConfig.tenancy) {
+    await initRotationRuntime(agent as unknown as Agent, logger)
+  }
 
   const genericRecord = await agent.genericRecords.findAllByQuery({ hasSecretKey: 'true' })
   const recordsWithSecretKey = genericRecord[0]
@@ -682,6 +689,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       await cache.disconnect()
     }
     await shutdownWalletPortabilityService()
+    shutdownRotationRuntime()
     await agent.shutdown()
     process.exit(0)
   }

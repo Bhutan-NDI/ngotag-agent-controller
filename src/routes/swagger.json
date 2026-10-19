@@ -5483,6 +5483,199 @@
 				},
 				"type": "object",
 				"additionalProperties": false
+			},
+			"JobStatus": {
+				"type": "string",
+				"enum": [
+					"idle",
+					"running",
+					"completed"
+				]
+			},
+			"RotationJob": {
+				"properties": {
+					"status": {
+						"$ref": "#/components/schemas/JobStatus"
+					},
+					"batchSize": {
+						"type": "number",
+						"format": "double"
+					},
+					"intervalMs": {
+						"type": "number",
+						"format": "double"
+					},
+					"startedAt": {
+						"type": "string"
+					},
+					"completedAt": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"status",
+					"batchSize",
+					"intervalMs"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"Record_RotationBucket.number_": {
+				"properties": {
+					"pending": {
+						"type": "number",
+						"format": "double"
+					},
+					"retrying": {
+						"type": "number",
+						"format": "double"
+					},
+					"failed": {
+						"type": "number",
+						"format": "double"
+					},
+					"waiting": {
+						"type": "number",
+						"format": "double"
+					},
+					"stale": {
+						"type": "number",
+						"format": "double"
+					},
+					"refused": {
+						"type": "number",
+						"format": "double"
+					},
+					"updated": {
+						"type": "number",
+						"format": "double"
+					}
+				},
+				"required": [
+					"pending",
+					"retrying",
+					"failed",
+					"waiting",
+					"stale",
+					"refused",
+					"updated"
+				],
+				"type": "object",
+				"description": "Construct a type with a set of properties K of type T"
+			},
+			"RotationCounts": {
+				"allOf": [
+					{
+						"$ref": "#/components/schemas/Record_RotationBucket.number_"
+					},
+					{
+						"properties": {
+							"total": {
+								"type": "number",
+								"format": "double"
+							}
+						},
+						"required": [
+							"total"
+						],
+						"type": "object"
+					}
+				]
+			},
+			"RotationStatus": {
+				"properties": {
+					"job": {
+						"$ref": "#/components/schemas/RotationJob"
+					},
+					"counts": {
+						"$ref": "#/components/schemas/RotationCounts"
+					}
+				},
+				"required": [
+					"job",
+					"counts"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"RotateOutcome": {
+				"anyOf": [
+					{
+						"properties": {
+							"uncertain": {
+								"type": "boolean"
+							},
+							"newDid": {
+								"type": "string"
+							},
+							"outcome": {
+								"type": "string",
+								"enum": [
+									"sent"
+								],
+								"nullable": false
+							},
+							"connectionId": {
+								"type": "string"
+							}
+						},
+						"required": [
+							"newDid",
+							"outcome",
+							"connectionId"
+						],
+						"type": "object"
+					},
+					{
+						"properties": {
+							"nextAttemptAt": {
+								"type": "string"
+							},
+							"newDid": {
+								"type": "string"
+							},
+							"outcome": {
+								"type": "string",
+								"enum": [
+									"retry",
+									"failed"
+								]
+							},
+							"connectionId": {
+								"type": "string"
+							}
+						},
+						"required": [
+							"newDid",
+							"outcome",
+							"connectionId"
+						],
+						"type": "object"
+					},
+					{
+						"properties": {
+							"reason": {
+								"type": "string"
+							},
+							"outcome": {
+								"type": "string",
+								"enum": [
+									"skipped"
+								],
+								"nullable": false
+							},
+							"connectionId": {
+								"type": "string"
+							}
+						},
+						"required": [
+							"reason",
+							"outcome",
+							"connectionId"
+						],
+						"type": "object"
+					}
+				]
 			}
 		},
 		"securitySchemes": {
@@ -12251,6 +12444,140 @@
 					{
 						"in": "path",
 						"name": "verifierId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"/didcomm/connections/rotate-all": {
+			"post": {
+				"operationId": "RotateAll",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RotationStatus"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "ROTATION_UNAVAILABLE",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Starts rotating every completed connection, most recently active first, in batches (50 a minute by default).\nReturns the job status; a job that is already running is left alone.",
+				"tags": [
+					"Connections"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"intervalSeconds": {
+										"type": "number",
+										"format": "double"
+									},
+									"batchSize": {
+										"type": "number",
+										"format": "double"
+									}
+								},
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/didcomm/connections/rotate-all/status": {
+			"get": {
+				"operationId": "GetRotationStatus",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RotationStatus"
+								}
+							}
+						}
+					}
+				},
+				"description": "Progress of the rotation: how many connections are pending, waiting for an acknowledgement, stale (no answer for\n30 days), refused, updated, retrying or failed.",
+				"tags": [
+					"Connections"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": []
+			}
+		},
+		"/didcomm/connections/{connectionId}/rotate": {
+			"post": {
+				"operationId": "RotateConnection",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RotateOutcome"
+								}
+							}
+						}
+					}
+				},
+				"description": "Rotates one connection now. Also retries a connection whose earlier attempts gave up.",
+				"tags": [
+					"Connections"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "connectionId",
 						"required": true,
 						"schema": {
 							"type": "string"
