@@ -2476,6 +2476,26 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"DeleteExportResult": {
+				"properties": {
+					"jobId": {
+						"type": "string"
+					},
+					"deleted": {
+						"type": "boolean",
+						"enum": [
+							true
+						],
+						"nullable": false
+					}
+				},
+				"required": [
+					"jobId",
+					"deleted"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"WalletPortabilityJobType": {
 				"enum": [
 					"export",
@@ -2511,6 +2531,9 @@
 					},
 					"downloadUrl": {
 						"type": "string"
+					},
+					"artifactDeleted": {
+						"type": "boolean"
 					},
 					"backupProfile": {
 						"type": "string"
@@ -7790,6 +7813,106 @@
 						}
 					}
 				}
+			}
+		},
+		"/multi-tenancy/export/{tenantId}/{jobId}": {
+			"delete": {
+				"operationId": "DeleteExportedWallet",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/DeleteExportResult"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "The export is still running",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Delete a finished export's artifact from S3. Safe to repeat; refused with 409 while the export is still running.",
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "jobId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
 			}
 		},
 		"/multi-tenancy/export/{tenantId}/status/{jobId}": {
