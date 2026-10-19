@@ -1,4 +1,5 @@
 import type { RestMultiTenantAgentModules } from '../../cliAgent'
+import type { PurgeTenantProfileResult } from '../../services/tenant-purge/TenantProfilePurgeService'
 import type {
   ExportWalletResult,
   ImportWalletResult,
@@ -28,6 +29,7 @@ import {
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { ConflictError } from '../../errors/errors'
+import { purgeTenantProfile } from '../../services/tenant-purge/TenantProfilePurgeService'
 import { getWalletPortabilityService } from '../../services/wallet-portability/WalletPortabilityService'
 import {
   WalletPortabilityJobConflictError,
@@ -161,6 +163,32 @@ export class MultiTenancyController extends Controller {
         })
       }
       return internalServerError(500, { message: `Something went wrong: ${error}` })
+    }
+  }
+
+  /**
+   * Remove the tenant's wallet from this agent after it has moved to a dedicated agent. The TenantRecord (tagged
+   * migrated) and routing records stay. Safe to repeat.
+   */
+  @Response<{ message: string }>(404, 'Tenant not found')
+  @Response<{ message: string }>(409, 'A wallet portability job is running for this tenant')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Post('/:tenantId/purge-profile')
+  public async purgeProfile(
+    @Request() request: Req,
+    @Path('tenantId') tenantId: string,
+  ): Promise<PurgeTenantProfileResult> {
+    const agent = request.agent as Agent<RestMultiTenantAgentModules>
+    try {
+      return await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).runExclusive(
+        tenantId,
+        () => purgeTenantProfile(agent, tenantId),
+      )
+    } catch (error) {
+      if (error instanceof WalletPortabilityJobConflictError) {
+        throw new ConflictError(error.message)
+      }
+      throw ErrorHandlingService.handle(error)
     }
   }
 

@@ -15,6 +15,7 @@ import type { ScheduledTask } from 'node-cron'
 import cron from 'node-cron'
 import { randomUUID } from 'node:crypto'
 
+import { isTenantMigrated } from '../../utils/migratedTenant'
 import { isTenantAdmissionError } from '../../utils/tenantSessionConfig'
 import { purgeTenant } from '../PurgeEngine'
 import { PurgeDeletionStatus, sendPurgeWebhook } from '../PurgeWebhook'
@@ -102,10 +103,12 @@ export class CronPurgeScheduler {
     let tenantsDeferred = 0
 
     if (isShared) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const tenants: Array<{ id: string }> = await (agent as any).modules.tenants.getAllTenants()
+      const tenants: Array<{ id: string; getTag?: (name: string) => unknown }> = await (
+        agent as any
+      ).modules.tenants.getAllTenants()
 
       for (const tenant of tenants) {
+        if (isTenantMigrated(tenant)) continue
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           await (agent as any).modules.tenants.withTenantAgent({ tenantId: tenant.id }, async (tenantAgent: Agent) => {
