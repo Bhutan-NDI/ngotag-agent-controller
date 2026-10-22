@@ -25,9 +25,6 @@ import { BadRequestError } from '../errors'
  * connection-based `proofs.requestProof()` builds AND sends internally, so it is reproduced here
  * from Credo's public exports (`DidCommProofsApi.mjs` `requestProof`) with the stamp inserted
  * before the send. Remove once upstream accepts an expiry option on `requestProof`.
- *
- * Credo does not act on `expires_time` when receiving a message -- it is advisory; the holder
- * wallet must enforce it.
  */
 
 // Full ISO-8601 date-time with a mandatory offset (`Z` or `±HH:MM`). `new Date(value)` alone also
