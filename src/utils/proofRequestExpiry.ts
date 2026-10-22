@@ -1,3 +1,4 @@
+import type { PurgeConfig } from '../purge/PurgeTypes'
 import type { AgentContext } from '@credo-ts/core'
 import type {
   DidCommMessage,
@@ -17,7 +18,7 @@ import {
 } from '@credo-ts/didcomm'
 
 import { BadRequestError } from '../errors'
-import { buildPurgeConfig, parsePositiveInt } from '../purge/PurgeTypes'
+import { PurgeRecordType, buildPurgeConfig, parsePositiveInt } from '../purge/PurgeTypes'
 
 /**
  * Proof-request expiry (RFC 0032 `~timing.expires_time`).
@@ -54,33 +55,73 @@ export const stampExpiry = async (
 }
 
 /*
- * Deployment default and bounds for `expiresInSeconds` (phase 2 decision, option c, 2 Oct 2026).
+ * Deployment default and bounds for `expiresInSeconds`.
  *
  * - DIDCOMM_PROOF_REQUEST_EXPIRY is the deployment default: 1800 s in PROD/STAGE, 300 s in QA/dev.
  * - Minimum 300 s: delivery time plus a person reading the request.
- * - Maximum: the purge ceiling. While the cron purge sweeps stale proof exchanges, a request must
- *   expire before purge can delete it, or the holder never gets the problem-report. Without that
- *   sweep a fixed 7-day ceiling applies.
+ * - Maximum: a request must expire before any purge can delete its proof exchange, or the holder
+ *   never gets the problem-report. Each enabled purge that deletes in-flight proof exchanges caps it
+ *   at its TTL minus a margin: the cron stale-proof sweep (PURGE_CRON_ABANDONED_TTL_SECONDS) and the
+ *   state-blind NATS purge (PURGE_NATS_TTL_SECONDS). The tightest cap wins; with neither, a fixed
+ *   7-day ceiling applies.
  */
 export const DIDCOMM_PROOF_REQUEST_EXPIRY_ENV = 'DIDCOMM_PROOF_REQUEST_EXPIRY'
 export const DEFAULT_PROOF_REQUEST_EXPIRY_SECONDS = 1_800
 export const MIN_PROOF_REQUEST_EXPIRY_SECONDS = 300
 export const NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS = 7 * 24 * 60 * 60
-// TODO: placeholder margin below PURGE_CRON_ABANDONED_TTL_SECONDS, pending confirmation.
+// TODO: placeholder margin below the purge TTLs, pending confirmation.
 export const PURGE_CEILING_MARGIN_SECONDS = 60 * 60
 
-/** Record metadata key holding the absolute deadline, for the verifier-side (D4) job. */
+/** Record metadata key holding the absolute deadline, for the verifier-side expiry job. */
 export const PROOF_REQUEST_EXPIRY_METADATA_KEY = 'proofRequestExpiry'
+
+export interface ProofRequestExpiryCeiling {
+  seconds: number
+  /** The setting that imposes `seconds`, so errors point operators at the right knob. */
+  source: string
+}
 
 export interface ProofRequestExpiryConfig {
   defaultSeconds: number
   maxSeconds: number
+  ceilingSource: string
+}
+
+/** The tightest ceiling imposed by the enabled purges that delete in-flight proof exchanges. */
+export const resolveProofRequestExpiryCeiling = (purgeConfig?: PurgeConfig): ProofRequestExpiryCeiling => {
+  const ceilings: ProofRequestExpiryCeiling[] = []
+  const purgeCeiling = (envKey: string, ttlSeconds: number) => ({
+    seconds: ttlSeconds - PURGE_CEILING_MARGIN_SECONDS,
+    source: `${envKey}=${ttlSeconds} minus the ${PURGE_CEILING_MARGIN_SECONDS}s margin`,
+  })
+
+  if (purgeConfig) {
+    const { cronConfig, natsConfig } = purgeConfig
+    if (
+      cronConfig.enabled &&
+      cronConfig.staleProofEnabled &&
+      cronConfig.recordTypes.includes(PurgeRecordType.DIDCOMM_PROOF)
+    ) {
+      ceilings.push(purgeCeiling('PURGE_CRON_ABANDONED_TTL_SECONDS', cronConfig.abandonedTtlSeconds))
+    }
+    if (natsConfig.enabled && natsConfig.recordTypes.includes(PurgeRecordType.DIDCOMM_PROOF)) {
+      ceilings.push(purgeCeiling('PURGE_NATS_TTL_SECONDS', natsConfig.ttlSeconds))
+    }
+  }
+
+  if (ceilings.length === 0) {
+    return {
+      seconds: NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS,
+      source: 'the fixed 7-day ceiling (no proof purge)',
+    }
+  }
+  return ceilings.reduce((tightest, ceiling) => (ceiling.seconds < tightest.seconds ? ceiling : tightest))
 }
 
 /**
  * Reads the deployment default and the ceiling from the environment. Throws when the default is
- * not a positive integer or falls outside [MIN, max], so a bad deployment fails at startup instead
- * of on the first request.
+ * not a positive integer or falls outside [MIN, max], or when the purge settings leave no valid
+ * expiry at all, so a bad deployment fails at startup instead of on the first request.
  */
 export const resolveProofRequestExpiryConfig = (): ProofRequestExpiryConfig => {
   let defaultSeconds: number
@@ -96,19 +137,21 @@ export const resolveProofRequestExpiryConfig = (): ProofRequestExpiryConfig => {
     )
   }
 
-  const cronConfig = buildPurgeConfig()?.cronConfig
-  const maxSeconds =
-    cronConfig?.enabled && cronConfig.staleProofEnabled
-      ? cronConfig.abandonedTtlSeconds - PURGE_CEILING_MARGIN_SECONDS
-      : NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS
-
-  if (defaultSeconds < MIN_PROOF_REQUEST_EXPIRY_SECONDS || defaultSeconds > maxSeconds) {
+  const ceiling = resolveProofRequestExpiryCeiling(buildPurgeConfig())
+  if (ceiling.seconds < MIN_PROOF_REQUEST_EXPIRY_SECONDS) {
     throw new Error(
-      `${DIDCOMM_PROOF_REQUEST_EXPIRY_ENV}=${defaultSeconds} is out of bounds: it must be between ` +
-        `${MIN_PROOF_REQUEST_EXPIRY_SECONDS} and ${maxSeconds} seconds (the purge ceiling).`,
+      `Proof request expiry ceiling is ${ceiling.seconds}s (${ceiling.source}), below the ` +
+        `${MIN_PROOF_REQUEST_EXPIRY_SECONDS}s minimum, so no request could be sent. Raise the purge TTL to at least ` +
+        `${MIN_PROOF_REQUEST_EXPIRY_SECONDS + PURGE_CEILING_MARGIN_SECONDS}s.`,
     )
   }
-  return { defaultSeconds, maxSeconds }
+  if (defaultSeconds < MIN_PROOF_REQUEST_EXPIRY_SECONDS || defaultSeconds > ceiling.seconds) {
+    throw new Error(
+      `${DIDCOMM_PROOF_REQUEST_EXPIRY_ENV}=${defaultSeconds} is out of bounds: it must be between ` +
+        `${MIN_PROOF_REQUEST_EXPIRY_SECONDS} and ${ceiling.seconds} seconds (${ceiling.source}).`,
+    )
+  }
+  return { defaultSeconds, maxSeconds: ceiling.seconds, ceilingSource: ceiling.source }
 }
 
 let cachedConfig: ProofRequestExpiryConfig | undefined
@@ -143,9 +186,21 @@ export const parseExpiresInSeconds = (value: unknown, config: ProofRequestExpiry
 }
 
 /**
+ * The absolute deadline for a proof request: the caller's `expiresInSeconds` (validated by
+ * `parseExpiresInSeconds`) or the deployment default, counted from now.
+ */
+export const resolveProofRequestExpiresTime = (expiresInSeconds: unknown): Date => {
+  const seconds = parseExpiresInSeconds(expiresInSeconds, getProofRequestExpiryConfig())
+  return new Date(Date.now() + seconds * 1000)
+}
+
+/**
  * Stamps `~timing.expires_time` on the request (see `stampExpiry`) and stores the absolute
  * deadline in the proof record's metadata as `expiresAt`, so a verifier-side job can find expired
  * requests without reading every message.
+ *
+ * Both records are already persisted inside `createRequest`, so neither write can be folded into
+ * Credo's own saves without patching it. They touch different records, so they run concurrently.
  */
 export const applyProofRequestExpiry = async (
   agentContext: AgentContext,
@@ -153,14 +208,16 @@ export const applyProofRequestExpiry = async (
   proofRecord: DidCommProofExchangeRecord,
   expiresTime: Date,
 ) => {
-  await stampExpiry(agentContext, message, proofRecord.id, expiresTime)
   proofRecord.metadata.set(PROOF_REQUEST_EXPIRY_METADATA_KEY, { expiresAt: expiresTime.toISOString() })
-  await agentContext.dependencyManager.resolve(DidCommProofExchangeRepository).update(agentContext, proofRecord)
+  await Promise.all([
+    stampExpiry(agentContext, message, proofRecord.id, expiresTime),
+    agentContext.dependencyManager.resolve(DidCommProofExchangeRepository).update(agentContext, proofRecord),
+  ])
 }
 
 interface ProofRequestAgent {
   context: AgentContext
-  modules: { didcomm: { proofs: DidCommProofsApi<any>; connections: DidCommConnectionsApi } }
+  modules: { didcomm: { proofs: DidCommProofsApi<DidCommProofProtocol[]>; connections: DidCommConnectionsApi } }
 }
 
 /**
@@ -169,7 +226,7 @@ interface ProofRequestAgent {
  */
 export const requestProofWithExpiry = async (
   agent: ProofRequestAgent,
-  options: RequestProofOptions<any>,
+  options: RequestProofOptions<DidCommProofProtocol[]>,
   expiresTime: Date,
 ): Promise<DidCommProofExchangeRecord> => {
   const { proofs, connections } = agent.modules.didcomm

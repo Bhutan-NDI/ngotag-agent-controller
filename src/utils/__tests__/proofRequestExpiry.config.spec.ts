@@ -1,8 +1,7 @@
 /**
- * Deployment default, ceiling and per-request validation for proof request expiry (phase 2
- * decision, option c): DIDCOMM_PROOF_REQUEST_EXPIRY as the default, minimum 300 s, maximum the
- * purge ceiling (PURGE_CRON_ABANDONED_TTL_SECONDS minus a margin, or 7 days without the stale-proof
- * sweep), reject rather than clamp.
+ * Deployment default, ceiling and per-request validation for proof request expiry:
+ * DIDCOMM_PROOF_REQUEST_EXPIRY as the default, minimum 300 s, maximum the tightest purge TTL minus a
+ * margin (or 7 days when no purge deletes in-flight proofs), reject rather than clamp.
  */
 import { BadRequestError } from '../../errors'
 import {
@@ -22,6 +21,10 @@ const ENV_KEYS = [
   'PURGE_CRON_ENABLED',
   'PURGE_CRON_STALE_PROOF_ENABLED',
   'PURGE_CRON_ABANDONED_TTL_SECONDS',
+  'PURGE_NATS_ENABLED',
+  'PURGE_NATS_TTL_SECONDS',
+  'PURGE_DIDCOMM_PROOF',
+  'PURGE_DIDCOMM_OOB',
 ] as const
 
 describe('resolveProofRequestExpiryConfig', () => {
@@ -55,6 +58,7 @@ describe('resolveProofRequestExpiryConfig', () => {
     expect(resolveProofRequestExpiryConfig()).toEqual({
       defaultSeconds: DEFAULT_PROOF_REQUEST_EXPIRY_SECONDS,
       maxSeconds: NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS,
+      ceilingSource: expect.stringMatching(/fixed 7-day ceiling/),
     })
   })
 
@@ -77,6 +81,39 @@ describe('resolveProofRequestExpiryConfig', () => {
     expect(resolveProofRequestExpiryConfig().maxSeconds).toBe(NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS)
   })
 
+  it('falls back to the 7-day ceiling when proofs are not among the purged record types', () => {
+    enableCronPurge(2 * 24 * 60 * 60)
+    process.env.PURGE_DIDCOMM_OOB = 'true'
+    process.env.PURGE_DIDCOMM_PROOF = 'false'
+    expect(resolveProofRequestExpiryConfig().maxSeconds).toBe(NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS)
+  })
+
+  it('caps the ceiling at the NATS purge TTL, which deletes state-blind', () => {
+    process.env.PURGE_ENABLED = 'true'
+    process.env.PURGE_NATS_ENABLED = 'true'
+    process.env.PURGE_NATS_TTL_SECONDS = String(3 * 60 * 60)
+    process.env.DIDCOMM_PROOF_REQUEST_EXPIRY = '600'
+    expect(resolveProofRequestExpiryConfig()).toMatchObject({
+      maxSeconds: 3 * 60 * 60 - PURGE_CEILING_MARGIN_SECONDS,
+      ceilingSource: expect.stringMatching(/PURGE_NATS_TTL_SECONDS=10800/),
+    })
+  })
+
+  it('takes the tighter of the cron and NATS ceilings', () => {
+    enableCronPurge(2 * 24 * 60 * 60)
+    process.env.PURGE_NATS_ENABLED = 'true'
+    process.env.PURGE_NATS_TTL_SECONDS = String(3 * 60 * 60)
+    expect(resolveProofRequestExpiryConfig().maxSeconds).toBe(3 * 60 * 60 - PURGE_CEILING_MARGIN_SECONDS)
+  })
+
+  it('fails naming the purge TTL when it leaves no expiry above the minimum', () => {
+    enableCronPurge(3600) // the abandoned-TTL floor: ceiling 0
+    process.env.DIDCOMM_PROOF_REQUEST_EXPIRY = '300'
+    expect(() => resolveProofRequestExpiryConfig()).toThrow(
+      /ceiling is 0s \(PURGE_CRON_ABANDONED_TTL_SECONDS=3600 .*\).*at least 3900s/,
+    )
+  })
+
   it.each(['abc', '1800s', '1.5', '-300', '0'])('fails on a malformed default "%s"', (value) => {
     process.env.DIDCOMM_PROOF_REQUEST_EXPIRY = value
     expect(() => resolveProofRequestExpiryConfig()).toThrow(/DIDCOMM_PROOF_REQUEST_EXPIRY must be a positive integer/)
@@ -90,7 +127,14 @@ describe('resolveProofRequestExpiryConfig', () => {
   it('fails when the default is above the purge ceiling', () => {
     enableCronPurge(2 * 60 * 60) // 2 h purge TTL -> 1 h ceiling
     process.env.DIDCOMM_PROOF_REQUEST_EXPIRY = '3601'
-    expect(() => resolveProofRequestExpiryConfig()).toThrow(/out of bounds/)
+    expect(() => resolveProofRequestExpiryConfig()).toThrow(
+      /between 300 and 3600 seconds \(PURGE_CRON_ABANDONED_TTL_SECONDS=7200/,
+    )
+  })
+
+  it('names the fixed ceiling, not the purge, when the default is above 7 days without purge', () => {
+    process.env.DIDCOMM_PROOF_REQUEST_EXPIRY = String(NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS + 1)
+    expect(() => resolveProofRequestExpiryConfig()).toThrow(/\(the fixed 7-day ceiling/)
   })
 
   it('caches the resolved config until reset', () => {
@@ -104,7 +148,7 @@ describe('resolveProofRequestExpiryConfig', () => {
 })
 
 describe('parseExpiresInSeconds', () => {
-  const config = { defaultSeconds: 1800, maxSeconds: 601_200 }
+  const config = { defaultSeconds: 1800, maxSeconds: 601_200, ceilingSource: 'test' }
 
   it('uses the deployment default when missing or null', () => {
     expect(parseExpiresInSeconds(undefined, config)).toBe(1800)

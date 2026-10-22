@@ -652,17 +652,19 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
 
   logger.info('*** API Key: set')
 
+  const purgeConfig = buildPurgeConfig()
+  if (purgeConfig) await validatePurgeConfig(purgeConfig)
+
   // Fail at startup, not on the first request, if DIDCOMM_PROOF_REQUEST_EXPIRY is invalid or above
-  // the purge ceiling.
+  // the purge ceiling. Checked after the purge config so a bad purge TTL gets the validator's message.
   const proofRequestExpiry = getProofRequestExpiryConfig()
   logger.info(
-    `Proof request expiry: default ${proofRequestExpiry.defaultSeconds}s, max ${proofRequestExpiry.maxSeconds}s`,
+    `Proof request expiry: default ${proofRequestExpiry.defaultSeconds}s, max ${proofRequestExpiry.maxSeconds}s ` +
+      `(${proofRequestExpiry.ceilingSource})`,
   )
 
   // Start purge schedulers if enabled (NATS and Cron are independent)
-  const purgeConfig = buildPurgeConfig()
   if (purgeConfig) {
-    await validatePurgeConfig(purgeConfig)
     initPurgeSchedulers(purgeConfig.natsConfig.enabled, purgeConfig.cronConfig.enabled)
 
     const purgeWebhookUrl = purgeConfig.webhookEnabled ? webhookUrl : undefined
