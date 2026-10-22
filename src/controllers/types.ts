@@ -178,6 +178,8 @@ export interface CreateProofRequestOobOptions {
   imageUrl?: string
   recipientKey?: string
   invitationDid?: string
+  /** ISO-8601 date-time after which the request expires (sent as `~timing.expires_time`). */
+  expiresTime?: string
 }
 
 export interface OfferCredentialOptions {
@@ -283,6 +285,8 @@ export interface RequestProofOptions {
   goalCode?: string
   parentThreadId?: string
   willConfirm?: boolean
+  /** ISO-8601 date-time after which the request expires (sent as `~timing.expires_time`). */
+  expiresTime?: string
 }
 
 // TODO: added type in protocolVersion
