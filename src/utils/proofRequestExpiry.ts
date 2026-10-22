@@ -62,13 +62,13 @@ export const stampExpiry = async (
  * - Maximum: a request must expire before any purge can delete its proof exchange, or the holder
  *   never gets the problem-report. Each enabled purge that deletes in-flight proof exchanges caps it
  *   at its TTL minus a margin: the cron stale-proof sweep (PURGE_CRON_ABANDONED_TTL_SECONDS) and the
- *   state-blind NATS purge (PURGE_NATS_TTL_SECONDS). The tightest cap wins; with neither, a fixed
- *   7-day ceiling applies.
+ *   state-blind NATS purge (PURGE_NATS_TTL_SECONDS). A fixed 7-day ceiling always applies too, so
+ *   a purge can only lower the maximum; the tightest cap wins.
  */
 export const DIDCOMM_PROOF_REQUEST_EXPIRY_ENV = 'DIDCOMM_PROOF_REQUEST_EXPIRY'
 export const DEFAULT_PROOF_REQUEST_EXPIRY_SECONDS = 1_800
 export const MIN_PROOF_REQUEST_EXPIRY_SECONDS = 300
-export const NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS = 7 * 24 * 60 * 60
+export const MAX_PROOF_REQUEST_EXPIRY_SECONDS = 7 * 24 * 60 * 60
 // TODO: placeholder margin below the purge TTLs, pending confirmation.
 export const PURGE_CEILING_MARGIN_SECONDS = 60 * 60
 
@@ -87,9 +87,11 @@ export interface ProofRequestExpiryConfig {
   ceilingSource: string
 }
 
-/** The tightest ceiling imposed by the enabled purges that delete in-flight proof exchanges. */
+/** The tightest of the fixed 7-day ceiling and the enabled purges that delete in-flight proof exchanges. */
 export const resolveProofRequestExpiryCeiling = (purgeConfig?: PurgeConfig): ProofRequestExpiryCeiling => {
-  const ceilings: ProofRequestExpiryCeiling[] = []
+  const ceilings: ProofRequestExpiryCeiling[] = [
+    { seconds: MAX_PROOF_REQUEST_EXPIRY_SECONDS, source: 'the fixed 7-day ceiling' },
+  ]
   const purgeCeiling = (envKey: string, ttlSeconds: number) => ({
     seconds: ttlSeconds - PURGE_CEILING_MARGIN_SECONDS,
     source: `${envKey}=${ttlSeconds} minus the ${PURGE_CEILING_MARGIN_SECONDS}s margin`,
@@ -109,12 +111,6 @@ export const resolveProofRequestExpiryCeiling = (purgeConfig?: PurgeConfig): Pro
     }
   }
 
-  if (ceilings.length === 0) {
-    return {
-      seconds: NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS,
-      source: 'the fixed 7-day ceiling (no proof purge)',
-    }
-  }
   return ceilings.reduce((tightest, ceiling) => (ceiling.seconds < tightest.seconds ? ceiling : tightest))
 }
 

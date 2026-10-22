@@ -1,13 +1,13 @@
 /**
  * Deployment default, ceiling and per-request validation for proof request expiry:
  * DIDCOMM_PROOF_REQUEST_EXPIRY as the default, minimum 300 s, maximum the tightest purge TTL minus a
- * margin (or 7 days when no purge deletes in-flight proofs), reject rather than clamp.
+ * margin, never above 7 days, reject rather than clamp.
  */
 import { BadRequestError } from '../../errors'
 import {
   DEFAULT_PROOF_REQUEST_EXPIRY_SECONDS,
   MIN_PROOF_REQUEST_EXPIRY_SECONDS,
-  NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS,
+  MAX_PROOF_REQUEST_EXPIRY_SECONDS,
   PURGE_CEILING_MARGIN_SECONDS,
   getProofRequestExpiryConfig,
   parseExpiresInSeconds,
@@ -57,7 +57,7 @@ describe('resolveProofRequestExpiryConfig', () => {
   it('defaults to 1800 s with a fixed 7-day ceiling when purge is off', () => {
     expect(resolveProofRequestExpiryConfig()).toEqual({
       defaultSeconds: DEFAULT_PROOF_REQUEST_EXPIRY_SECONDS,
-      maxSeconds: NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS,
+      maxSeconds: MAX_PROOF_REQUEST_EXPIRY_SECONDS,
       ceilingSource: expect.stringMatching(/fixed 7-day ceiling/),
     })
   })
@@ -78,14 +78,28 @@ describe('resolveProofRequestExpiryConfig', () => {
   it('falls back to the 7-day ceiling when the cron purge does not sweep stale proofs', () => {
     enableCronPurge(2 * 24 * 60 * 60)
     process.env.PURGE_CRON_STALE_PROOF_ENABLED = 'false'
-    expect(resolveProofRequestExpiryConfig().maxSeconds).toBe(NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS)
+    expect(resolveProofRequestExpiryConfig().maxSeconds).toBe(MAX_PROOF_REQUEST_EXPIRY_SECONDS)
   })
 
   it('falls back to the 7-day ceiling when proofs are not among the purged record types', () => {
     enableCronPurge(2 * 24 * 60 * 60)
     process.env.PURGE_DIDCOMM_OOB = 'true'
     process.env.PURGE_DIDCOMM_PROOF = 'false'
-    expect(resolveProofRequestExpiryConfig().maxSeconds).toBe(NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS)
+    expect(resolveProofRequestExpiryConfig().maxSeconds).toBe(MAX_PROOF_REQUEST_EXPIRY_SECONDS)
+  })
+
+  it('keeps the 7-day ceiling when a purge TTL is longer', () => {
+    process.env.PURGE_ENABLED = 'true'
+    process.env.PURGE_NATS_ENABLED = 'true' // NATS TTL defaults to 30 days
+    expect(resolveProofRequestExpiryConfig()).toMatchObject({
+      maxSeconds: MAX_PROOF_REQUEST_EXPIRY_SECONDS,
+      ceilingSource: expect.stringMatching(/fixed 7-day ceiling/),
+    })
+
+    resetProofRequestExpiryConfig()
+    delete process.env.PURGE_NATS_ENABLED
+    enableCronPurge(30 * 24 * 60 * 60)
+    expect(resolveProofRequestExpiryConfig().maxSeconds).toBe(MAX_PROOF_REQUEST_EXPIRY_SECONDS)
   })
 
   it('caps the ceiling at the NATS purge TTL, which deletes state-blind', () => {
@@ -133,7 +147,7 @@ describe('resolveProofRequestExpiryConfig', () => {
   })
 
   it('names the fixed ceiling, not the purge, when the default is above 7 days without purge', () => {
-    process.env.DIDCOMM_PROOF_REQUEST_EXPIRY = String(NO_PURGE_PROOF_REQUEST_EXPIRY_CEILING_SECONDS + 1)
+    process.env.DIDCOMM_PROOF_REQUEST_EXPIRY = String(MAX_PROOF_REQUEST_EXPIRY_SECONDS + 1)
     expect(() => resolveProofRequestExpiryConfig()).toThrow(/\(the fixed 7-day ceiling/)
   })
 
