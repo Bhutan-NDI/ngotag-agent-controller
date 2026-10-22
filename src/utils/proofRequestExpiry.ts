@@ -73,13 +73,13 @@ export const stampExpiry = async (
 
 interface ProofRequestAgent {
   context: AgentContext
-  modules: { didcomm: { proofs: DidCommProofsApi<any>; connections: DidCommConnectionsApi } }
+  modules: { didcomm: { proofs: DidCommProofsApi<DidCommProofProtocol[]>; connections: DidCommConnectionsApi } }
 }
 
 /** `proofs.requestProof()` with an expiry stamped on the request before it is sent. */
 export const requestProofWithExpiry = async (
   agent: ProofRequestAgent,
-  options: RequestProofOptions<any>,
+  options: RequestProofOptions<DidCommProofProtocol[]>,
   expiresTime: Date,
 ): Promise<DidCommProofExchangeRecord> => {
   const { proofs, connections } = agent.modules.didcomm
