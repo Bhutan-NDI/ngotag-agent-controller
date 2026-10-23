@@ -11,13 +11,14 @@ import { jest } from '@jest/globals'
 
 import { getAgentRuntimeConfig, getReleaseVersion, getStorageVersion } from '../agentInfo'
 
-const buildAgent = () => {
+const buildAgent = (hasRecord = true) => {
   const getCurrentStorageVersion = jest.fn<() => Promise<string>>().mockResolvedValue('0.5')
+  const hasStorageVersionRecord = jest.fn<() => Promise<boolean>>().mockResolvedValue(hasRecord)
   const resolvers = new Map<unknown, unknown>([
     [DidCommConnectionsModuleConfig, { autoAcceptConnections: true }],
     [DidCommCredentialsModuleConfig, { autoAcceptCredentials: 'always' }],
     [DidCommProofsModuleConfig, { autoAcceptProofs: 'contentApproved' }],
-    [StorageUpdateService, { getCurrentStorageVersion }],
+    [StorageUpdateService, { getCurrentStorageVersion, hasStorageVersionRecord }],
   ])
   const agent = {
     context: { contextCorrelationId: 'default' },
@@ -72,6 +73,13 @@ describe('agentInfo', () => {
 
       await expect(getStorageVersion(agent)).resolves.toBe('0.5')
       expect(getCurrentStorageVersion).toHaveBeenCalledWith((agent as { context: unknown }).context)
+    })
+
+    it('reports the framework version without reading, and so creating, a missing record', async () => {
+      const { agent, getCurrentStorageVersion } = buildAgent(false)
+
+      await expect(getStorageVersion(agent)).resolves.toBe(StorageUpdateService.frameworkStorageVersion)
+      expect(getCurrentStorageVersion).not.toHaveBeenCalled()
     })
   })
 

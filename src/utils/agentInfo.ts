@@ -40,5 +40,11 @@ export const getAgentRuntimeConfig = (agent: Request['agent']): AgentRuntimeConf
   }
 }
 
-export const getStorageVersion = (agent: Request['agent']): Promise<string> =>
-  agent.dependencyManager.resolve(StorageUpdateService).getCurrentStorageVersion(agent.context)
+// A profile with no record is reported at the framework version it is upgraded to when opened; reading it must not
+// create the record, because Credo would write the initial "0.1" and later replay migrations on current data.
+export const getStorageVersion = async (agent: Request['agent']): Promise<string> => {
+  const storageUpdateService = agent.dependencyManager.resolve(StorageUpdateService)
+  return (await storageUpdateService.hasStorageVersionRecord(agent.context))
+    ? storageUpdateService.getCurrentStorageVersion(agent.context)
+    : StorageUpdateService.frameworkStorageVersion
+}
