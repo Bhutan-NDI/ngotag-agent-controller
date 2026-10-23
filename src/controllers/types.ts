@@ -158,6 +158,7 @@ export interface CreateOfferOobOptions {
   imageUrl?: string
   recipientKey?: string
   invitationDid?: string
+  additionalInvitationDids?: string[]
 }
 export interface CredentialCreateOfferOptions {
   credentialRecord: DidCommCredentialExchangeRecord
@@ -178,6 +179,7 @@ export interface CreateProofRequestOobOptions {
   imageUrl?: string
   recipientKey?: string
   invitationDid?: string
+  additionalInvitationDids?: string[]
 }
 
 export interface OfferCredentialOptions {
@@ -372,6 +374,7 @@ export interface CreateInvitationOptions {
   routing?: DidCommRouting
   appendedAttachments?: DidCommAttachment[]
   invitationDid?: string
+  additionalInvitationDids?: string[]
 }
 
 //todo:Add transaction type

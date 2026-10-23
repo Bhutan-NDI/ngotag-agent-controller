@@ -18,6 +18,7 @@ import { BadRequestError } from '../../../errors'
 import { PurgeRecordType } from '../../../purge/PurgeTypes'
 import { SchedulePurge } from '../../../purge/decorators/SchedulePurge'
 import { AgentType } from '../../../types'
+import { addAdditionalInvitationDids, validateAdditionalInvitationDids } from '../../../utils/additionalInvitationDids'
 import { CredentialExchangeRecordExample, RecordId } from '../../examples'
 import {
   AcceptCredentialRequestOptions,
@@ -264,6 +265,12 @@ export class CredentialController extends Controller {
     try {
       let invitationDid: string | undefined
       let routing: DidCommRouting
+      // Checked first, so a bad request leaves no credential exchange behind.
+      const extraInvitationDids = await validateAdditionalInvitationDids(
+        request.agent,
+        outOfBandOption?.additionalInvitationDids,
+        outOfBandOption?.invitationDid,
+      )
       await this.ensureLinkSecretExists(request.agent)
 
       if (outOfBandOption?.invitationDid) {
@@ -324,6 +331,7 @@ export class CredentialController extends Controller {
         goalCode: outOfBandOption?.goalCode,
         invitationDid,
       })
+      await addAdditionalInvitationDids(request.agent, outOfBandRecord, extraInvitationDids)
       return {
         invitationUrl: outOfBandRecord.outOfBandInvitation.toUrl({
           domain: request.agent.modules.didcomm.config.endpoints[0],
