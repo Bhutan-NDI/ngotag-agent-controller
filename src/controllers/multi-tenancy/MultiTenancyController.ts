@@ -30,6 +30,7 @@ import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { ConflictError } from '../../errors/errors'
 import { purgeTenantProfile } from '../../services/tenant-purge/TenantProfilePurgeService'
+import { assertNoRelay } from '../../services/tenant-purge/relayGuard'
 import { getWalletPortabilityService } from '../../services/wallet-portability/WalletPortabilityService'
 import {
   WalletPortabilityJobConflictError,
@@ -137,6 +138,7 @@ export class MultiTenancyController extends Controller {
     }
   }
 
+  @Response<{ message: string }>(409, 'TENANT_HAS_RELAY')
   @Delete(':tenantId')
   public async deleteTenantById(
     @Request() request: Req,
@@ -146,6 +148,7 @@ export class MultiTenancyController extends Controller {
   ) {
     try {
       const agent = request.agent as Agent<RestMultiTenantAgentModules>
+      await assertNoRelay(agent, tenantId)
       const deleteTenant = await agent.modules.tenants.deleteTenantById(tenantId)
       // Invalidate the cached tenant record so a deleted tenant no longer resolves from cache.
       // Key matches the tenants cache patch (patches/@credo-ts+tenants+0.6.2.patch).
@@ -157,6 +160,9 @@ export class MultiTenancyController extends Controller {
       }
       return JsonTransformer.toJSON(deleteTenant)
     } catch (error) {
+      if (error instanceof ConflictError) {
+        throw error
+      }
       if (error instanceof RecordNotFoundError) {
         return notFoundError(404, {
           reason: `Tenant with id: ${tenantId} not found.`,
