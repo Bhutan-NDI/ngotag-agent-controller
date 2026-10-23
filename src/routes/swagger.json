@@ -2451,6 +2451,55 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"EndpointSchemeSummary": {
+				"properties": {
+					"tenantId": {
+						"type": "string"
+					},
+					"didsScanned": {
+						"type": "number",
+						"format": "double"
+					},
+					"unresolvedDids": {
+						"type": "number",
+						"format": "double"
+					},
+					"schemes": {
+						"items": {
+							"properties": {
+								"exampleDids": {
+									"items": {
+										"type": "string"
+									},
+									"type": "array"
+								},
+								"count": {
+									"type": "number",
+									"format": "double"
+								},
+								"scheme": {
+									"type": "string"
+								}
+							},
+							"required": [
+								"exampleDids",
+								"count",
+								"scheme"
+							],
+							"type": "object"
+						},
+						"type": "array"
+					}
+				},
+				"required": [
+					"tenantId",
+					"didsScanned",
+					"unresolvedDids",
+					"schemes"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"WalletPortabilityJobStatus": {
 				"enum": [
 					"pending",
@@ -7639,6 +7688,80 @@
 						}
 					}
 				},
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"/multi-tenancy/{tenantId}/endpoint-schemes": {
+			"get": {
+				"operationId": "GetEndpointSchemes",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/EndpointSchemeSummary"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Tenant not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Which URL schemes the tenant's own DIDs advertise as service endpoints, with a count and example DIDs per\nscheme, so a caller can refuse a move for schemes the dedicated agent doesn't serve (ws, wss).",
 				"tags": [
 					"MultiTenancy"
 				],
