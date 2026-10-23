@@ -948,6 +948,20 @@ export class WalletPortabilityService {
     await pipeline(source, gunzip, dest)
   }
 
+  /** Runs `work` while holding the tenant's active-job slot, so it cannot overlap an export or import. */
+  public async runExclusive<T>(tenantId: string, work: () => Promise<T>): Promise<T> {
+    const jobId = uuid()
+    const conflictingJobId = await this.jobStore.tryReserveActiveJob(tenantId, jobId)
+    if (conflictingJobId) {
+      throw new WalletPortabilityJobConflictError(tenantId, conflictingJobId)
+    }
+    try {
+      return await work()
+    } finally {
+      await this.jobStore.releaseActiveJob(tenantId, jobId).catch(() => undefined)
+    }
+  }
+
   /** Graceful shutdown — closes the job store's Redis connection, if any. See shutdownWalletPortabilityService. */
   public async disconnect(): Promise<void> {
     await this.jobStore.disconnect()

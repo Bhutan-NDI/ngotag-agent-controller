@@ -6,6 +6,7 @@ import type { Consumer } from 'nats'
 import { RecordNotFoundError } from '@credo-ts/core'
 import { StringCodec } from 'nats'
 
+import { isTenantMigrated } from '../utils/migratedTenant'
 import { isTenantAdmissionError } from '../utils/tenantSessionConfig'
 
 import { PURGE_CONSUMER_BACKOFF_NS, PURGE_CONSUMER_MAX_DELIVER, PURGE_WORKER_RESTART_DELAY_MS } from './PurgeConstants'
@@ -108,6 +109,12 @@ export class PurgeWorker {
 
     try {
       if (agentMode === 'shared') {
+        const tenant = await (agent as any).modules.tenants.getTenantById(tenantId)
+        if (isTenantMigrated(tenant)) {
+          logger.info('[Purge] Tenant has migrated — skipping job', { recordId, recordType, tenantId })
+          msg.ack()
+          return
+        }
         await (agent as any).modules.tenants.withTenantAgent({ tenantId }, async (tenantAgent: Agent) => {
           await this.deleteWithCascade(tenantAgent, recordId)
         })
