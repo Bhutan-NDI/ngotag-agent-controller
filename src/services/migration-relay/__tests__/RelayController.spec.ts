@@ -10,6 +10,7 @@ const service = {
   get: jest.fn<(...args: unknown[]) => Promise<unknown>>(),
   remove: jest.fn<(...args: unknown[]) => Promise<unknown>>(),
   reinject: jest.fn<(...args: unknown[]) => Promise<unknown>>(),
+  restore: jest.fn<(...args: unknown[]) => Promise<unknown>>(),
   probe: jest.fn<(...args: unknown[]) => Promise<unknown>>(),
 }
 let runtime: { service: typeof service } | undefined = { service }
@@ -49,6 +50,34 @@ describe('RelayController', () => {
       reachable: true,
     })
     expect(service.probe).toHaveBeenCalledWith('https://a.example.org')
+  })
+
+  it('hands a restore to the service with the root agent', async () => {
+    service.restore.mockResolvedValue({ injected: 2, failed: 0 })
+
+    await expect(controller.restore(req, 'tenant-1')).resolves.toEqual({ injected: 2, failed: 0 })
+
+    expect(service.restore).toHaveBeenCalledWith(agent, 'tenant-1')
+  })
+
+  it.each([
+    ['a purged tenant', new RelayConflictError('TENANT_PURGED'), ConflictError, 409, 'TENANT_PURGED'],
+    [
+      'messages still held',
+      new RelayConflictError('RELAY_BUFFER_NOT_EMPTY'),
+      ConflictError,
+      409,
+      'RELAY_BUFFER_NOT_EMPTY',
+    ],
+    ['no relay', new RelayNotFoundError('tenant-1'), NotFoundError, 404, "No relay entry for tenant 'tenant-1'."],
+  ])('maps %s on a restore to its HTTP status', async (_name, thrown, errorClass, statusCode, message) => {
+    service.restore.mockRejectedValue(thrown)
+
+    const error = await controller.restore(req, 'tenant-1').catch((e) => e)
+
+    expect(error).toBeInstanceOf(errorClass)
+    expect(error.statusCode).toBe(statusCode)
+    expect(error.message).toBe(message)
   })
 
   it('answers delete with 204', async () => {
@@ -94,6 +123,7 @@ describe('RelayController', () => {
       ['delete', () => controller.deleteRelay(req, 't')],
       ['probe', () => controller.probe('t', { target: 'https://a.example.org' })],
       ['reinject', () => controller.reinject(req, 't')],
+      ['restore', () => controller.restore(req, 't')],
     ])('refuses %s with 409 RELAY_DISABLED', async (_name, call) => {
       runtime = undefined
 

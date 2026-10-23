@@ -12697,6 +12697,94 @@
 					}
 				]
 			}
+		},
+		"/multi-tenancy/relay/{tenantId}/restore": {
+			"post": {
+				"operationId": "Restore",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"failed": {
+											"type": "number",
+											"format": "double"
+										},
+										"injected": {
+											"type": "number",
+											"format": "double"
+										}
+									},
+									"required": [
+										"failed",
+										"injected"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No relay for this tenant",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "TENANT_PURGED or RELAY_BUFFER_NOT_EMPTY",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Disaster restore: takes the tenant off the relay for good, including a FORWARD relay. Held and queued messages go\nback to this agent first. Refused when the tenant's wallet has been purged.",
+				"tags": [
+					"Multi-Tenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
 		}
 	},
 	"servers": [
