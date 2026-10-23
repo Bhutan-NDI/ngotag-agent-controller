@@ -248,6 +248,32 @@ describe('sealed export -> root wallet import (real Askar)', () => {
     await expect(service.createImportSession(root)).resolves.toBeDefined()
   }, 60000)
 
+  it('keeps the presigned URL out of the log when the download fails', async () => {
+    const root = await buildRootAgent()
+    const session = await service.createImportSession(root)
+    const exportJob = await exportFor(session.importPublicKey)
+    const signedUrl = 'https://export-bucket.s3.amazonaws.com/artifact?X-Amz-Signature=abc123'
+    ;(service as unknown as Internals).downloadAndChecksum = async (url) => {
+      throw new Error(`request to ${url} failed, reason: socket hang up`)
+    }
+    const logged = jest.spyOn((service as unknown as { logger: TsLogger }).logger, 'error')
+
+    const imported = await service.importRootWallet(root, {
+      sessionId: session.sessionId,
+      exportUrl: signedUrl,
+      checksum: exportJob.checksum as string,
+      sealedStoreKey: exportJob.sealedStoreKey as string,
+      storageVersion: '0.5',
+      dryRun: false,
+    })
+    await waitForJob(imported.jobId)
+
+    const lines = logged.mock.calls.map((call) => String(call[0]))
+    expect(lines.some((line) => line.includes('socket hang up'))).toBe(true)
+    expect(lines.join('\n')).not.toContain('X-Amz-Signature')
+    logged.mockRestore()
+  }, 60000)
+
   it('fails the job and writes nothing when the store key was sealed to a different recipient', async () => {
     const root = await buildRootAgent()
     const session = await service.createImportSession(root)

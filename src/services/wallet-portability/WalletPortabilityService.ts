@@ -74,6 +74,9 @@ const MAX_DECOMPRESSED_BYTES = MAX_DOWNLOAD_BYTES
 // node-fetch@2 has no default timeout, and this `timeout` option only covers time-to-first-byte
 // (cleared once headers arrive) — a stalled body isn't caught by this alone; see
 // downloadAndChecksum's inactivity timer for that case.
+// node-fetch puts the whole request URL, signature included, in its error messages.
+const withoutUrls = (error: unknown): string => String(error).replace(/https?:\/\/\S+/gi, '[url]')
+
 const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000
 
 // Gzip magic number — used to detect a mobile-compat (uncompressed) artifact on import without
@@ -661,7 +664,7 @@ export class WalletPortabilityService {
     // itself throws — otherwise the job stays Pending and the tenant's slot never releases,
     // wedging every future export/import until the 24h TTL clears.
     this.runImport(agent, tenantId, jobId, exportUrl, passKey, checksum, heartbeat).catch((error) => {
-      this.logger.error(`[WalletPortabilityService] import job ${jobId} failed to start: ${error}`)
+      this.logger.error(`[WalletPortabilityService] import job ${jobId} failed to start: ${withoutUrls(error)}`)
       this.setJobStatus(
         jobId,
         tenantId,
@@ -828,7 +831,7 @@ export class WalletPortabilityService {
           { jobId },
         )
       }
-      this.logger.error(`[WalletPortabilityService] import job ${jobId} failed: ${error}`)
+      this.logger.error(`[WalletPortabilityService] import job ${jobId} failed: ${withoutUrls(error)}`)
 
       // Best-effort rollback: if we got as far as renaming the tenant's real profile aside but
       // never completed, put it back rather than leaving the tenant with no working wallet.
@@ -1130,7 +1133,7 @@ export class WalletPortabilityService {
     })
 
     this.runRootImport(agent, jobId, options, heartbeat, source).catch((error) => {
-      this.logger.error(`[WalletPortabilityService] root import job ${jobId} failed to start: ${error}`)
+      this.logger.error(`[WalletPortabilityService] root import job ${jobId} failed to start: ${withoutUrls(error)}`)
       this.setJobStatus(
         jobId,
         ROOT_IMPORT_SCOPE_ID,
@@ -1223,7 +1226,7 @@ export class WalletPortabilityService {
         dryRun: options.dryRun,
       })
     } catch (error) {
-      this.logger.error(`[WalletPortabilityService] root import job ${jobId} failed: ${error}`)
+      this.logger.error(`[WalletPortabilityService] root import job ${jobId} failed: ${withoutUrls(error)}`)
       await this.setJobStatus(
         jobId,
         ROOT_IMPORT_SCOPE_ID,
