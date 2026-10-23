@@ -1,4 +1,9 @@
-import type { ExportWalletResult, ImportWalletResult, WalletPortabilityJobRecord } from './WalletPortabilityTypes'
+import type {
+  DeleteExportResult,
+  ExportWalletResult,
+  ImportWalletResult,
+  WalletPortabilityJobRecord,
+} from './WalletPortabilityTypes'
 import type { RestMultiTenantAgentModules } from '../../cliAgent'
 import type { TsLogger } from '../../utils/logger'
 import type { Agent } from '@credo-ts/core'
@@ -74,6 +79,7 @@ interface S3Client {
     promise(): Promise<unknown>
   }
   getSignedUrl(operation: 'getObject', params: { Bucket: string; Key: string; Expires: number }): string
+  deleteObject(params: { Bucket: string; Key: string }): { promise(): Promise<unknown> }
 }
 
 /**
@@ -111,6 +117,31 @@ export class WalletPortabilityService {
       return { ...job, downloadUrl: this.getPresignedUrl(job.s3Key) }
     }
     return job
+  }
+
+  /**
+   * Removes a finished export's artifact from S3 so the platform never needs bucket access. Returns undefined when
+   * the job is unknown, belongs to another tenant, or is not an export. The object key comes from the stored job
+   * record, never from the caller. Safe to repeat.
+   */
+  public async deleteExport(tenantId: string, jobId: string): Promise<DeleteExportResult | undefined> {
+    const job = await this.jobStore.get(jobId)
+    if (!job || job.tenantId !== tenantId || job.type !== WalletPortabilityJobType.Export) return undefined
+    if (job.status === WalletPortabilityJobStatus.Pending || job.status === WalletPortabilityJobStatus.InProgress) {
+      throw new WalletPortabilityJobConflictError(tenantId, jobId)
+    }
+
+    if (job.s3Key) {
+      await this.s3.deleteObject({ Bucket: this.getExportBucket(), Key: job.s3Key }).promise()
+      await this.jobStore.save({
+        ...job,
+        s3Key: undefined,
+        artifactDeleted: true,
+        updatedAt: new Date().toISOString(),
+      })
+      this.logger.info(`[WalletPortabilityService] export ${jobId} for tenant '${tenantId}' deleted from S3`)
+    }
+    return { jobId, deleted: true }
   }
 
   /**
