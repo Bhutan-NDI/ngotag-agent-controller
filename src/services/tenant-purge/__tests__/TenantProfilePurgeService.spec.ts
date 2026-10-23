@@ -36,6 +36,13 @@ describe('purgeTenantProfile against a real multi-tenant agent', () => {
     return store.listProfiles()
   }
 
+  // The relay's entry in the base wallet; purge-profile refuses until it forwards.
+  const forwardRelay = (tenantId: string) =>
+    agent.genericRecords.save({
+      id: `migration-relay-${tenantId}`,
+      content: { tenantId, mode: 'FORWARD', target: 'https://didcomm.org.example.org/' },
+    })
+
   const seed = (tenantId: string) =>
     tenants.withTenantAgent({ tenantId }, async (tenantAgent) => {
       await tenantAgent.genericRecords.save({ id: 'marker', content: { owner: tenantId } })
@@ -77,6 +84,7 @@ describe('purgeTenantProfile against a real multi-tenant agent', () => {
     staying = (await tenants.createTenant({ config: { label: 'staying-org' } })).id
     await seed(migrating)
     await seed(staying)
+    await forwardRelay(migrating)
   }, 120000)
 
   afterAll(async () => {
@@ -116,6 +124,7 @@ describe('purgeTenantProfile against a real multi-tenant agent', () => {
   it('finishes the removal when a previous attempt tagged the record but stopped before removing the wallet', async () => {
     const interrupted = (await tenants.createTenant({ config: { label: 'interrupted-org' } })).id
     await seed(interrupted)
+    await forwardRelay(interrupted)
     const record = await tenants.getTenantById(interrupted)
     ;(record as unknown as { setTag: (n: string, v: boolean) => void }).setTag('migrated', true)
     await (

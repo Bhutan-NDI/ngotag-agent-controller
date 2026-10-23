@@ -7,6 +7,8 @@ import { CacheModuleConfig, InjectionSymbols } from '@credo-ts/core'
 import { BadRequestError } from '../../errors/errors'
 import { MIGRATED_TENANT_TAG, isTenantMigrated } from '../../utils/migratedTenant'
 
+import { assertRelayForwarding } from './relayGuard'
+
 export interface PurgeTenantProfileResult {
   tenantId: string
   migrated: true
@@ -22,7 +24,8 @@ const tenantProfileExists = async (agent: Agent<RestMultiTenantAgentModules>, te
 
 /**
  * Removes a tenant's wallet from the shared agent but keeps its TenantRecord (tagged `migrated`) and routing
- * records. The tag is written first and the call is safe to repeat after a partial failure.
+ * records. Refused until the tenant's relay forwards to the new agent. The tag is written first and the call is safe to
+ * repeat after a partial failure.
  */
 export const purgeTenantProfile = async (
   agent: Agent<RestMultiTenantAgentModules>,
@@ -36,6 +39,7 @@ export const purgeTenantProfile = async (
   }
 
   const tenant = await agent.modules.tenants.getTenantById(tenantId)
+  await assertRelayForwarding(agent, tenantId)
 
   if (!isTenantMigrated(tenant)) {
     tenant.setTag(MIGRATED_TENANT_TAG, true)
