@@ -56,11 +56,23 @@ export type CustomTenantConfig = { label: string } & {
   connectionImageUrl?: string
 }
 
+export interface AgentRuntimeConfig {
+  autoAcceptConnections: boolean
+  autoAcceptCredentials: string
+  autoAcceptProofs: string
+  inboundTransports: string[]
+  outboundTransports: string[]
+  cronPurgeEnabled: boolean
+}
+
 export interface AgentInfo {
   label: string
   endpoints: string[]
   isInitialized: boolean
   publicDid: void
+  releaseVersion?: string
+  storageVersion: string
+  config: AgentRuntimeConfig
 }
 
 export interface AgentToken {
