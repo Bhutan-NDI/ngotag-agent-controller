@@ -5447,43 +5447,6 @@
 				"type": "object",
 				"additionalProperties": false
 			},
-			"OpenId4VcVerifierRecord": {
-				"$ref": "#/components/schemas/Record_string.unknown_",
-				"description": "For OID4VC you need to expos metadata files. Each issuer needs to host this metadata. This is not the case for DIDComm where we can just have one /didcomm endpoint.\nSo we create a record per openid issuer/verifier that you want, and each tenant can create multiple issuers/verifiers which have different endpoints\nand metadata files"
-			},
-			"OpenId4VcSiopVerifierClientMetadata": {
-				"properties": {
-					"client_name": {
-						"type": "string"
-					},
-					"logo_uri": {
-						"type": "string"
-					}
-				},
-				"type": "object",
-				"additionalProperties": false
-			},
-			"OpenId4VcSiopCreateVerifierOptions": {
-				"properties": {
-					"verifierId": {
-						"type": "string"
-					},
-					"clientMetadata": {
-						"$ref": "#/components/schemas/OpenId4VcSiopVerifierClientMetadata"
-					}
-				},
-				"type": "object",
-				"additionalProperties": false
-			},
-			"OpenId4VcUpdateVerifierRecordOptions": {
-				"properties": {
-					"clientMetadata": {
-						"$ref": "#/components/schemas/OpenId4VcSiopVerifierClientMetadata"
-					}
-				},
-				"type": "object",
-				"additionalProperties": false
-			},
 			"JobStatus": {
 				"type": "string",
 				"enum": [
@@ -5676,6 +5639,43 @@
 						"type": "object"
 					}
 				]
+			},
+			"OpenId4VcVerifierRecord": {
+				"$ref": "#/components/schemas/Record_string.unknown_",
+				"description": "For OID4VC you need to expos metadata files. Each issuer needs to host this metadata. This is not the case for DIDComm where we can just have one /didcomm endpoint.\nSo we create a record per openid issuer/verifier that you want, and each tenant can create multiple issuers/verifiers which have different endpoints\nand metadata files"
+			},
+			"OpenId4VcSiopVerifierClientMetadata": {
+				"properties": {
+					"client_name": {
+						"type": "string"
+					},
+					"logo_uri": {
+						"type": "string"
+					}
+				},
+				"type": "object",
+				"additionalProperties": false
+			},
+			"OpenId4VcSiopCreateVerifierOptions": {
+				"properties": {
+					"verifierId": {
+						"type": "string"
+					},
+					"clientMetadata": {
+						"$ref": "#/components/schemas/OpenId4VcSiopVerifierClientMetadata"
+					}
+				},
+				"type": "object",
+				"additionalProperties": false
+			},
+			"OpenId4VcUpdateVerifierRecordOptions": {
+				"properties": {
+					"clientMetadata": {
+						"$ref": "#/components/schemas/OpenId4VcSiopVerifierClientMetadata"
+					}
+				},
+				"type": "object",
+				"additionalProperties": false
 			}
 		},
 		"securitySchemes": {
@@ -12239,6 +12239,140 @@
 				]
 			}
 		},
+		"/didcomm/connections/rotate-all": {
+			"post": {
+				"operationId": "RotateAll",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RotationStatus"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "ROTATION_UNAVAILABLE",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Starts rotating every completed connection, most recently active first, in batches (50 a minute by default).\nReturns the job status; a job that is already running is left alone.",
+				"tags": [
+					"Connections"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"intervalSeconds": {
+										"type": "number",
+										"format": "double"
+									},
+									"batchSize": {
+										"type": "number",
+										"format": "double"
+									}
+								},
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/didcomm/connections/rotate-all/status": {
+			"get": {
+				"operationId": "GetRotationStatus",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RotationStatus"
+								}
+							}
+						}
+					}
+				},
+				"description": "Progress of the rotation: how many connections are pending, waiting for an acknowledgement, stale (no answer for\n30 days), refused, updated, retrying or failed.",
+				"tags": [
+					"Connections"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": []
+			}
+		},
+		"/didcomm/connections/{connectionId}/rotate": {
+			"post": {
+				"operationId": "RotateConnection",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RotateOutcome"
+								}
+							}
+						}
+					}
+				},
+				"description": "Rotates one connection now. Also retries a connection whose earlier attempts gave up.",
+				"tags": [
+					"Connections"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "connectionId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
 		"/openid4vc/verifier": {
 			"post": {
 				"operationId": "CreateVerifier",
@@ -12444,140 +12578,6 @@
 					{
 						"in": "path",
 						"name": "verifierId",
-						"required": true,
-						"schema": {
-							"type": "string"
-						}
-					}
-				]
-			}
-		},
-		"/didcomm/connections/rotate-all": {
-			"post": {
-				"operationId": "RotateAll",
-				"responses": {
-					"200": {
-						"description": "Ok",
-						"content": {
-							"application/json": {
-								"schema": {
-									"$ref": "#/components/schemas/RotationStatus"
-								}
-							}
-						}
-					},
-					"409": {
-						"description": "ROTATION_UNAVAILABLE",
-						"content": {
-							"application/json": {
-								"schema": {
-									"properties": {
-										"message": {
-											"type": "string"
-										}
-									},
-									"required": [
-										"message"
-									],
-									"type": "object"
-								}
-							}
-						}
-					}
-				},
-				"description": "Starts rotating every completed connection, most recently active first, in batches (50 a minute by default).\nReturns the job status; a job that is already running is left alone.",
-				"tags": [
-					"Connections"
-				],
-				"security": [
-					{
-						"jwt": [
-							"dedicated"
-						]
-					}
-				],
-				"parameters": [],
-				"requestBody": {
-					"required": true,
-					"content": {
-						"application/json": {
-							"schema": {
-								"properties": {
-									"intervalSeconds": {
-										"type": "number",
-										"format": "double"
-									},
-									"batchSize": {
-										"type": "number",
-										"format": "double"
-									}
-								},
-								"type": "object"
-							}
-						}
-					}
-				}
-			}
-		},
-		"/didcomm/connections/rotate-all/status": {
-			"get": {
-				"operationId": "GetRotationStatus",
-				"responses": {
-					"200": {
-						"description": "Ok",
-						"content": {
-							"application/json": {
-								"schema": {
-									"$ref": "#/components/schemas/RotationStatus"
-								}
-							}
-						}
-					}
-				},
-				"description": "Progress of the rotation: how many connections are pending, waiting for an acknowledgement, stale (no answer for\n30 days), refused, updated, retrying or failed.",
-				"tags": [
-					"Connections"
-				],
-				"security": [
-					{
-						"jwt": [
-							"dedicated"
-						]
-					}
-				],
-				"parameters": []
-			}
-		},
-		"/didcomm/connections/{connectionId}/rotate": {
-			"post": {
-				"operationId": "RotateConnection",
-				"responses": {
-					"200": {
-						"description": "Ok",
-						"content": {
-							"application/json": {
-								"schema": {
-									"$ref": "#/components/schemas/RotateOutcome"
-								}
-							}
-						}
-					}
-				},
-				"description": "Rotates one connection now. Also retries a connection whose earlier attempts gave up.",
-				"tags": [
-					"Connections"
-				],
-				"security": [
-					{
-						"jwt": [
-							"dedicated"
-						]
-					}
-				],
-				"parameters": [
-					{
-						"in": "path",
-						"name": "connectionId",
 						"required": true,
 						"schema": {
 							"type": "string"
