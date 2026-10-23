@@ -1,0 +1,20 @@
+// The relay runs on the production shared agent, so it is off unless explicitly enabled, and it needs the shared
+// Redis its state lives in (every ECS task must see the same entries and buffers).
+export const isRelayEnabled = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  'true' === env.MIGRATION_RELAY_ENABLED && Boolean(env.REDIS_URL)
+
+export const HOLD_BUFFER_CAP = 10_000
+export const HOLD_BUFFER_TTL_SECONDS = 24 * 60 * 60
+export const FORWARD_TIMEOUT_MS = 15_000
+export const PROBE_TIMEOUT_MS = 5_000
+export const MAX_FORWARD_RESPONSE_BYTES = 5 * 1024 * 1024
+// Hot path: one Redis round trip per inbound message, so a slow Redis must fail open quickly, not stall the agent.
+export const REDIS_COMMAND_TIMEOUT_MS = 500
+export const REDIS_CONNECT_TIMEOUT_MS = 5_000
+export const DAILY_COUNTER_TTL_SECONDS = 400 * 24 * 60 * 60
+// Per-key "last seen" counters roll over after 12 months.
+export const SEEN_COUNTER_TTL_SECONDS = 365 * 24 * 60 * 60
+export const DRAIN_LOCK_MS = 30_000
+export const DRAIN_BACKOFF_BASE_MS = 1_000
+export const DRAIN_BACKOFF_MAX_MS = 60_000
+export const REINJECT_PROCESSED_TIMEOUT_MS = 10_000
