@@ -40,6 +40,8 @@ import { ProofController } from './../controllers/didcomm/proofs/ProofController
 // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
 import { Ethereum } from './../controllers/ethereum/EthereumController';
 // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+import { ConnectionRotationController } from './../controllers/didcomm/connections/ConnectionRotationController';
+// WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
 import { VerifierController } from './../controllers/openid4vc/verifiers/verifier.Controller';
 import { expressAuthentication } from './../authentication';
 // @ts-ignore - no great way to install types from subpackage
@@ -2356,6 +2358,47 @@ const models: TsoaRoute.Models = {
             "proofFormats": {"ref":"DidCommProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_","required":true},
         },
         "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "JobStatus": {
+        "dataType": "refAlias",
+        "type": {"dataType":"union","subSchemas":[{"dataType":"enum","enums":["idle"]},{"dataType":"enum","enums":["running"]},{"dataType":"enum","enums":["completed"]}],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RotationJob": {
+        "dataType": "refObject",
+        "properties": {
+            "status": {"ref":"JobStatus","required":true},
+            "batchSize": {"dataType":"double","required":true},
+            "intervalMs": {"dataType":"double","required":true},
+            "startedAt": {"dataType":"string"},
+            "completedAt": {"dataType":"string"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "Record_RotationBucket.number_": {
+        "dataType": "refAlias",
+        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"pending":{"dataType":"double","required":true},"retrying":{"dataType":"double","required":true},"failed":{"dataType":"double","required":true},"waiting":{"dataType":"double","required":true},"stale":{"dataType":"double","required":true},"refused":{"dataType":"double","required":true},"updated":{"dataType":"double","required":true}},"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RotationCounts": {
+        "dataType": "refAlias",
+        "type": {"dataType":"intersection","subSchemas":[{"ref":"Record_RotationBucket.number_"},{"dataType":"nestedObjectLiteral","nestedProperties":{"total":{"dataType":"double","required":true}}}],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RotationStatus": {
+        "dataType": "refObject",
+        "properties": {
+            "job": {"ref":"RotationJob","required":true},
+            "counts": {"ref":"RotationCounts","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RotateOutcome": {
+        "dataType": "refAlias",
+        "type": {"dataType":"union","subSchemas":[{"dataType":"nestedObjectLiteral","nestedProperties":{"uncertain":{"dataType":"boolean"},"newDid":{"dataType":"string","required":true},"outcome":{"dataType":"enum","enums":["sent"],"required":true},"connectionId":{"dataType":"string","required":true}}},{"dataType":"nestedObjectLiteral","nestedProperties":{"nextAttemptAt":{"dataType":"string"},"newDid":{"dataType":"string","required":true},"outcome":{"dataType":"union","subSchemas":[{"dataType":"enum","enums":["retry"]},{"dataType":"enum","enums":["failed"]}],"required":true},"connectionId":{"dataType":"string","required":true}}},{"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true},"outcome":{"dataType":"enum","enums":["skipped"],"required":true},"connectionId":{"dataType":"string","required":true}}}],"validators":{}},
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "OpenId4VcVerifierRecord": {
@@ -6326,6 +6369,113 @@ export function RegisterRoutes(app: Router) {
 
               await templateService.apiHandler({
                 methodName: 'getSchemaById',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsConnectionRotationController_rotateAll: Record<string, TsoaRoute.ParameterSchema> = {
+                body: {"in":"body","name":"body","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"intervalSeconds":{"dataType":"double"},"batchSize":{"dataType":"double"}}},
+        };
+        app.post('/didcomm/connections/rotate-all',
+            authenticateMiddleware([{"jwt":["dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(ConnectionRotationController)),
+            ...(fetchMiddlewares<RequestHandler>(ConnectionRotationController.prototype.rotateAll)),
+
+            async function ConnectionRotationController_rotateAll(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsConnectionRotationController_rotateAll, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<ConnectionRotationController>(ConnectionRotationController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'rotateAll',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsConnectionRotationController_getRotationStatus: Record<string, TsoaRoute.ParameterSchema> = {
+        };
+        app.get('/didcomm/connections/rotate-all/status',
+            authenticateMiddleware([{"jwt":["dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(ConnectionRotationController)),
+            ...(fetchMiddlewares<RequestHandler>(ConnectionRotationController.prototype.getRotationStatus)),
+
+            async function ConnectionRotationController_getRotationStatus(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsConnectionRotationController_getRotationStatus, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<ConnectionRotationController>(ConnectionRotationController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'getRotationStatus',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsConnectionRotationController_rotateConnection: Record<string, TsoaRoute.ParameterSchema> = {
+                connectionId: {"in":"path","name":"connectionId","required":true,"dataType":"string"},
+        };
+        app.post('/didcomm/connections/:connectionId/rotate',
+            authenticateMiddleware([{"jwt":["dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(ConnectionRotationController)),
+            ...(fetchMiddlewares<RequestHandler>(ConnectionRotationController.prototype.rotateConnection)),
+
+            async function ConnectionRotationController_rotateConnection(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsConnectionRotationController_rotateConnection, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<ConnectionRotationController>(ConnectionRotationController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'rotateConnection',
                 controller,
                 response,
                 next,
