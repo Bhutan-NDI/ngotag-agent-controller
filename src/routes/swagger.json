@@ -7644,6 +7644,24 @@
 							}
 						}
 					},
+					"409": {
+						"description": "TENANT_HAS_RELAY",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
 					"500": {
 						"description": "",
 						"content": {

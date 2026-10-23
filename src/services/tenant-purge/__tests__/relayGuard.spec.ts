@@ -15,7 +15,7 @@ import ErrorHandlingService from '../../../errorHandlingService'
 import { ConflictError } from '../../../errors/errors'
 import { isTenantMigrated } from '../../../utils/migratedTenant'
 import { purgeTenantProfile } from '../TenantProfilePurgeService'
-import { assertRelayForwarding, RELAY_NOT_FORWARDING } from '../relayGuard'
+import { assertNoRelay, assertRelayForwarding, RELAY_NOT_FORWARDING, TENANT_HAS_RELAY } from '../relayGuard'
 
 type TenantsApi = {
   createTenant: (o: unknown) => Promise<{ id: string }>
@@ -160,4 +160,34 @@ describe('purge-profile needs a forwarding relay', () => {
     await expect(assertRelayForwarding(agent as never, tenantId)).resolves.toBeUndefined()
     await expect(assertRelayForwarding(agent as never, randomUUID())).rejects.toBeInstanceOf(ConflictError)
   }, 60000)
+
+  describe('assertNoRelay', () => {
+    it('lets a tenant with no relay entry through', async () => {
+      await expect(assertNoRelay(agent as never, randomUUID())).resolves.toBeUndefined()
+    })
+
+    it.each([
+      ['holding', { mode: 'HOLD' }],
+      ['forwarding', { mode: 'FORWARD', target: TARGET }],
+    ])(
+      'refuses a tenant whose relay is %s',
+      async (_name, relay) => {
+        const tenantId = await newTenant(`org-${randomUUID()}`)
+        await setRelay(tenantId, relay)
+
+        const error = await assertNoRelay(agent as never, tenantId).catch((e: unknown) => e)
+
+        expect(error).toBeInstanceOf(ConflictError)
+        expect((error as ConflictError).message).toBe(TENANT_HAS_RELAY)
+      },
+      60000,
+    )
+
+    it("is not affected by another tenant's relay", async () => {
+      const other = await newTenant(`org-${randomUUID()}`)
+      await setRelay(other, { mode: 'FORWARD', target: TARGET })
+
+      await expect(assertNoRelay(agent as never, randomUUID())).resolves.toBeUndefined()
+    }, 60000)
+  })
 })
