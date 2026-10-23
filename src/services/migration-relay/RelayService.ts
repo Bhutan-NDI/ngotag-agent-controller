@@ -18,6 +18,7 @@ export type RelayConflictCode =
   | 'RELAY_NOT_REMOVABLE'
   | 'RELAY_BUFFER_NOT_EMPTY'
   | 'RELAY_NOT_HOLDING'
+  | 'TENANT_PURGED'
 
 export class RelayConflictError extends Error {
   public constructor(public readonly code: RelayConflictCode) {
@@ -131,6 +132,33 @@ export class RelayService {
     await this.store.removeKeys(await this.listFingerprints(agent, tenantId))
     await this.store.deleteEntry(tenantId)
     await agent.genericRecords.delete(record)
+  }
+
+  /**
+   * Takes a tenant off the relay for good, for a disaster restore: the new agent is lost and this agent serves the
+   * organisation again from the wallet it kept. A FORWARD relay is permanent in every other case, so this is the one
+   * way out of it. It stops forwarding (new messages are held), hands every message held or queued for the lost
+   * target back to this agent, and removes the entry. Safe to repeat if it stops half way.
+   * @throws RelayConflictError TENANT_PURGED when the tenant's wallet was already removed, so there is nothing to serve
+   */
+  public async restore(agent: RootAgent, tenantId: string): Promise<{ injected: number; failed: number }> {
+    const record = await this.findRecord(agent, tenantId)
+    if (!record) throw new RelayNotFoundError(tenantId)
+
+    // The tag purge-profile writes; with the wallet gone, putting the tenant back would send messages nowhere.
+    const tenant = (await agent.modules.tenants.getTenantById(tenantId)) as { getTag?: (name: string) => unknown }
+    if (true === tenant.getTag?.('migrated')) throw new RelayConflictError('TENANT_PURGED')
+
+    if ('FORWARD' === record.content.mode) {
+      this.logger.warn(`[RelayService] restoring tenant '${tenantId}': its FORWARD relay is being taken off`)
+      const holding: RelayEntry = { tenantId, mode: 'HOLD', updatedAt: new Date().toISOString() }
+      await this.saveRecord(agent, record, holding)
+      await this.store.setEntry(holding)
+    }
+
+    const result = await this.reinject(agent, tenantId)
+    await this.remove(agent, tenantId)
+    return result
   }
 
   /**
