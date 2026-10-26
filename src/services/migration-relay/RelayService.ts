@@ -159,6 +159,7 @@ export class RelayService {
       this.logger.warn(`[RelayService] restoring tenant '${tenantId}': its FORWARD relay is being taken off`)
       const holding: RelayEntry = { tenantId, mode: 'HOLD', updatedAt: new Date().toISOString() }
       await this.saveRecord(agent, record, holding)
+      this.mirror.set(holding, await this.listFingerprints(agent, tenantId))
       await this.store.setEntry(holding)
     }
 

@@ -332,6 +332,23 @@ describe('RelayService', () => {
       expect(modes).toEqual(['HOLD', 'HOLD'])
     })
 
+    it('stops the mirror forwarding too, and forgets the tenant once the relay is gone', async () => {
+      const { service, agent, store } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      await store.holdPush(TENANT, envelope(1))
+      const seen: unknown[] = []
+      const reinject = service.reinject.bind(service)
+      jest.spyOn(service, 'reinject').mockImplementation(async (...args) => {
+        seen.push(service.mirror.find(['fp-1'])?.mode)
+        return reinject(...args)
+      })
+
+      await service.restore(agent, TENANT)
+
+      expect(seen).toEqual(['HOLD'])
+      expect(service.mirror.find(['fp-1', 'fp-2'])).toBeUndefined()
+    })
+
     it('does not ask the drainer to forward anything', async () => {
       const { service, agent, drainer } = buildHarness()
       await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
