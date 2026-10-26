@@ -3,6 +3,7 @@ import type {
   ImportWalletResult,
   WalletPortabilityJobRecord,
 } from '../../services/wallet-portability/WalletPortabilityTypes'
+import type { ExportBucketProbe } from '../../services/wallet-portability/exportBucketProbe'
 import type { Agent } from '@credo-ts/core'
 
 import { LogLevel } from '@credo-ts/core'
@@ -17,6 +18,7 @@ import {
   ROOT_IMPORT_SCOPE_ID,
 } from '../../services/wallet-portability/WalletPortabilityService'
 import { WalletPortabilityJobType } from '../../services/wallet-portability/WalletPortabilityTypes'
+import { probeExportBucket } from '../../services/wallet-portability/exportBucketProbe'
 import { TsLogger } from '../../utils/logger'
 
 import { mapImportError } from './walletImportErrors'
@@ -35,6 +37,15 @@ const service = () => getWalletPortabilityService(new TsLogger(LogLevel.info, 'w
 @Security('jwt', [SCOPES.DEDICATED_AGENT])
 @injectable()
 export class AgentWalletController extends Controller {
+  /**
+   * Whether this agent can pull an export from its S3 bucket. When it cannot, the platform sends the export itself
+   * with POST /agent/wallet/import/upload.
+   */
+  @Get('/export-bucket')
+  public async getExportBucket(): Promise<ExportBucketProbe> {
+    return probeExportBucket()
+  }
+
   /**
    * Checks the root wallet is pristine and starts an import session. The returned public key is what the
    * export's store key is sealed to; the private half stays in this agent's memory.
