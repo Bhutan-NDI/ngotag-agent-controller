@@ -11,10 +11,11 @@ export const connectionEvents = async (agent: Agent, config: ServerConfig) => {
   const publish = (
     event: DidCommConnectionStateChangedEvent | DidCommConnectionDidRotatedEvent,
     body: Record<string, unknown>,
+    topic: string,
   ) => {
     // Only send webhook if webhook url is configured
     if (config.webhookUrl) {
-      void sendWebhookEvent(config.webhookUrl + '/connections', body, agent.config.logger)
+      void sendWebhookEvent(config.webhookUrl + topic, body, agent.config.logger)
     }
 
     if (config.socketServer) {
@@ -32,17 +33,22 @@ export const connectionEvents = async (agent: Agent, config: ServerConfig) => {
   agent.events.on(
     DidCommConnectionEventTypes.DidCommConnectionStateChanged,
     async (event: DidCommConnectionStateChangedEvent) => {
-      publish(event, { ...event.payload.connectionRecord.toJSON(), ...event.metadata })
+      publish(event, { ...event.payload.connectionRecord.toJSON(), ...event.metadata }, '/connections')
     },
   )
 
-  // A DID change goes to the same endpoint as a state change, carrying the connection as it now is plus a
-  // `didRotated` field with the old and new DID of whichever side changed.
+  // A DID change has its own topic: on /connections it would read as another completed connection. The record is
+  // the connection as it now is, with a `didRotated` field holding the old and new DID of whichever side changed
+  // (neither, for a hangup).
   agent.events.on(
     DidCommConnectionEventTypes.DidCommConnectionDidRotated,
     async (event: DidCommConnectionDidRotatedEvent) => {
       const { connectionRecord, ourDid, theirDid } = event.payload
-      publish(event, { ...connectionRecord.toJSON(), ...event.metadata, didRotated: { ourDid, theirDid } })
+      publish(
+        event,
+        { ...connectionRecord.toJSON(), ...event.metadata, didRotated: { ourDid, theirDid } },
+        '/connections/did-rotated',
+      )
     },
   )
 }

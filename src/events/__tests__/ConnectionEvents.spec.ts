@@ -1,6 +1,6 @@
 /**
- * ConnectionEvents: a connection state change is published as before, and a DID rotation is published to the same
- * endpoint with a `didRotated` field. WebhookEvent and WebSocketEvents are stubbed so no network I/O occurs.
+ * ConnectionEvents: a connection state change is published as before, and a DID rotation to its own
+ * `/connections/did-rotated` endpoint with a `didRotated` field. WebhookEvent and WebSocketEvents are stubbed so no network I/O occurs.
  */
 import { jest } from '@jest/globals'
 
@@ -55,7 +55,7 @@ describe('connectionEvents', () => {
     )
   })
 
-  it('publishes a DID rotation to the same endpoint, carrying the connection as it now is and the old and new DID', async () => {
+  it('publishes a DID rotation to its own endpoint, carrying the connection as it now is and the old and new DID', async () => {
     const { fire } = await setup({ webhookUrl: WEBHOOK_URL })
 
     await fire(DidCommConnectionEventTypes.DidCommConnectionDidRotated, {
@@ -67,7 +67,7 @@ describe('connectionEvents', () => {
     })
 
     expect(sendWebhookEvent).toHaveBeenCalledWith(
-      `${WEBHOOK_URL}/connections`,
+      `${WEBHOOK_URL}/connections/did-rotated`,
       {
         id: 'conn-1',
         state: 'completed',
@@ -78,6 +78,32 @@ describe('connectionEvents', () => {
       },
       expect.anything(),
     )
+  })
+
+  it('never publishes a DID rotation, or anything about one, to /connections', async () => {
+    const { fire } = await setup({ webhookUrl: WEBHOOK_URL })
+
+    await fire(DidCommConnectionEventTypes.DidCommConnectionDidRotated, {
+      metadata: {},
+      payload: { connectionRecord: record(), ourDid: { from: 'a', to: 'b' } },
+    })
+
+    const urls = jest.mocked(sendWebhookEvent).mock.calls.map(([url]) => url)
+    expect(urls).toEqual([`${WEBHOOK_URL}/connections/did-rotated`])
+  })
+
+  it('publishes a hangup, which Credo reports with neither DID, on the rotation endpoint with an empty didRotated', async () => {
+    const { fire } = await setup({ webhookUrl: WEBHOOK_URL })
+
+    await fire(DidCommConnectionEventTypes.DidCommConnectionDidRotated, {
+      metadata: { contextCorrelationId: 'ctx-1' },
+      payload: { connectionRecord: record({ theirDid: undefined }) },
+    })
+
+    expect(sendWebhookEvent).toHaveBeenCalledTimes(1)
+    const [url, body] = jest.mocked(sendWebhookEvent).mock.calls[0]
+    expect(url).toBe(`${WEBHOOK_URL}/connections/did-rotated`)
+    expect(body.didRotated).toEqual({ ourDid: undefined, theirDid: undefined })
   })
 
   it("reports a rotation of the other side's DID as theirDid", async () => {
