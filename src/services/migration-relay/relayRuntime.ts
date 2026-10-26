@@ -1,5 +1,7 @@
 import type { RelayRedis } from './RelayStore'
+import type { RestMultiTenantAgentModules } from '../../cliAgent'
 import type { TsLogger } from '../../utils/logger'
+import type { Agent } from '@credo-ts/core'
 import type { RequestHandler } from 'express'
 
 import { Redis } from 'ioredis'
@@ -49,10 +51,23 @@ export const initRelayRuntime = (logger: TsLogger): RelayRuntime | undefined => 
     store,
     drainer,
     service,
-    middleware: createRelayMiddleware({ store, forward: forwardEnvelope, drainer, logger }),
+    middleware: createRelayMiddleware({ store, forward: forwardEnvelope, drainer, logger, mirror: service.mirror }),
   }
   logger.info('[Relay] migration relay enabled')
   return runtime
+}
+
+/** Relay entries outlive the flag: with the relay off, their messages reach a wallet that has moved. Says so. */
+export const warnIfRelayEntriesExist = async (
+  agent: Agent<RestMultiTenantAgentModules>,
+  logger: TsLogger,
+): Promise<void> => {
+  const records = await agent.genericRecords.findAllByQuery({ migrationRelay: 'true' })
+  if (0 < records.length) {
+    logger.error(
+      `[Relay] ${records.length} tenant(s) have relay entries but the relay is off: their messages are NOT being relayed. Set MIGRATION_RELAY_ENABLED and REDIS_URL.`,
+    )
+  }
 }
 
 export const getRelayRuntime = (): RelayRuntime | undefined => runtime
@@ -60,6 +75,7 @@ export const getRelayRuntime = (): RelayRuntime | undefined => runtime
 export const shutdownRelayRuntime = async (): Promise<void> => {
   if (!runtime) return
   runtime.drainer.stop()
+  runtime.service.stop()
   await runtime.store.disconnect()
   runtime = undefined
 }

@@ -531,6 +531,93 @@ describe('RelayService', () => {
     })
   })
 
+  describe('the mirror', () => {
+    it('knows a relay as soon as it is set, and forgets it when it is removed', async () => {
+      const { service, agent } = buildHarness()
+
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      expect(service.mirror.find(['fp-2'])).toMatchObject({ tenantId: TENANT, mode: 'HOLD' })
+
+      await service.remove(agent, TENANT)
+      expect(service.mirror.find(['fp-2'])).toBeUndefined()
+    })
+
+    it('learns a recipient key Credo creates for a tenant it knows', async () => {
+      const { service, agent, fire } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      service.watchRoutingKeys(agent)
+
+      fire(DidCommRoutingEventTypes.RoutingCreatedEvent, {
+        payload: { routing: { recipientKey: { fingerprint: 'fp-new' } } },
+        metadata: { contextCorrelationId: `tenant-${TENANT}` },
+      })
+
+      expect(service.mirror.find(['fp-new'])?.tenantId).toBe(TENANT)
+    })
+
+    it('is filled by rehydrate', async () => {
+      const first = buildHarness()
+      await first.service.put(first.agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      const { service, agent, records } = buildHarness()
+      for (const [id, record] of first.records) records.set(id, record)
+
+      await service.rehydrate(agent)
+
+      expect(service.mirror.find(['fp-1'])).toMatchObject({ mode: 'FORWARD', target: TARGET })
+    })
+
+    it('puts back an entry Redis has lost, and drains a buffer that was waiting', async () => {
+      const { service, agent, redis, store, drainer } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      await store.holdPush(TENANT, { receivedAt: 'now', contentType: 'x', body: '{}' })
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      drainer.ensureDraining.mockClear()
+      redis.strings.clear()
+
+      await service.refreshMirror(agent)
+
+      expect(await store.getEntry(TENANT)).toMatchObject({ mode: 'FORWARD', target: TARGET })
+      await expect(store.findTenantIdByFingerprints(['fp-1'])).resolves.toBe(TENANT)
+      expect(drainer.ensureDraining).toHaveBeenCalledWith(TENANT)
+    })
+
+    it('does not overwrite an entry Redis still has with an older record', async () => {
+      const { service, agent, store } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      const newer = { tenantId: TENANT, mode: 'FORWARD' as const, target: TARGET, updatedAt: 'later' }
+      await store.setEntry(newer)
+
+      await service.refreshMirror(agent)
+
+      expect(await store.getEntry(TENANT)).toEqual(newer)
+    })
+
+    it('still reads the base wallet into the mirror when Redis is down', async () => {
+      const { service, agent, redis, records } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      service.mirror.remove(TENANT)
+      redis.failing = true
+
+      await service.refreshMirror(agent)
+
+      expect(service.mirror.find(['fp-1'])).toMatchObject({ tenantId: TENANT })
+      expect(records.size).toBe(1)
+    })
+
+    it('refreshes on a timer until it is stopped', async () => {
+      const { service, agent } = buildHarness()
+      const refresh = jest.spyOn(service, 'refreshMirror')
+
+      service.startMirror(agent, 10)
+      await eventually(() => 2 <= refresh.mock.calls.length)
+      service.stop()
+      const calls = refresh.mock.calls.length
+      await new Promise((resolve) => setTimeout(resolve, 40))
+
+      expect(refresh.mock.calls.length).toBe(calls)
+    })
+  })
+
   it('reports whether Redis is reachable', async () => {
     const { service, redis } = buildHarness()
 

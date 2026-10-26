@@ -1,5 +1,5 @@
 import { RelayStore } from '../RelayStore'
-import { HOLD_BUFFER_CAP, HOLD_BUFFER_TTL_SECONDS } from '../relayConfig'
+import { HOLD_BUFFER_CAP, HOLD_BUFFER_TTL_SECONDS, holdBufferCap, holdBufferTtlSeconds } from '../relayConfig'
 
 import { FakeRedis } from './testSupport'
 
@@ -117,5 +117,33 @@ describe('RelayStore', () => {
     await expect(store.isReady()).resolves.toBe(true)
     redis.failing = true
     await expect(store.isReady()).resolves.toBe(false)
+  })
+
+  describe('the buffer limits', () => {
+    afterEach(() => {
+      delete process.env.MIGRATION_RELAY_HOLD_CAP
+      delete process.env.MIGRATION_RELAY_HOLD_TTL_SECONDS
+    })
+
+    it('default to 10,000 messages and 24 hours', () => {
+      expect(holdBufferCap({})).toBe(10_000)
+      expect(holdBufferTtlSeconds({})).toBe(24 * 60 * 60)
+    })
+
+    it.each(['0', '-5', 'abc', '1.5', ''])('ignore %j and keep the default', (value) => {
+      expect(holdBufferCap({ MIGRATION_RELAY_HOLD_CAP: value })).toBe(HOLD_BUFFER_CAP)
+      expect(holdBufferTtlSeconds({ MIGRATION_RELAY_HOLD_TTL_SECONDS: value })).toBe(HOLD_BUFFER_TTL_SECONDS)
+    })
+
+    it('come from the environment when it sets them', async () => {
+      process.env.MIGRATION_RELAY_HOLD_CAP = '2'
+      process.env.MIGRATION_RELAY_HOLD_TTL_SECONDS = '60'
+
+      await expect(store.holdPush(TENANT, envelope(1))).resolves.toBe(true)
+      await expect(store.holdPush(TENANT, envelope(2))).resolves.toBe(true)
+      await expect(store.holdPush(TENANT, envelope(3))).resolves.toBe(false)
+      expect(await store.holdLength(TENANT)).toBe(2)
+      expect(redis.ttls.get(`relay:hold:${TENANT}`)).toBe(60)
+    })
   })
 })

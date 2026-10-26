@@ -1,8 +1,8 @@
 import {
   DAILY_COUNTER_TTL_SECONDS,
   DRAIN_LOCK_MS,
-  HOLD_BUFFER_CAP,
-  HOLD_BUFFER_TTL_SECONDS,
+  holdBufferCap,
+  holdBufferTtlSeconds,
   SEEN_COUNTER_TTL_SECONDS,
 } from './relayConfig'
 
@@ -110,11 +110,11 @@ export class RelayStore {
   /** @returns false when the buffer is full, in which case nothing was stored */
   public async holdPush(tenantId: string, envelope: HeldEnvelope): Promise<boolean> {
     const length = await this.redis.rpush(holdKey(tenantId), JSON.stringify(envelope))
-    if (length > HOLD_BUFFER_CAP) {
+    if (length > holdBufferCap()) {
       await this.redis.rpop(holdKey(tenantId))
       return false
     }
-    await this.redis.expire(holdKey(tenantId), HOLD_BUFFER_TTL_SECONDS)
+    await this.redis.expire(holdKey(tenantId), holdBufferTtlSeconds())
     return true
   }
 

@@ -5,6 +5,21 @@ export const isRelayEnabled = (env: NodeJS.ProcessEnv = process.env): boolean =>
 
 export const HOLD_BUFFER_CAP = 10_000
 export const HOLD_BUFFER_TTL_SECONDS = 24 * 60 * 60
+
+const positiveInteger = (value: string | undefined, fallback: number): number => {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && 0 < parsed ? parsed : fallback
+}
+
+export const holdBufferCap = (env: NodeJS.ProcessEnv = process.env): number =>
+  positiveInteger(env.MIGRATION_RELAY_HOLD_CAP, HOLD_BUFFER_CAP)
+
+export const holdBufferTtlSeconds = (env: NodeJS.ProcessEnv = process.env): number =>
+  positiveInteger(env.MIGRATION_RELAY_HOLD_TTL_SECONDS, HOLD_BUFFER_TTL_SECONDS)
+
+// How often each shared-agent task re-reads the relay entries from the base wallet, which is what it falls back on
+// when Redis is down or has been flushed.
+export const MIRROR_REFRESH_MS = 30_000
 export const FORWARD_TIMEOUT_MS = 15_000
 export const PROBE_TIMEOUT_MS = 5_000
 export const MAX_FORWARD_RESPONSE_BYTES = 5 * 1024 * 1024

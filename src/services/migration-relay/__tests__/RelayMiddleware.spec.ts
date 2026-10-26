@@ -4,6 +4,7 @@ import request from 'supertest'
 
 import { RelayDrainer } from '../RelayDrainer'
 import { createRelayMiddleware } from '../RelayMiddleware'
+import { RelayMirror } from '../RelayMirror'
 import { RelayStore } from '../RelayStore'
 import { HOLD_BUFFER_CAP } from '../relayConfig'
 import { createForwarder } from '../relayForwarder'
@@ -23,10 +24,10 @@ describe('relay middleware', () => {
   const other = newRecipient()
   const cleanups: (() => Promise<void> | void)[] = []
 
-  const buildApp = (target: express.Express = express()): express.Express => {
+  const buildApp = (target: express.Express = express(), mirror?: RelayMirror): express.Express => {
     // The same order cliAgent has: the transport's text parser first, then the relay, then Credo's POST handler.
     target.use(express.text({ type: [DIDCOMM_MIME], limit: '5mb' }))
-    target.use(createRelayMiddleware({ store, forward: createForwarder(300), drainer, logger: silentLogger() }))
+    target.use(createRelayMiddleware({ store, forward: createForwarder(300), drainer, logger: silentLogger(), mirror }))
     target.post('/', (req, res) => {
       handled.push(req.body)
       res.status(200).end()
@@ -88,10 +89,78 @@ describe('relay middleware', () => {
       expect((await request(getApp).get('/invitation')).text).toBe('ok')
     })
 
-    it('when the relay lookup itself fails, instead of taking the agent down', async () => {
+    it('when Redis is down and no relay is known for the key, instead of taking the agent down', async () => {
       await setRelay('HOLD')
       redis.failing = true
       const envelope = buildEnvelope([recipient.kid])
+
+      expect((await send(envelope)).status).toBe(200)
+      expect(handled).toEqual([envelope])
+    })
+  })
+
+  describe('when Redis is down or has lost the relay, and the mirror knows it', () => {
+    const mirrorOf = (mode: 'HOLD' | 'FORWARD', target?: string): RelayMirror => {
+      const mirror = new RelayMirror()
+      mirror.set({ tenantId: TENANT, mode, target, updatedAt: 'now' }, [recipient.fingerprint])
+      return mirror
+    }
+
+    it('refuses a message for a tenant that is held, and never hands it to Credo', async () => {
+      app = buildApp(express(), mirrorOf('HOLD'))
+      await setRelay('HOLD')
+      redis.failing = true
+
+      const response = await send(buildEnvelope([recipient.kid]))
+
+      expect(response.status).toBe(503)
+      expect(response.headers['retry-after']).toBe('30')
+      expect(handled).toEqual([])
+    })
+
+    it('still forwards a message for a tenant that has moved, without Redis', async () => {
+      const target = await startTarget((_request, res) => res.writeHead(200).end())
+      cleanups.push(() => target.close())
+      app = buildApp(express(), mirrorOf('FORWARD', target.url))
+      redis.failing = true
+      const envelope = buildEnvelope([recipient.kid])
+
+      const response = await send(envelope)
+
+      expect(response.status).toBe(200)
+      await eventually(() => 1 === target.received.length)
+      expect(target.received[0].body).toBe(envelope)
+      expect(handled).toEqual([])
+    })
+
+    it('relays a message after a Redis flush has removed the entry and the index', async () => {
+      const target = await startTarget((_request, res) => res.writeHead(200).end())
+      cleanups.push(() => target.close())
+      app = buildApp(express(), mirrorOf('FORWARD', target.url))
+      const envelope = buildEnvelope([recipient.kid])
+
+      const response = await send(envelope)
+
+      expect(response.status).toBe(200)
+      await eventually(() => 1 === target.received.length)
+      expect(handled).toEqual([])
+    })
+
+    it('holds a message after a flush, for a tenant whose relay is still holding', async () => {
+      app = buildApp(express(), mirrorOf('HOLD'))
+      const envelope = buildEnvelope([recipient.kid])
+
+      const response = await send(envelope)
+
+      expect(response.status).toBe(202)
+      expect(await store.holdLength(TENANT)).toBe(1)
+      expect(handled).toEqual([])
+    })
+
+    it('lets through a message for a key the mirror does not know', async () => {
+      app = buildApp(express(), mirrorOf('HOLD'))
+      redis.failing = true
+      const envelope = buildEnvelope([other.kid])
 
       expect((await send(envelope)).status).toBe(200)
       expect(handled).toEqual([envelope])
@@ -141,7 +210,8 @@ describe('relay middleware', () => {
 
       const response = await send(buildEnvelope([recipient.kid]))
 
-      expect(response.status).toBe(500)
+      expect(response.status).toBe(503)
+      expect(response.headers['retry-after']).toBe('30')
       expect(handled).toEqual([])
     })
   })

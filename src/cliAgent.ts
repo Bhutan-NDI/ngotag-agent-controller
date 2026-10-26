@@ -77,7 +77,11 @@ import {
 } from './purge/PurgeSchedulerFactory'
 import { buildPurgeConfig } from './purge/PurgeTypes'
 import { setupServer } from './server'
-import { initRelayRuntime, shutdownRelayRuntime } from './services/migration-relay/relayRuntime'
+import {
+  initRelayRuntime,
+  shutdownRelayRuntime,
+  warnIfRelayEntriesExist,
+} from './services/migration-relay/relayRuntime'
 import { shutdownWalletPortabilityService } from './services/wallet-portability/WalletPortabilityService'
 import { CachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
@@ -627,6 +631,11 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       .rehydrate(agent as unknown as Agent<RestMultiTenantAgentModules>)
       .then((count) => logger.info(`[Relay] restored ${count} relay entr${1 === count ? 'y' : 'ies'}`))
       .catch((error) => logger.error(`[Relay] could not restore relay state: ${error}`))
+    relay.service.startMirror(agent as unknown as Agent<RestMultiTenantAgentModules>)
+  } else if (afjConfig.tenancy) {
+    await warnIfRelayEntriesExist(agent as unknown as Agent<RestMultiTenantAgentModules>, logger).catch((error) =>
+      logger.error(`[Relay] could not check for relay entries: ${error}`),
+    )
   }
 
   const genericRecord = await agent.genericRecords.findAllByQuery({ hasSecretKey: 'true' })

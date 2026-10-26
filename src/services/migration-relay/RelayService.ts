@@ -8,7 +8,8 @@ import { EventEmitter, InjectionSymbols } from '@credo-ts/core'
 import { DidCommEventTypes, DidCommRoutingEventTypes } from '@credo-ts/didcomm'
 import { TenantRoutingRecord } from '@credo-ts/tenants'
 
-import { PROBE_TIMEOUT_MS, REINJECT_PROCESSED_TIMEOUT_MS } from './relayConfig'
+import { RelayMirror } from './RelayMirror'
+import { MIRROR_REFRESH_MS, PROBE_TIMEOUT_MS, REINJECT_PROCESSED_TIMEOUT_MS } from './relayConfig'
 import { assertValidRelayTarget } from './relayTarget'
 
 type RootAgent = Agent<RestMultiTenantAgentModules>
@@ -69,6 +70,9 @@ const TLS_CODES = new Set([
  * wallet, which is the source of truth and survives a Redis flush, and in Redis, which is what the hot path reads.
  */
 export class RelayService {
+  public readonly mirror = new RelayMirror()
+  private mirrorTimer?: NodeJS.Timeout
+
   public constructor(
     private readonly store: RelayStore,
     private readonly drainer: RelayDrainer,
@@ -108,6 +112,7 @@ export class RelayService {
     const fingerprints = await this.listFingerprints(agent, tenantId)
 
     await this.saveRecord(agent, existing, entry)
+    this.mirror.set(entry, fingerprints)
     await this.store.indexKeys(tenantId, fingerprints)
     await this.store.setEntry(entry)
     if ('FORWARD' === entry.mode) this.drainer.ensureDraining(tenantId)
@@ -132,6 +137,7 @@ export class RelayService {
     await this.store.removeKeys(await this.listFingerprints(agent, tenantId))
     await this.store.deleteEntry(tenantId)
     await agent.genericRecords.delete(record)
+    this.mirror.remove(tenantId)
   }
 
   /**
@@ -249,6 +255,7 @@ export class RelayService {
         ?.recipientKey?.fingerprint
       if (!fingerprint) return
 
+      this.mirror.addFingerprint(tenantId, fingerprint)
       this.store
         .getEntry(tenantId)
         .then((entry) => (entry ? this.store.indexKeys(tenantId, [fingerprint]) : undefined))
@@ -262,16 +269,61 @@ export class RelayService {
 
   /** Rebuilds the Redis state of every relay from the base wallet, at startup and after a Redis flush. */
   public async rehydrate(agent: RootAgent): Promise<number> {
+    const startedAt = Date.now()
+    const loaded = await this.loadRelays(agent)
+    this.mirror.merge(loaded, startedAt)
+    for (const { entry, fingerprints } of loaded) {
+      await this.restoreToRedis(entry, fingerprints)
+    }
+    return loaded.length
+  }
+
+  /**
+   * Re-reads the relay entries into this process's mirror and puts back, in Redis, any entry Redis has lost. An entry
+   * that is there is left alone, so a change made through another task is never overwritten with an older record.
+   */
+  public async refreshMirror(agent: RootAgent): Promise<void> {
+    const startedAt = Date.now()
+    const loaded = await this.loadRelays(agent)
+    this.mirror.merge(loaded, startedAt)
+    if (!(await this.store.isReady())) return
+    for (const { entry, fingerprints } of loaded) {
+      if (!(await this.store.getEntry(entry.tenantId))) await this.restoreToRedis(entry, fingerprints)
+    }
+  }
+
+  /** Keeps the mirror fresh until `stop` is called. */
+  public startMirror(agent: RootAgent, intervalMs: number = MIRROR_REFRESH_MS): void {
+    this.stop()
+    this.mirrorTimer = setInterval(() => {
+      this.refreshMirror(agent).catch((error) =>
+        this.logger.error(`[RelayService] could not refresh the relay mirror: ${error}`),
+      )
+    }, intervalMs)
+    this.mirrorTimer.unref()
+  }
+
+  public stop(): void {
+    if (this.mirrorTimer) clearInterval(this.mirrorTimer)
+    this.mirrorTimer = undefined
+  }
+
+  private async loadRelays(agent: RootAgent): Promise<Array<{ entry: RelayEntry; fingerprints: string[] }>> {
     const records = await agent.genericRecords.findAllByQuery({ [RECORD_TAG]: 'true' })
+    const relays = []
     for (const record of records) {
       const entry = record.content as unknown as RelayEntry
-      await this.store.indexKeys(entry.tenantId, await this.listFingerprints(agent, entry.tenantId))
-      await this.store.setEntry(entry)
-      if ('FORWARD' === entry.mode && 0 < (await this.store.holdLength(entry.tenantId))) {
-        this.drainer.ensureDraining(entry.tenantId)
-      }
+      relays.push({ entry, fingerprints: await this.listFingerprints(agent, entry.tenantId) })
     }
-    return records.length
+    return relays
+  }
+
+  private async restoreToRedis(entry: RelayEntry, fingerprints: string[]): Promise<void> {
+    await this.store.indexKeys(entry.tenantId, fingerprints)
+    await this.store.setEntry(entry)
+    if ('FORWARD' === entry.mode && 0 < (await this.store.holdLength(entry.tenantId))) {
+      this.drainer.ensureDraining(entry.tenantId)
+    }
   }
 
   private async status(entry: RelayEntry, recipientKeys: number): Promise<RelayStatus> {
