@@ -1,51 +1,21 @@
 /**
- * Locks the level gate in TsLogger.log. Credo makes most of its logger calls at debug/trace;
- * a disabled level must be dropped before the payload is sanitised, before tslog builds a
- * record and before OpenTelemetry is given anything (which would otherwise export it whatever
- * the configured level). LogLevel.off must be silent: tslog reads the undefined minLevel it maps
- * to as "log everything".
- *
- * Runs against the real tslog instance; only the OpenTelemetry logger is replaced.
+ * Locks the level gate in TsLogger.log: a disabled level is dropped before sanitising, rendering or
+ * emitting, LogLevel.off is silent, and an invalid level falls back to info. Runs against the real
+ * tslog; only OpenTelemetry is mocked.
  */
 import { jest } from '@jest/globals'
 
-const emitted: { body: unknown; attributes: Record<string, unknown> }[] = []
+import { captureOutput, tracerMock, type EmittedRecord } from './loggerTestUtils'
 
-jest.unstable_mockModule('../../tracer', () => ({
-  otelLogger: {
-    emit: (record: { body: unknown; attributes: Record<string, unknown> }) => {
-      emitted.push(record)
-    },
-  },
-  otelLoggerProviderInstance: {},
-  otelSDK: {},
-}))
+const emitted: EmittedRecord[] = []
+
+jest.unstable_mockModule('../../tracer', () => tracerMock(emitted))
 
 const { TsLogger } = await import('../logger')
 const { LogLevel } = await import('@credo-ts/core')
 
 type Level = 'test' | 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
 const LEVELS: Level[] = ['test', 'trace', 'debug', 'info', 'warn', 'error', 'fatal']
-
-/** tslog writes debug/info to stdout and warn/error to stderr; capture both. */
-function captureOutput(run: () => void): string {
-  const stdout = process.stdout.write.bind(process.stdout)
-  const stderr = process.stderr.write.bind(process.stderr)
-  let captured = ''
-  const sink = ((chunk: string | Uint8Array): boolean => {
-    captured += String(chunk)
-    return true
-  }) as typeof process.stdout.write
-  process.stdout.write = sink
-  process.stderr.write = sink
-  try {
-    run()
-  } finally {
-    process.stdout.write = stdout
-    process.stderr.write = stderr
-  }
-  return captured
-}
 
 /** A payload that records whether anything walked it (the sanitiser reads every own key). */
 function observedPayload() {
@@ -68,7 +38,8 @@ describe('TsLogger level gate', () => {
   })
 
   afterAll(() => {
-    process.env.LOG_FORMAT = previousFormat
+    if (previousFormat === undefined) delete process.env.LOG_FORMAT
+    else process.env.LOG_FORMAT = previousFormat
   })
 
   beforeEach(() => {
@@ -130,5 +101,19 @@ describe('TsLogger level gate', () => {
 
     expect(output).toBe('')
     expect(emitted).toHaveLength(0)
+  })
+
+  it.each([9, -1, NaN])('falls back to info with a warning for an invalid level (%p)', (level) => {
+    const output = captureOutput(() => {
+      const logger = new TsLogger(level as ConstructorParameters<typeof TsLogger>[0], 'gate-test')
+      logger.debug('dropped debug')
+      logger.info('kept info')
+      logger.error('kept error')
+    })
+
+    expect(output).toContain(`Invalid log level ${String(level)}; falling back to info`)
+    expect(output).not.toContain('dropped debug')
+    expect(output).toContain('kept info')
+    expect(output).toContain('kept error')
   })
 })
