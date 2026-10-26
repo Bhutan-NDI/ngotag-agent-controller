@@ -86,7 +86,14 @@ export class WalletPortabilityJobConflictError extends Error {
 }
 
 export class TargetNotPristineError extends Error {
-  public constructor() {
+  /**
+   * @param categories the record categories found beyond what a fresh agent writes, and `keyCount` the keys found.
+   * Kept off the message, which is the API's answer; they are for the agent's own log.
+   */
+  public constructor(
+    public readonly categories: string[] = [],
+    public readonly keyCount: number = 0,
+  ) {
     super('TARGET_NOT_PRISTINE')
     this.name = 'TargetNotPristineError'
   }

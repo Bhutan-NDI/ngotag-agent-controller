@@ -16,14 +16,14 @@ const isFreshAgentRecord = (category: string, tags: Record<string, unknown>): bo
 
 export async function assertPristine(session: Session): Promise<void> {
   const entries = await session.fetchAll({})
-  if (entries.some((entry) => !isFreshAgentRecord(entry.category, entry.tags))) {
-    throw new TargetNotPristineError()
-  }
-
   const keys = await session.fetchAllKeys({})
   for (const key of keys) key.key.handle.free()
-  if (0 < keys.length) {
-    throw new TargetNotPristineError()
+
+  const foreign = new Set(
+    entries.filter((entry) => !isFreshAgentRecord(entry.category, entry.tags)).map((e) => e.category),
+  )
+  if (0 < foreign.size || 0 < keys.length) {
+    throw new TargetNotPristineError([...foreign].sort(), keys.length)
   }
 }
 

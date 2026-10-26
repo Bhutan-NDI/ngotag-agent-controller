@@ -345,6 +345,18 @@ describe('sealed export -> root wallet import (real Askar)', () => {
     await expect(service.createImportSession(root)).rejects.toThrow(TargetNotPristineError)
   }, 60000)
 
+  it('logs which kind of record made the wallet not pristine, so a fresh install that trips it can be explained', async () => {
+    const root = await buildRootAgent(true)
+    const warned = jest.spyOn((service as unknown as { logger: TsLogger }).logger, 'warn')
+
+    await service.createImportSession(root).catch(() => undefined)
+
+    const line = warned.mock.calls.map((call) => String(call[0])).find((text) => text.includes('not pristine'))
+    expect(line).toContain('GenericRecord')
+    expect(line).not.toContain('existing data')
+    warned.mockRestore()
+  }, 60000)
+
   it('refuses an unknown session and a storage version it does not run', async () => {
     const root = await buildRootAgent()
     const params = {

@@ -75,6 +75,10 @@ const MAX_DECOMPRESSED_BYTES = MAX_DOWNLOAD_BYTES
 // (cleared once headers arrive) — a stalled body isn't caught by this alone; see
 // downloadAndChecksum's inactivity timer for that case.
 // node-fetch puts the whole request URL, signature included, in its error messages.
+// Which kinds of record stood in the way, never their content.
+const describeNotPristine = (error: TargetNotPristineError): string =>
+  `record categories [${error.categories.join(', ')}], ${error.keyCount} key(s)`
+
 const withoutUrls = (error: unknown): string => String(error).replace(/https?:\/\/\S+/gi, '[url]')
 
 const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000
@@ -1034,6 +1038,11 @@ export class WalletPortabilityService {
     const session = await store.session(profile).open()
     try {
       await assertPristine(session)
+    } catch (error) {
+      if (error instanceof TargetNotPristineError) {
+        this.logger.warn(`[WalletPortabilityService] the root wallet is not pristine: ${describeNotPristine(error)}`)
+      }
+      throw error
     } finally {
       await session.close()
     }
@@ -1226,7 +1235,9 @@ export class WalletPortabilityService {
         dryRun: options.dryRun,
       })
     } catch (error) {
-      this.logger.error(`[WalletPortabilityService] root import job ${jobId} failed: ${withoutUrls(error)}`)
+      this.logger.error(
+        `[WalletPortabilityService] root import job ${jobId} failed: ${withoutUrls(error)}${error instanceof TargetNotPristineError ? ` (${describeNotPristine(error)})` : ''}`,
+      )
       await this.setJobStatus(
         jobId,
         ROOT_IMPORT_SCOPE_ID,
