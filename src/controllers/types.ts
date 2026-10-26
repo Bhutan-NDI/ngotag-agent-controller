@@ -63,6 +63,8 @@ export interface AgentRuntimeConfig {
   inboundTransports: string[]
   outboundTransports: string[]
   cronPurgeEnabled: boolean
+  /** True on a multi-tenant (shared) agent; a dedicated agent is false */
+  tenancy: boolean
 }
 
 export interface AgentInfo {

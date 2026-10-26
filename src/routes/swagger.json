@@ -3328,6 +3328,10 @@
 					},
 					"cronPurgeEnabled": {
 						"type": "boolean"
+					},
+					"tenancy": {
+						"type": "boolean",
+						"description": "True on a multi-tenant (shared) agent; a dedicated agent is false"
 					}
 				},
 				"required": [
@@ -3336,7 +3340,8 @@
 					"autoAcceptProofs",
 					"inboundTransports",
 					"outboundTransports",
-					"cronPurgeEnabled"
+					"cronPurgeEnabled",
+					"tenancy"
 				],
 				"type": "object",
 				"additionalProperties": false

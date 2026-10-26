@@ -54,7 +54,15 @@ describe('agentInfo', () => {
         inboundTransports: ['http'],
         outboundTransports: ['http', 'ws'],
         cronPurgeEnabled: false,
+        tenancy: false,
       })
+    })
+
+    it('reports a multi-tenant agent by its tenants module', () => {
+      const { agent } = buildAgent()
+      ;(agent as unknown as { modules: Record<string, unknown> }).modules.tenants = {}
+
+      expect(getAgentRuntimeConfig(agent).tenancy).toBe(true)
     })
 
     it('reports cron purge only when both the master switch and the cron flag are on', () => {

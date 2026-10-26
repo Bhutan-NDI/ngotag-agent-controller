@@ -37,6 +37,7 @@ export const getAgentRuntimeConfig = (agent: Request['agent']): AgentRuntimeConf
     inboundTransports: didcommConfig.inboundTransports.map(transportName),
     outboundTransports: didcommConfig.outboundTransports.map(transportName),
     cronPurgeEnabled: process.env.PURGE_ENABLED === 'true' && process.env.PURGE_CRON_ENABLED === 'true',
+    tenancy: undefined !== (agent.modules as { tenants?: unknown }).tenants,
   }
 }
 

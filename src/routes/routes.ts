@@ -1463,6 +1463,7 @@ const models: TsoaRoute.Models = {
             "inboundTransports": {"dataType":"array","array":{"dataType":"string"},"required":true},
             "outboundTransports": {"dataType":"array","array":{"dataType":"string"},"required":true},
             "cronPurgeEnabled": {"dataType":"boolean","required":true},
+            "tenancy": {"dataType":"boolean","required":true},
         },
         "additionalProperties": false,
     },
