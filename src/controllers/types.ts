@@ -63,6 +63,20 @@ export interface AgentInfo {
   publicDid: void
 }
 
+export interface WebhookProbeRequest {
+  /** A UUID the platform made for this one check */
+  probeId: string
+}
+
+export interface WebhookProbeResponse {
+  /** Whether the agent has a webhook URL at all */
+  configured: boolean
+  /** Whether anything answered the test event */
+  delivered: boolean
+  /** The HTTP status of the answer, when there was one */
+  status?: number
+}
+
 export interface AgentToken {
   token: string
 }

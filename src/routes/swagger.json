@@ -3328,6 +3328,42 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"WebhookProbeResponse": {
+				"properties": {
+					"configured": {
+						"type": "boolean",
+						"description": "Whether the agent has a webhook URL at all"
+					},
+					"delivered": {
+						"type": "boolean",
+						"description": "Whether anything answered the test event"
+					},
+					"status": {
+						"type": "number",
+						"format": "double",
+						"description": "The HTTP status of the answer, when there was one"
+					}
+				},
+				"required": [
+					"configured",
+					"delivered"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"WebhookProbeRequest": {
+				"properties": {
+					"probeId": {
+						"type": "string",
+						"description": "A UUID the platform made for this one check"
+					}
+				},
+				"required": [
+					"probeId"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"AgentToken": {
 				"properties": {
 					"token": {
@@ -9739,6 +9775,45 @@
 					}
 				],
 				"parameters": []
+			}
+		},
+		"/agent/webhook/probe": {
+			"post": {
+				"operationId": "ProbeWebhook",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/WebhookProbeResponse"
+								}
+							}
+						}
+					}
+				},
+				"description": "Sends one test event to the agent's own webhook URL, so a caller can confirm the URL is set and reaches the\nplatform. Whether it was accepted is for the receiver to confirm; this only says whether anything answered.",
+				"tags": [
+					"Agent"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/WebhookProbeRequest"
+							}
+						}
+					}
+				}
 			}
 		},
 		"/agent/token": {

@@ -1465,6 +1465,24 @@ const models: TsoaRoute.Models = {
         "additionalProperties": false,
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "WebhookProbeResponse": {
+        "dataType": "refObject",
+        "properties": {
+            "configured": {"dataType":"boolean","required":true},
+            "delivered": {"dataType":"boolean","required":true},
+            "status": {"dataType":"double"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "WebhookProbeRequest": {
+        "dataType": "refObject",
+        "properties": {
+            "probeId": {"dataType":"string","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "AgentToken": {
         "dataType": "refObject",
         "properties": {
@@ -4907,6 +4925,42 @@ export function RegisterRoutes(app: Router) {
 
               await templateService.apiHandler({
                 methodName: 'getAgentInfo',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsAgentController_probeWebhook: Record<string, TsoaRoute.ParameterSchema> = {
+                body: {"in":"body","name":"body","required":true,"ref":"WebhookProbeRequest"},
+        };
+        app.post('/agent/webhook/probe',
+            authenticateMiddleware([{"jwt":["dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(AgentController)),
+            ...(fetchMiddlewares<RequestHandler>(AgentController.prototype.probeWebhook)),
+
+            async function AgentController_probeWebhook(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsAgentController_probeWebhook, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<AgentController>(AgentController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'probeWebhook',
                 controller,
                 response,
                 next,
