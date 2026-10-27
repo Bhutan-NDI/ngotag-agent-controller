@@ -157,6 +157,24 @@ describe('relay middleware', () => {
       expect(handled).toEqual([])
     })
 
+    it('lets a message through once the relay was removed, although this process still has it in the mirror', async () => {
+      app = buildApp(express(), mirrorOf('HOLD'))
+      await store.markRemoved(TENANT)
+      const envelope = buildEnvelope([recipient.kid])
+
+      expect((await send(envelope)).status).toBe(200)
+      expect(handled).toEqual([envelope])
+    })
+
+    it('keeps relaying from the mirror when Redis is down and the removal cannot be checked', async () => {
+      app = buildApp(express(), mirrorOf('HOLD'))
+      await store.markRemoved(TENANT)
+      redis.failing = true
+
+      expect((await send(buildEnvelope([recipient.kid]))).status).toBe(503)
+      expect(handled).toEqual([])
+    })
+
     it('lets through a message for a key the mirror does not know', async () => {
       app = buildApp(express(), mirrorOf('HOLD'))
       redis.failing = true

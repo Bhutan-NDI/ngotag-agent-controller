@@ -7,9 +7,11 @@ import type { Agent, BaseEvent, BaseRecord, GenericRecord, StorageService } from
 import { EventEmitter, InjectionSymbols } from '@credo-ts/core'
 import { DidCommEventTypes, DidCommRoutingEventTypes } from '@credo-ts/didcomm'
 import { TenantRoutingRecord } from '@credo-ts/tenants'
+import { randomUUID } from 'crypto'
 
 import { RelayMirror } from './RelayMirror'
 import { MIRROR_REFRESH_MS, PROBE_TIMEOUT_MS, REINJECT_PROCESSED_TIMEOUT_MS } from './relayConfig'
+import { TLS_ERROR_CODES } from './relayForwarder'
 import { assertValidRelayTarget } from './relayTarget'
 
 type RootAgent = Agent<RestMultiTenantAgentModules>
@@ -19,6 +21,7 @@ export type RelayConflictCode =
   | 'RELAY_NOT_REMOVABLE'
   | 'RELAY_BUFFER_NOT_EMPTY'
   | 'RELAY_NOT_HOLDING'
+  | 'RELAY_BUSY'
 
 export class RelayConflictError extends Error {
   public constructor(public readonly code: RelayConflictCode) {
@@ -55,14 +58,6 @@ export interface ProbeResult {
 
 const RECORD_TAG = 'migrationRelay'
 const recordId = (tenantId: string): string => `migration-relay-${tenantId}`
-
-const TLS_CODES = new Set([
-  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
-  'CERT_HAS_EXPIRED',
-  'DEPTH_ZERO_SELF_SIGNED_CERT',
-  'SELF_SIGNED_CERT_IN_CHAIN',
-  'ERR_TLS_CERT_ALTNAME_INVALID',
-])
 
 /**
  * Admin operations on the migration relay. The relay entry is stored twice on purpose: as a GenericRecord in the base
@@ -108,12 +103,15 @@ export class RelayService {
     }
 
     const entry: RelayEntry = { tenantId, mode: request.mode, target, updatedAt: new Date().toISOString() }
-    const fingerprints = await this.listFingerprints(agent, tenantId)
 
     await this.saveRecord(agent, existing, entry)
-    this.mirror.set(entry, fingerprints)
-    await this.store.indexKeys(tenantId, fingerprints)
+    this.mirror.setEntry(entry)
+    await this.store.clearRemoved(tenantId)
     await this.store.setEntry(entry)
+    // Listed only after the entry exists, so a key created in between is indexed by the routing-key watcher.
+    const fingerprints = await this.listFingerprints(agent, tenantId)
+    for (const fingerprint of fingerprints) this.mirror.addFingerprint(tenantId, fingerprint)
+    await this.store.indexKeys(tenantId, fingerprints)
     if ('FORWARD' === entry.mode) this.drainer.ensureDraining(tenantId)
 
     return this.status(entry, fingerprints.length)
@@ -129,13 +127,25 @@ export class RelayService {
   /** Removes a HOLD relay (an aborted move). A FORWARD relay is permanent, and a buffer must be re-injected first. */
   public async remove(agent: RootAgent, tenantId: string): Promise<void> {
     const record = await this.findRecord(agent, tenantId)
-    if (!record) throw new RelayNotFoundError(tenantId)
+    if (!record) {
+      // An earlier call may have deleted the record and then failed before clearing Redis: finish that.
+      if (!(await this.store.getEntry(tenantId))) throw new RelayNotFoundError(tenantId)
+      await this.dropFromRedis(agent, tenantId)
+      return
+    }
     if ('HOLD' !== record.content.mode) throw new RelayConflictError('RELAY_NOT_REMOVABLE')
     if (0 < (await this.store.holdLength(tenantId))) throw new RelayConflictError('RELAY_BUFFER_NOT_EMPTY')
 
+    // The record goes first: a task still restoring this entry from an older read then finds no record and backs out.
+    await agent.genericRecords.delete(record)
+    await this.dropFromRedis(agent, tenantId)
+  }
+
+  // The tombstone tells other tasks, whose mirror still holds the entry for up to a refresh, to let the message through.
+  private async dropFromRedis(agent: RootAgent, tenantId: string): Promise<void> {
+    await this.store.markRemoved(tenantId)
     await this.store.removeKeys(await this.listFingerprints(agent, tenantId))
     await this.store.deleteEntry(tenantId)
-    await agent.genericRecords.delete(record)
     this.mirror.remove(tenantId)
   }
 
@@ -148,25 +158,32 @@ export class RelayService {
     if (!record) throw new RelayNotFoundError(tenantId)
     if ('HOLD' !== record.content.mode) throw new RelayConflictError('RELAY_NOT_HOLDING')
 
-    const eventEmitter = agent.dependencyManager.resolve(EventEmitter)
-    let injected = 0
-    let failed = 0
-    for (;;) {
-      const envelope = await this.store.holdPeek(tenantId)
-      if (!envelope) break
-      try {
-        const message = JSON.parse(envelope.body)
-        const processed = this.waitForProcessed(eventEmitter, message)
-        eventEmitter.emit(agent.context, { type: DidCommEventTypes.DidCommMessageReceived, payload: { message } })
-        await processed
-        injected += 1
-      } catch (error) {
-        failed += 1
-        this.logger.error(`[RelayService] re-injecting a held message for tenant '${tenantId}' failed: ${error}`)
+    const token = randomUUID()
+    if (!(await this.store.acquireDrainLock(tenantId, token))) throw new RelayConflictError('RELAY_BUSY')
+    try {
+      const eventEmitter = agent.dependencyManager.resolve(EventEmitter)
+      let injected = 0
+      let failed = 0
+      for (;;) {
+        const envelope = await this.store.holdPeek(tenantId)
+        if (!envelope) break
+        try {
+          const message = JSON.parse(envelope.body)
+          const processed = this.waitForProcessed(eventEmitter, message)
+          eventEmitter.emit(agent.context, { type: DidCommEventTypes.DidCommMessageReceived, payload: { message } })
+          await processed
+          injected += 1
+        } catch (error) {
+          failed += 1
+          this.logger.error(`[RelayService] re-injecting a held message for tenant '${tenantId}' failed: ${error}`)
+        }
+        await this.store.holdPop(tenantId)
+        if (!(await this.store.refreshDrainLock(tenantId, token))) throw new RelayConflictError('RELAY_BUSY')
       }
-      await this.store.holdPop(tenantId)
+      return { injected, failed }
+    } finally {
+      await this.store.releaseDrainLock(tenantId, token).catch(() => undefined)
     }
-    return { injected, failed }
   }
 
   // Same completion signal the HTTP inbound transport waits for before it answers a request.
@@ -204,7 +221,7 @@ export class RelayService {
     } catch (error) {
       const code = (error as { cause?: { code?: unknown } })?.cause?.code
       if (controller.signal.aborted) return { reachable: false, reason: 'TIMEOUT' }
-      if ('string' === typeof code && TLS_CODES.has(code)) return { reachable: false, reason: 'TLS' }
+      if ('string' === typeof code && TLS_ERROR_CODES.has(code)) return { reachable: false, reason: 'TLS' }
       if ('ENOTFOUND' === code || 'EAI_AGAIN' === code) return { reachable: false, reason: 'DNS' }
       return { reachable: false, reason: 'UNREACHABLE' }
     } finally {
@@ -245,7 +262,7 @@ export class RelayService {
     const loaded = await this.loadRelays(agent)
     this.mirror.merge(loaded, startedAt)
     for (const { entry, fingerprints } of loaded) {
-      await this.restoreToRedis(entry, fingerprints)
+      await this.restoreToRedis(agent, entry, fingerprints)
     }
     return loaded.length
   }
@@ -260,7 +277,7 @@ export class RelayService {
     this.mirror.merge(loaded, startedAt)
     if (!(await this.store.isReady())) return
     for (const { entry, fingerprints } of loaded) {
-      if (!(await this.store.getEntry(entry.tenantId))) await this.restoreToRedis(entry, fingerprints)
+      if (!(await this.store.getEntry(entry.tenantId))) await this.restoreToRedis(agent, entry, fingerprints)
     }
   }
 
@@ -290,10 +307,18 @@ export class RelayService {
     return relays
   }
 
-  private async restoreToRedis(entry: RelayEntry, fingerprints: string[]): Promise<void> {
+  // The entry is only set if still absent, and the record is read again afterwards: the snapshot this came from may
+  // predate a change or a removal made through another task.
+  private async restoreToRedis(agent: RootAgent, entry: RelayEntry, fingerprints: string[]): Promise<void> {
     await this.store.indexKeys(entry.tenantId, fingerprints)
-    await this.store.setEntry(entry)
-    if ('FORWARD' === entry.mode && 0 < (await this.store.holdLength(entry.tenantId))) {
+    const created = await this.store.setEntryIfAbsent(entry)
+    if (created && !(await this.findRecord(agent, entry.tenantId))) {
+      await this.store.deleteEntry(entry.tenantId)
+      await this.store.removeKeys(fingerprints)
+      return
+    }
+    const current = created ? entry : await this.store.getEntry(entry.tenantId)
+    if ('FORWARD' === current?.mode && 0 < (await this.store.holdLength(entry.tenantId))) {
       this.drainer.ensureDraining(entry.tenantId)
     }
   }

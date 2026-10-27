@@ -1,3 +1,5 @@
+import { jest } from '@jest/globals'
+
 import { createForwarder } from '../relayForwarder'
 
 import { freePort, startTarget } from './targetServer'
@@ -44,6 +46,24 @@ describe('forwardEnvelope', () => {
     await expect(forward('http://relay-target.invalid/', { contentType: MIME, body: '{}' })).resolves.toMatchObject({
       kind: 'neverLeft',
     })
+  })
+
+  it.each([
+    'CERT_HAS_EXPIRED',
+    'ERR_TLS_CERT_ALTNAME_INVALID',
+    'EHOSTUNREACH',
+    'ENETUNREACH',
+    'UND_ERR_CONNECT_TIMEOUT',
+  ])('reports %s, which happens before anything is sent, as never having left', async (code) => {
+    const fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(Object.assign(new TypeError('fetch failed'), { cause: { code } }))
+
+    await expect(forward('https://agent.example.org/', { contentType: MIME, body: '{}' })).resolves.toEqual({
+      kind: 'neverLeft',
+      code,
+    })
+    fetchSpy.mockRestore()
   })
 
   it('treats a timeout as possibly delivered', async () => {

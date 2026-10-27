@@ -3,7 +3,7 @@ import { FORWARD_TIMEOUT_MS, MAX_FORWARD_RESPONSE_BYTES } from './relayConfig'
 export type ForwardResult =
   // The target answered. Any status counts as delivered: the holder's app never retries on an HTTP status.
   | { kind: 'response'; status: number; contentType?: string; body: Buffer }
-  // The request provably never left (connection refused, host not found), so it is safe to send again.
+  // The request provably never left (no connection was made), so it is safe to send again.
   | { kind: 'neverLeft'; code: string }
   // It may have been delivered (timeout, reset): resending could make the target process it twice.
   | { kind: 'ambiguous'; reason: string }
@@ -15,7 +15,23 @@ export interface ForwardRequest {
 
 export type ForwardFn = (target: string, request: ForwardRequest) => Promise<ForwardResult>
 
-const NEVER_LEFT_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'])
+export const TLS_ERROR_CODES = new Set([
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'CERT_HAS_EXPIRED',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+])
+
+const NEVER_LEFT_CODES = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'UND_ERR_CONNECT_TIMEOUT',
+  ...TLS_ERROR_CODES,
+])
 
 const errorCode = (error: unknown): string | undefined => {
   const cause = (error as { cause?: { code?: unknown } })?.cause
@@ -25,7 +41,7 @@ const errorCode = (error: unknown): string | undefined => {
 
 /**
  * POSTs an envelope, byte for byte, to the organisation's agent. A failure is classified by whether the request can
- * have reached it: only a refused connection or an unresolvable host is safe to retry (Credo's own sender cannot
+ * have reached it: only a failure before the connection was established (refused, unresolvable or unreachable host, TLS handshake) is safe to retry (Credo's own sender cannot
  * tell a timeout from a delivery either, DidCommHttpOutboundTransport).
  */
 export const createForwarder =

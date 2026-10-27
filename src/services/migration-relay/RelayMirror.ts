@@ -29,6 +29,11 @@ export class RelayMirror {
     this.byTenant.set(entry.tenantId, { entry, fingerprints: new Set(fingerprints), seenAt: now })
   }
 
+  public setEntry(entry: RelayEntry, now: number = Date.now()): void {
+    const current = this.byTenant.get(entry.tenantId)
+    this.byTenant.set(entry.tenantId, { entry, fingerprints: current?.fingerprints ?? new Set(), seenAt: now })
+  }
+
   public addFingerprint(tenantId: string, fingerprint: string): void {
     this.byTenant.get(tenantId)?.fingerprints.add(fingerprint)
   }

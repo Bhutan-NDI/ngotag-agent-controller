@@ -12444,7 +12444,7 @@
 						}
 					},
 					"409": {
-						"description": "RELAY_NOT_HOLDING",
+						"description": "RELAY_NOT_HOLDING or RELAY_BUSY (another re-inject is running)",
 						"content": {
 							"application/json": {
 								"schema": {

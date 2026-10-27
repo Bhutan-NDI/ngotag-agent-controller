@@ -37,7 +37,14 @@ export const createRelayMiddleware = ({
     } catch (error) {
       logger.error(`[RelayMiddleware] relay lookup in Redis failed, using the mirror: ${error}`)
     }
-    return mirror?.find(fingerprints)
+    const mirrored = mirror?.find(fingerprints)
+    if (!mirrored) return undefined
+    try {
+      if (await store.isRemoved(mirrored.tenantId)) return undefined
+    } catch {
+      // Redis is down: keep the mirror's entry, which holds the message rather than handing it to a moved wallet.
+    }
+    return mirrored
   }
 
   return async (req, res, next) => {
