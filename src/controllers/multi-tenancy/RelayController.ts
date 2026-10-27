@@ -122,7 +122,7 @@ export class RelayController extends Controller {
   /**
    * Hands the held messages back to this agent to process, for an aborted move.
    */
-  @Response<{ message: string }>(409, 'RELAY_NOT_HOLDING')
+  @Response<{ message: string }>(409, 'RELAY_NOT_HOLDING or RELAY_BUSY (another re-inject is running)')
   @Post('/:tenantId/reinject')
   public async reinject(
     @Request() request: Req,

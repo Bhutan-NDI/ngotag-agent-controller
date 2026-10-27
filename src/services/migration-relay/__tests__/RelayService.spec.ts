@@ -193,6 +193,21 @@ describe('RelayService', () => {
     })
   })
 
+  describe('put ordering', () => {
+    it('indexes a recipient key created while the relay was being set', async () => {
+      const { service, agent, fire } = buildHarness()
+      service.watchRoutingKeys(agent)
+
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      fire(DidCommRoutingEventTypes.RoutingCreatedEvent, {
+        payload: { routing: { recipientKey: { fingerprint: 'fp-new' } } },
+        metadata: { contextCorrelationId: `tenant-${TENANT}` },
+      })
+
+      expect(service.mirror.find(['fp-new'])?.tenantId).toBe(TENANT)
+    })
+  })
+
   describe('get', () => {
     it('reports the persisted entry with its live counts', async () => {
       const { service, agent, store } = buildHarness()
@@ -242,6 +257,29 @@ describe('RelayService', () => {
       await expect(service.remove(agent, TENANT)).rejects.toMatchObject({ code: 'RELAY_BUFFER_NOT_EMPTY' })
     })
 
+    it('tells other tasks the relay is gone, and a new relay for the tenant clears that', async () => {
+      const { service, agent, store } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+
+      await service.remove(agent, TENANT)
+      expect(await store.isRemoved(TENANT)).toBe(true)
+
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      expect(await store.isRemoved(TENANT)).toBe(false)
+    })
+
+    it('finishes clearing Redis when an earlier call deleted the record and then failed', async () => {
+      const { service, agent, records, store } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      records.clear()
+
+      await expect(service.remove(agent, TENANT)).resolves.toBeUndefined()
+
+      expect(await store.getEntry(TENANT)).toBeUndefined()
+      await expect(store.findTenantIdByFingerprints(['fp-1'])).resolves.toBeUndefined()
+      await expect(service.remove(agent, TENANT)).rejects.toThrow(RelayNotFoundError)
+    })
+
     it('says so when there is nothing to remove', async () => {
       const { service, agent } = buildHarness()
 
@@ -284,6 +322,32 @@ describe('RelayService', () => {
       await store.holdPush(TENANT, { receivedAt: 'now', contentType: 'x', body: 'not json' })
 
       await expect(service.reinject(agent, TENANT)).resolves.toEqual({ injected: 0, failed: 1 })
+    })
+
+    it('refuses while another re-inject holds the lock, and releases the lock when it is done', async () => {
+      const { service, agent, store } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      await store.holdPush(TENANT, envelope(1))
+      await store.acquireDrainLock(TENANT, 'someone-else')
+
+      await expect(service.reinject(agent, TENANT)).rejects.toMatchObject({ code: 'RELAY_BUSY' })
+      expect(await store.holdLength(TENANT)).toBe(1)
+
+      await store.releaseDrainLock(TENANT, 'someone-else')
+      await expect(service.reinject(agent, TENANT)).resolves.toEqual({ injected: 1, failed: 0 })
+      await expect(store.acquireDrainLock(TENANT, 'next')).resolves.toBe(true)
+    })
+
+    it('stops when it has lost the lock, so a second loop never pops what it has not injected', async () => {
+      const { service, agent, store } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      for (const n of [1, 2]) await store.holdPush(TENANT, envelope(n))
+      const refresh = jest.spyOn(store, 'refreshDrainLock').mockResolvedValue(false)
+
+      await expect(service.reinject(agent, TENANT)).rejects.toMatchObject({ code: 'RELAY_BUSY' })
+
+      expect(await store.holdLength(TENANT)).toBe(1)
+      refresh.mockRestore()
     })
 
     it('only works on a relay that is holding', async () => {
@@ -424,6 +488,31 @@ describe('RelayService', () => {
       await expect(service.restore(agent, TENANT)).rejects.toThrow(RelayNotFoundError)
     })
 
+    it('puts Redis on HOLD when an earlier attempt saved the record as HOLD and then failed', async () => {
+      const { service, agent, store, records, received } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      await store.holdPush(TENANT, envelope(1))
+      const saved = records.get(`migration-relay-${TENANT}`)!
+      saved.content = { ...saved.content, mode: 'HOLD', target: undefined }
+
+      await expect(service.restore(agent, TENANT)).resolves.toEqual({ injected: 1, failed: 0 })
+
+      expect(received).toEqual([{ protected: 'p1' }])
+      expect(await store.getEntry(TENANT)).toBeUndefined()
+    })
+
+    it('waits for a drainer that is mid-forward to let go of the buffer before it re-injects', async () => {
+      const { service, agent, store, received } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      await store.holdPush(TENANT, envelope(1))
+      await store.acquireDrainLock(TENANT, 'drainer')
+      setTimeout(() => void store.releaseDrainLock(TENANT, 'drainer'), 300)
+
+      await expect(service.restore(agent, TENANT)).resolves.toEqual({ injected: 1, failed: 0 })
+
+      expect(received).toEqual([{ protected: 'p1' }])
+    })
+
     it('leaves other tenants relays alone', async () => {
       const { service, agent, records, rawAgent } = buildHarness()
       await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
@@ -539,6 +628,36 @@ describe('RelayService', () => {
       expect(await store.getEntry(TENANT)).toMatchObject({ mode: 'FORWARD', target: TARGET })
       await expect(store.findTenantIdByFingerprints(['fp-1'])).resolves.toBe(TENANT)
       expect(drainer.ensureDraining).toHaveBeenCalledWith(TENANT)
+    })
+
+    it('does not overwrite an entry Redis already has, and still resumes its drain', async () => {
+      const { service, agent, store, drainer } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      const newer = { tenantId: TENANT, mode: 'FORWARD' as const, target: TARGET, updatedAt: 'later' }
+      await store.setEntry(newer)
+      await store.holdPush(TENANT, { receivedAt: 'now', contentType: 'x', body: '{}' })
+      drainer.ensureDraining.mockClear()
+
+      await service.rehydrate(agent)
+
+      expect(await store.getEntry(TENANT)).toEqual(newer)
+      expect(drainer.ensureDraining).toHaveBeenCalledWith(TENANT)
+    })
+
+    it('backs out of an entry whose record was removed while it was being restored', async () => {
+      const { service, agent, records, redis, store } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      redis.strings.clear()
+      ;(service as unknown as { loadRelays: () => Promise<unknown> }).loadRelays = async () => {
+        const snapshot = [{ entry: { tenantId: TENANT, mode: 'HOLD', updatedAt: 'now' }, fingerprints: ['fp-1'] }]
+        records.clear()
+        return snapshot
+      }
+
+      await service.rehydrate(agent)
+
+      expect(await store.getEntry(TENANT)).toBeUndefined()
+      await expect(store.findTenantIdByFingerprints(['fp-1'])).resolves.toBeUndefined()
     })
 
     it('does nothing when there are no relays', async () => {

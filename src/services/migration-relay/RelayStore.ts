@@ -4,6 +4,7 @@ import {
   holdBufferCap,
   holdBufferTtlSeconds,
   SEEN_COUNTER_TTL_SECONDS,
+  TOMBSTONE_TTL_SECONDS,
 } from './relayConfig'
 
 export type RelayMode = 'HOLD' | 'FORWARD'
@@ -55,6 +56,7 @@ const kidKey = (fingerprint: string): string => `relay:kid:${fingerprint}`
 const holdKey = (tenantId: string): string => `relay:hold:${tenantId}`
 const drainKey = (tenantId: string): string => `relay:drain:${tenantId}`
 const dailyKey = (tenantId: string, day: string): string => `relay:daily:${tenantId}:${day}`
+const goneKey = (tenantId: string): string => `relay:gone:${tenantId}`
 const seenKey = (fingerprint: string): string => `relay:seen:${fingerprint}`
 
 const dayStamp = (date: Date): string => date.toISOString().slice(0, 10).replace(/-/g, '')
@@ -87,8 +89,25 @@ export class RelayStore {
     await this.redis.set(entryKey(entry.tenantId), JSON.stringify(entry))
   }
 
+  /** @returns false when an entry is already there, which is then left untouched */
+  public async setEntryIfAbsent(entry: RelayEntry): Promise<boolean> {
+    return 'OK' === (await this.redis.set(entryKey(entry.tenantId), JSON.stringify(entry), 'NX'))
+  }
+
   public async deleteEntry(tenantId: string): Promise<void> {
     await this.redis.del(entryKey(tenantId))
+  }
+
+  public async markRemoved(tenantId: string): Promise<void> {
+    await this.redis.set(goneKey(tenantId), '1', 'EX', TOMBSTONE_TTL_SECONDS)
+  }
+
+  public async clearRemoved(tenantId: string): Promise<void> {
+    await this.redis.del(goneKey(tenantId))
+  }
+
+  public async isRemoved(tenantId: string): Promise<boolean> {
+    return null !== (await this.redis.get(goneKey(tenantId)))
   }
 
   public async indexKeys(tenantId: string, fingerprints: string[]): Promise<void> {

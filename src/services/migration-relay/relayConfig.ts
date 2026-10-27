@@ -20,6 +20,8 @@ export const holdBufferTtlSeconds = (env: NodeJS.ProcessEnv = process.env): numb
 // How often each shared-agent task re-reads the relay entries from the base wallet, which is what it falls back on
 // when Redis is down or has been flushed.
 export const MIRROR_REFRESH_MS = 30_000
+// A removed relay is remembered for longer than a refresh, so a task with a stale mirror does not hold messages for it.
+export const TOMBSTONE_TTL_SECONDS = 120
 export const FORWARD_TIMEOUT_MS = 15_000
 export const PROBE_TIMEOUT_MS = 5_000
 export const MAX_FORWARD_RESPONSE_BYTES = 5 * 1024 * 1024
@@ -33,3 +35,6 @@ export const DRAIN_LOCK_MS = 30_000
 export const DRAIN_BACKOFF_BASE_MS = 1_000
 export const DRAIN_BACKOFF_MAX_MS = 60_000
 export const REINJECT_PROCESSED_TIMEOUT_MS = 10_000
+// A restore waits this long for a drainer that is mid-forward (FORWARD_TIMEOUT_MS) to let go of the lock.
+export const RESTORE_LOCK_WAIT_MS = FORWARD_TIMEOUT_MS + 5_000
+export const LOCK_POLL_MS = 250
