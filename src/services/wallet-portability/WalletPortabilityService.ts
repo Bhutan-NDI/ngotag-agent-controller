@@ -1120,6 +1120,7 @@ export class WalletPortabilityService {
       throw new WalletPortabilityJobConflictError(ROOT_IMPORT_SCOPE_ID, conflictingJobId)
     }
 
+    this.importSessions.markInUse(options.sessionId)
     return { jobId, heartbeat: this.startHeartbeat(jobId, ROOT_IMPORT_SCOPE_ID) }
   }
 

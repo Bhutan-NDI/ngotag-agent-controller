@@ -10,6 +10,7 @@ interface ImportSession {
   key: Key
   expiresAt: number
   timer: NodeJS.Timeout
+  inUse: boolean
 }
 
 export interface CreatedImportSession {
@@ -24,8 +25,8 @@ export class ImportSessionStore {
 
   public create(): CreatedImportSession {
     if (this.sessions.size >= MAX_SESSIONS) {
-      const oldest = this.sessions.keys().next().value as string
-      this.destroy(oldest)
+      const oldestIdle = [...this.sessions.entries()].find(([, session]) => !session.inUse)
+      if (oldestIdle) this.destroy(oldestIdle[0])
     }
 
     const key = Key.generate(KeyAlgorithm.X25519)
@@ -33,7 +34,7 @@ export class ImportSessionStore {
     const expiresAt = Date.now() + IMPORT_SESSION_TTL_MS
     const timer = setTimeout(() => this.destroy(sessionId), IMPORT_SESSION_TTL_MS)
     timer.unref()
-    this.sessions.set(sessionId, { key, expiresAt, timer })
+    this.sessions.set(sessionId, { key, expiresAt, timer, inUse: false })
 
     return {
       sessionId,
@@ -49,6 +50,12 @@ export class ImportSessionStore {
       return undefined
     }
     return session.key
+  }
+
+  /** A session a running import depends on is never evicted to make room for a new one. */
+  public markInUse(sessionId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (session) session.inUse = true
   }
 
   public destroy(sessionId: string): void {
