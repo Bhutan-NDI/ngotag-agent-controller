@@ -165,14 +165,15 @@ export class RelayService {
    */
   public async restore(agent: RootAgent, tenantId: string): Promise<{ injected: number; failed: number }> {
     const record = await this.findRecord(agent, tenantId)
-    if (!record) throw new RelayNotFoundError(tenantId)
+    // No record but an entry: an earlier attempt deleted the record in remove and failed before Redis was cleared.
+    if (!record && !(await this.store.getEntry(tenantId))) throw new RelayNotFoundError(tenantId)
 
     // The tag purge-profile writes; with the wallet gone, putting the tenant back would send messages nowhere.
     const tenant = (await agent.modules.tenants.getTenantById(tenantId)) as { getTag?: (name: string) => unknown }
     if (true === tenant.getTag?.('migrated')) throw new RelayConflictError('TENANT_PURGED')
 
     const holding: RelayEntry = { tenantId, mode: 'HOLD', updatedAt: new Date().toISOString() }
-    if ('FORWARD' === record.content.mode) {
+    if (record && 'FORWARD' === record.content.mode) {
       this.logger.warn(`[RelayService] restoring tenant '${tenantId}': its FORWARD relay is being taken off`)
       await this.saveRecord(agent, record, holding)
     }
@@ -182,7 +183,7 @@ export class RelayService {
       await this.store.setEntry(holding)
     }
 
-    const result = await this.reinject(agent, tenantId, RESTORE_LOCK_WAIT_MS)
+    const result = await this.injectHeld(agent, tenantId, RESTORE_LOCK_WAIT_MS)
     await this.remove(agent, tenantId)
     return result
   }
@@ -199,7 +200,14 @@ export class RelayService {
     const record = await this.findRecord(agent, tenantId)
     if (!record) throw new RelayNotFoundError(tenantId)
     if ('HOLD' !== record.content.mode) throw new RelayConflictError('RELAY_NOT_HOLDING')
+    return this.injectHeld(agent, tenantId, lockWaitMs)
+  }
 
+  private async injectHeld(
+    agent: RootAgent,
+    tenantId: string,
+    lockWaitMs: number,
+  ): Promise<{ injected: number; failed: number }> {
     const token = randomUUID()
     if (!(await this.acquireLock(tenantId, token, lockWaitMs))) throw new RelayConflictError('RELAY_BUSY')
     try {

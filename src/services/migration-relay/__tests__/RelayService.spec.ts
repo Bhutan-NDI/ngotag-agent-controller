@@ -385,10 +385,11 @@ describe('RelayService', () => {
       await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
       await store.holdPush(TENANT, envelope(1))
       const modes: unknown[] = []
-      const reinject = service.reinject.bind(service)
-      jest.spyOn(service, 'reinject').mockImplementation(async (...args) => {
+      const held = service as unknown as { injectHeld: RelayService['reinject'] }
+      const injectHeld = held.injectHeld.bind(service)
+      jest.spyOn(held, 'injectHeld').mockImplementation(async (...args) => {
         modes.push((await store.getEntry(TENANT))?.mode, records.get(`migration-relay-${TENANT}`)?.content.mode)
-        return reinject(...args)
+        return injectHeld(...args)
       })
 
       await service.restore(agent, TENANT)
@@ -401,10 +402,11 @@ describe('RelayService', () => {
       await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
       await store.holdPush(TENANT, envelope(1))
       const seen: unknown[] = []
-      const reinject = service.reinject.bind(service)
-      jest.spyOn(service, 'reinject').mockImplementation(async (...args) => {
+      const held = service as unknown as { injectHeld: RelayService['reinject'] }
+      const injectHeld = held.injectHeld.bind(service)
+      jest.spyOn(held, 'injectHeld').mockImplementation(async (...args) => {
         seen.push(service.mirror.find(['fp-1'])?.mode)
-        return reinject(...args)
+        return injectHeld(...args)
       })
 
       await service.restore(agent, TENANT)
@@ -486,6 +488,19 @@ describe('RelayService', () => {
       const { service, agent } = buildHarness()
 
       await expect(service.restore(agent, TENANT)).rejects.toThrow(RelayNotFoundError)
+    })
+
+    it('finishes a remove that deleted the record and then failed, instead of answering 404', async () => {
+      const { service, agent, store, records, received } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      for (const n of [1, 2]) await store.holdPush(TENANT, envelope(n))
+      records.clear()
+
+      await expect(service.restore(agent, TENANT)).resolves.toEqual({ injected: 2, failed: 0 })
+
+      expect(received).toEqual([{ protected: 'p1' }, { protected: 'p2' }])
+      expect(await store.getEntry(TENANT)).toBeUndefined()
+      await expect(store.findTenantIdByFingerprints(['fp-1'])).resolves.toBeUndefined()
     })
 
     it('puts Redis on HOLD when an earlier attempt saved the record as HOLD and then failed', async () => {
