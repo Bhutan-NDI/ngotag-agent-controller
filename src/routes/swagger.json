@@ -3811,6 +3811,9 @@
 					},
 					"expirationDate": {
 						"type": "string"
+					},
+					"did": {
+						"type": "string"
 					}
 				},
 				"required": [
