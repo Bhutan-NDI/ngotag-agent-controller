@@ -5,26 +5,21 @@ import { StorageUpdateService } from '@credo-ts/core'
 import {
   DidCommConnectionsModuleConfig,
   DidCommCredentialsModuleConfig,
+  DidCommHttpOutboundTransport,
   DidCommProofsModuleConfig,
+  DidCommWsOutboundTransport,
 } from '@credo-ts/didcomm'
 import { DidCommHttpInboundTransport, DidCommWsInboundTransport } from '@credo-ts/node'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 
 const transportName = (transport: object): string => {
   if (transport instanceof DidCommHttpInboundTransport) return 'http'
   if (transport instanceof DidCommWsInboundTransport) return 'ws'
-  return transport.constructor.name.toLowerCase().includes('ws') ? 'ws' : 'http'
+  if (transport instanceof DidCommHttpOutboundTransport) return 'http'
+  if (transport instanceof DidCommWsOutboundTransport) return 'ws'
+  return transport.constructor.name
 }
 
-export const getReleaseVersion = (): string | undefined => {
-  if (process.env.RELEASE_VERSION) return process.env.RELEASE_VERSION
-  try {
-    return JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')).version
-  } catch {
-    return undefined
-  }
-}
+export const getReleaseVersion = (): string | undefined => process.env.RELEASE_VERSION || undefined
 
 export const getAgentRuntimeConfig = (agent: Request['agent']): AgentRuntimeConfig => {
   const { dependencyManager } = agent

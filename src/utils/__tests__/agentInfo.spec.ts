@@ -91,15 +91,28 @@ describe('agentInfo', () => {
     })
   })
 
+  it('names a transport it does not recognise instead of guessing http', () => {
+    class CustomTransport {}
+    const { agent } = buildAgent()
+    ;(agent as any).modules.didcomm.config.outboundTransports = [new CustomTransport()]
+
+    expect(getAgentRuntimeConfig(agent).outboundTransports).toEqual(['CustomTransport'])
+  })
+
   describe('getReleaseVersion', () => {
     it('prefers RELEASE_VERSION', () => {
       process.env.RELEASE_VERSION = 'agent-controller/v1.2.3'
       expect(getReleaseVersion()).toBe('agent-controller/v1.2.3')
     })
 
-    it('falls back to the package.json version', () => {
+    it('is undefined without RELEASE_VERSION, so an untagged build never matches another', () => {
       delete process.env.RELEASE_VERSION
-      expect(getReleaseVersion()).toMatch(/^\d+\.\d+\.\d+/)
+      expect(getReleaseVersion()).toBeUndefined()
+    })
+
+    it('treats an empty RELEASE_VERSION as unset', () => {
+      process.env.RELEASE_VERSION = ''
+      expect(getReleaseVersion()).toBeUndefined()
     })
   })
 })
