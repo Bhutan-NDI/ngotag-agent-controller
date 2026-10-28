@@ -1627,6 +1627,7 @@ const models: TsoaRoute.Models = {
             "credentialSubject": {"ref":"SingleOrArray_JsonObject_","required":true},
             "proofType": {"dataType":"string","required":true},
             "expirationDate": {"dataType":"string"},
+            "did": {"dataType":"string"},
         },
         "additionalProperties": false,
     },

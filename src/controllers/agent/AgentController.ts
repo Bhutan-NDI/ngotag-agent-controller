@@ -356,11 +356,15 @@ export class AgentController extends Controller {
       // Default DID is tracked as an `isDefault` tag on the DID's own DidRecord (see DidController.writeDid).
       // findByQuery (not findSingleByQuery) tolerates a wallet carrying more than one tagged DID (e.g. legacy
       // migration); findDefaultDidRecords sorts by createdAt so this agrees with DidController.getDids.
+      const requestedDid = selfAttestedCredentialOptions.did
+      if (undefined !== requestedDid && 0 === (await request.agent.dids.getCreatedDids({ did: requestedDid })).length) {
+        throw new NotFoundError(`DID '${requestedDid}' was not created by this agent`)
+      }
       const [defaultDidRecord] = await findDefaultDidRecords(
         request.agent.dependencyManager.resolve(DidRepository),
         request.agent.context,
       )
-      let selfDid = defaultDidRecord?.did
+      let selfDid = requestedDid ?? defaultDidRecord?.did
 
       // Fallback for wallets that never explicitly set a default DID: only fires when exactly one
       // non-peer created DID exists (did:peer is excluded -- DIDComm connections use the same role tag).
