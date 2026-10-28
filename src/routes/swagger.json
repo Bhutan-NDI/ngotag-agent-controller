@@ -7736,7 +7736,7 @@
 						}
 					},
 					"409": {
-						"description": "RELAY_NOT_FORWARDING, or a wallet portability job is running for this tenant",
+						"description": "RELAY_NOT_FORWARDING, RELAY_DISABLED, a wallet portability job is running, or the tenant has open sessions",
 						"content": {
 							"application/json": {
 								"schema": {

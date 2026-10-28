@@ -15,7 +15,13 @@ import ErrorHandlingService from '../../../errorHandlingService'
 import { ConflictError } from '../../../errors/errors'
 import { isTenantMigrated } from '../../../utils/migratedTenant'
 import { purgeTenantProfile } from '../TenantProfilePurgeService'
-import { assertNoRelay, assertRelayForwarding, RELAY_NOT_FORWARDING, TENANT_HAS_RELAY } from '../relayGuard'
+import {
+  assertNoRelay,
+  assertRelayForwarding,
+  RELAY_DISABLED,
+  RELAY_NOT_FORWARDING,
+  TENANT_HAS_RELAY,
+} from '../relayGuard'
 
 type TenantsApi = {
   createTenant: (o: unknown) => Promise<{ id: string }>
@@ -63,7 +69,11 @@ describe('purge-profile needs a forwarding relay', () => {
     expect(marker?.content).toEqual({ owner: tenantId })
   }
 
+  const relayEnv = { enabled: process.env.MIGRATION_RELAY_ENABLED, redis: process.env.REDIS_URL }
+
   beforeAll(async () => {
+    process.env.MIGRATION_RELAY_ENABLED = 'true'
+    process.env.REDIS_URL = 'redis://relay.example.org:6379'
     agent = new Agent({
       config: {},
       dependencies: agentDependencies,
@@ -82,6 +92,10 @@ describe('purge-profile needs a forwarding relay', () => {
   }, 120000)
 
   afterAll(async () => {
+    const restore = (name: string, value: string | undefined) =>
+      undefined === value ? delete process.env[name] : (process.env[name] = value)
+    restore('MIGRATION_RELAY_ENABLED', relayEnv.enabled)
+    restore('REDIS_URL', relayEnv.redis)
     await agent.shutdown()
   })
 
@@ -100,6 +114,31 @@ describe('purge-profile needs a forwarding relay', () => {
 
       expect(error).toBeInstanceOf(ConflictError)
       expect((error as ConflictError).message).toBe(RELAY_NOT_FORWARDING)
+      await untouched(tenantId)
+    },
+    60000,
+  )
+
+  it.each([
+    ['the relay flag is off', { MIGRATION_RELAY_ENABLED: undefined }],
+    ['there is no Redis for the relay', { REDIS_URL: undefined }],
+  ])(
+    'refuses a forwarding tenant when %s, because nothing is forwarding, and changes nothing',
+    async (_name, env) => {
+      const tenantId = await newTenant(`org-${randomUUID()}`)
+      await setRelay(tenantId, { mode: 'FORWARD', target: TARGET })
+      const before = { ...process.env }
+      for (const [name, value] of Object.entries(env)) {
+        if (undefined === value) delete process.env[name]
+      }
+      try {
+        const error = await purgeTenantProfile(agent as never, tenantId).catch((e: unknown) => e)
+
+        expect(error).toBeInstanceOf(ConflictError)
+        expect((error as ConflictError).message).toBe(RELAY_DISABLED)
+      } finally {
+        Object.assign(process.env, before)
+      }
       await untouched(tenantId)
     },
     60000,
