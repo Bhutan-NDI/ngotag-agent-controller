@@ -1457,3 +1457,36 @@ describe('WalletPortabilityService — export → import round trip', () => {
     expect(importJob.error).toBeUndefined()
   })
 })
+
+describe('WalletPortabilityService — runExclusive', () => {
+  it('keeps the tenant slot held past the reservation grace period while the work is still running', async () => {
+    const service = new WalletPortabilityService(makeLogger() as never)
+    let release: () => void = () => undefined
+    const work = service.runExclusive(TENANT_ID, () => new Promise<void>((resolve) => (release = resolve)))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    const now = Date.now()
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(now + 20_000)
+    try {
+      await expect(service.runExclusive(TENANT_ID, async () => 'second')).rejects.toThrow(/already in progress/)
+    } finally {
+      clock.mockRestore()
+    }
+
+    release()
+    await work
+    await expect(service.runExclusive(TENANT_ID, async () => 'third')).resolves.toBe('third')
+  })
+
+  it('frees the slot and returns the result, and frees it when the work throws', async () => {
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    await expect(service.runExclusive(TENANT_ID, async () => 'done')).resolves.toBe('done')
+    await expect(
+      service.runExclusive(TENANT_ID, async () => {
+        throw new Error('boom')
+      }),
+    ).rejects.toThrow('boom')
+    await expect(service.runExclusive(TENANT_ID, async () => 'again')).resolves.toBe('again')
+  })
+})

@@ -176,6 +176,21 @@ describe('purgeTenantProfile against a real multi-tenant agent', () => {
     expect(await profiles()).toContain(`tenant-${staying}`)
   })
 
+  it('refuses while another session is open on the tenant, and goes ahead once it is closed', async () => {
+    const busy = (await tenants.createTenant({ config: { label: 'busy-org' } })).id
+    await seed(busy)
+    await forwardRelay(busy)
+    const otherSession = await (
+      agent.modules as unknown as { tenants: { getTenantAgent: (o: { tenantId: string }) => Promise<any> } }
+    ).tenants.getTenantAgent({ tenantId: busy })
+
+    await expect(purgeTenantProfile(agent as never, busy, 300)).rejects.toThrow('open sessions')
+    expect(await profiles()).toContain(`tenant-${busy}`)
+
+    await otherSession.endSession()
+    await expect(purgeTenantProfile(agent as never, busy, 300)).resolves.toMatchObject({ profileRemoved: true })
+  }, 60000)
+
   it('throws RecordNotFoundError for an unknown tenant', async () => {
     await expect(purgeTenantProfile(agent as never, randomUUID())).rejects.toBeInstanceOf(RecordNotFoundError)
   })
