@@ -1,4 +1,12 @@
-import { DidCommConnectionRecord, DidCommDidExchangeRole, DidCommDidExchangeState } from '@credo-ts/didcomm'
+import {
+  DidCommConnectionRecord,
+  DidCommConnectionService,
+  DidCommDidExchangeRole,
+  DidCommDidExchangeState,
+  DidCommDidRotateService,
+  DidCommMessageSender,
+  DidCommRoutingService,
+} from '@credo-ts/didcomm'
 import { jest } from '@jest/globals'
 
 import { RotationService } from '../RotationService'
@@ -41,7 +49,11 @@ describe('RotationService.skipReason', () => {
     ['not completed', record({ state: DidCommDidExchangeState.RequestSent }), 'NOT_COMPLETED'],
     ['without our DID', record({ did: null }), 'NO_DID'],
     ['a mediator connection', record({ mediator: true }), 'MEDIATOR_CONNECTION'],
-    ['a rotation already in flight', record({ marker: true }), 'ROTATION_IN_FLIGHT'],
+    [
+      'a rotation already in flight',
+      record({ marker: true, rotation: { state: 'sent', newDid: 'n', attempts: 1 } }),
+      'ROTATION_IN_FLIGHT',
+    ],
     ['already sent', record({ rotation: { state: 'sent', newDid: 'n', attempts: 1 } }), 'ALREADY_ROTATED'],
     ['already confirmed', record({ rotation: { state: 'confirmed', newDid: 'n', attempts: 1 } }), 'ALREADY_ROTATED'],
     ['failed', record({ rotation: { state: 'failed', newDid: 'n', attempts: 5 } }), 'FAILED'],
@@ -78,7 +90,41 @@ describe('RotationService.skipReason', () => {
     expect(svc.skipReason(record({ rotation: { state: 'confirmed', newDid: 'n', attempts: 1 } }), true)).toBe(
       'ALREADY_ROTATED',
     )
-    expect(svc.skipReason(record({ marker: true }), true)).toBe('ROTATION_IN_FLIGHT')
+    expect(svc.skipReason(record({ marker: true, rotation: { state: 'sent', newDid: 'n', attempts: 1 } }), true)).toBe(
+      'ROTATION_IN_FLIGHT',
+    )
+  })
+
+  it('treats a Credo marker we have no record of as a rotation that was never sent, and lets it be redone', () => {
+    expect(service().skipReason(record({ marker: true }))).toBeUndefined()
+  })
+})
+
+describe('RotationService.rotateConnection with a leftover Credo marker', () => {
+  it('clears the marker before it creates the rotation', async () => {
+    const connection = record({ marker: true })
+    const calls: string[] = []
+    const services = new Map<unknown, unknown>([
+      [DidCommConnectionService, { getById: async () => connection, update: async () => void calls.push('update') }],
+      [DidCommRoutingService, { getRouting: async () => ({}) }],
+      [
+        DidCommDidRotateService,
+        {
+          clearDidRotationData: async () => void calls.push('clear'),
+          createRotate: async () => {
+            calls.push('create')
+            return { toDid: 'did:peer:new' }
+          },
+        },
+      ],
+      [DidCommMessageSender, { sendMessage: async () => void calls.push('send') }],
+    ])
+    const agent = { context: {}, dependencyManager: { resolve: (token: unknown) => services.get(token) } }
+
+    const outcome = await new RotationService(agent as never, silentLogger()).rotateConnection('c1')
+
+    expect(outcome).toMatchObject({ outcome: 'sent', newDid: 'did:peer:new' })
+    expect(calls).toEqual(['clear', 'create', 'update', 'send'])
   })
 })
 

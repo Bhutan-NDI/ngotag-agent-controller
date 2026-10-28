@@ -22,6 +22,8 @@ export interface RotationJob {
   intervalMs: number
   startedAt?: string
   completedAt?: string
+  // Set once, when the first job starts: a connection created after it is already on this agent and is never rotated.
+  cutoff?: string
 }
 
 export type RotationCounts = Record<RotationBucket, number> & { total: number }
@@ -72,11 +74,24 @@ export class RotationRunner {
   /** Starts the job, or reports the one already running. */
   public async start(options: StartOptions = {}): Promise<RotationStatus> {
     const current = await this.loadJob()
-    if ('running' === current.status) return this.status()
+    if ('running' === current.status) {
+      // A running job with nothing scheduled is one whose loop died; this call is what revives it.
+      if (false !== options.autoRun && !this.timer && !this.ticking) {
+        this.stopped = false
+        this.schedule(0)
+      }
+      return this.status()
+    }
 
     const batchSize = this.validPositive(options.batchSize, DEFAULT_BATCH_SIZE)
     const intervalMs = this.validPositive(options.intervalMs, DEFAULT_INTERVAL_MS)
-    await this.saveJob({ status: 'running', batchSize, intervalMs, startedAt: this.now().toISOString() })
+    await this.saveJob({
+      status: 'running',
+      batchSize,
+      intervalMs,
+      startedAt: this.now().toISOString(),
+      cutoff: current.cutoff ?? this.now().toISOString(),
+    })
     this.stopped = false
     if (false !== options.autoRun) this.schedule(0)
     return this.status()
@@ -109,7 +124,7 @@ export class RotationRunner {
     const job = await this.loadJob()
     const connections = await this.allCompleted()
     const due = connections
-      .filter((connection) => undefined === this.rotation.skipReason(connection))
+      .filter((connection) => !this.isNative(connection, job) && undefined === this.rotation.skipReason(connection))
       .sort((a, b) => (b.updatedAt?.getTime() ?? 0) - (a.updatedAt?.getTime() ?? 0))
 
     const batch = due.slice(0, job.batchSize)
@@ -123,7 +138,7 @@ export class RotationRunner {
     this.cachedStatus = undefined
 
     const remaining = (await this.allCompleted()).filter((connection) => {
-      const bucket = bucketFor(connection, this.now())
+      const bucket = this.bucketOf(connection, job)
       return 'pending' === bucket || 'retrying' === bucket
     }).length
     if (0 === remaining && 'running' === job.status) {
@@ -137,11 +152,12 @@ export class RotationRunner {
     if (cached && Date.now() - cached.at < STATUS_CACHE_MS) return cached.value
 
     const counts = emptyCounts()
+    const job = await this.loadJob()
     for (const connection of await this.allCompleted()) {
       counts.total += 1
-      counts[bucketFor(connection, this.now())] += 1
+      counts[this.bucketOf(connection, job)] += 1
     }
-    const value = { job: await this.loadJob(), counts }
+    const value = { job, counts }
     this.cachedStatus = { at: Date.now(), value }
     return value
   }
@@ -150,6 +166,7 @@ export class RotationRunner {
     if (this.stopped) return
     if (this.timer) clearTimeout(this.timer)
     this.timer = setTimeout(() => {
+      this.timer = undefined
       this.tick().catch((error) => this.logger.error(`[RotationRunner] batch failed: ${error}`))
     }, delayMs)
     this.timer.unref()
@@ -158,10 +175,15 @@ export class RotationRunner {
   private async tick(): Promise<void> {
     if (this.ticking || this.stopped) return
     this.ticking = true
+    let intervalMs = DEFAULT_INTERVAL_MS
     try {
-      const { remaining } = await this.runOnce()
       const job = await this.loadJob()
-      if (0 < remaining && 'running' === job.status) this.schedule(job.intervalMs)
+      intervalMs = job.intervalMs
+      const { remaining } = await this.runOnce()
+      if (0 < remaining && 'running' === (await this.loadJob()).status) this.schedule(intervalMs)
+    } catch (error) {
+      this.logger.error(`[RotationRunner] batch failed, trying again in ${intervalMs}ms: ${error}`)
+      this.schedule(intervalMs)
     } finally {
       this.ticking = false
     }
@@ -180,6 +202,15 @@ export class RotationRunner {
       all.push(...page.filter((c) => c.did && c.theirDid && !c.connectionTypes?.includes('mediator')))
       if (page.length < PAGE_SIZE) return all
     }
+  }
+
+  private isNative(connection: DidCommConnectionRecord, job: RotationJob): boolean {
+    return undefined !== job.cutoff && connection.createdAt.getTime() > new Date(job.cutoff).getTime()
+  }
+
+  // A connection made on this agent after the job began needs no rotation, so it counts as updated.
+  private bucketOf(connection: DidCommConnectionRecord, job: RotationJob): RotationBucket {
+    return this.isNative(connection, job) ? 'updated' : bucketFor(connection, this.now())
   }
 
   private validPositive(value: number | undefined, fallback: number): number {
@@ -202,8 +233,10 @@ export class RotationRunner {
     if (existing) {
       existing.content = { ...job }
       await this.agent.genericRecords.update(existing)
+      this.cachedStatus = undefined
       return
     }
     await this.agent.genericRecords.save({ id: JOB_RECORD_ID, content: { ...job } })
+    this.cachedStatus = undefined
   }
 }

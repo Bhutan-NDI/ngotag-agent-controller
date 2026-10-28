@@ -5,12 +5,13 @@ import { DEFAULT_BATCH_SIZE, DEFAULT_INTERVAL_MS, RotationRunner } from '../Rota
 import { RotationService } from '../RotationService'
 import { CREDO_DID_ROTATE_KEY, MIGRATION_ROTATION_KEY } from '../rotationMetadata'
 
-import { silentLogger } from './rotationTestSupport'
+import { eventually, silentLogger } from './rotationTestSupport'
 
 const connection = (
   id: string,
   options: {
     updatedAt?: number
+    createdAt?: number
     state?: DidCommDidExchangeState
     rotation?: object
     marker?: boolean
@@ -26,6 +27,7 @@ const connection = (
     connectionTypes: options.mediator ? ['mediator'] : [],
   })
   record.updatedAt = new Date(options.updatedAt ?? 0)
+  if (undefined !== options.createdAt) record.createdAt = new Date(options.createdAt)
   if (options.rotation) record.metadata.set(MIGRATION_ROTATION_KEY, options.rotation)
   if (options.marker) record.metadata.set(CREDO_DID_ROTATE_KEY, { threadId: 't', did: 'n' })
   return record
@@ -106,7 +108,10 @@ describe('RotationRunner', () => {
         connection('sent', { rotation: { state: 'sent', newDid: 'n', attempts: 1 } }),
         connection('confirmed', { rotation: { state: 'confirmed', newDid: 'n', attempts: 1 } }),
         connection('failed', { rotation: { state: 'failed', newDid: 'n', attempts: 5 } }),
-        connection('in-flight', { marker: true }),
+        connection('in-flight', {
+          marker: true,
+          rotation: { state: 'sent', newDid: 'n', attempts: 1, sentAt: new Date().toISOString() },
+        }),
         connection('retry-later', {
           rotation: {
             state: 'retry',
@@ -132,6 +137,24 @@ describe('RotationRunner', () => {
       await runner.runOnce()
 
       expect(rotated.sort()).toEqual(['ok', 'retry-due'])
+    })
+
+    it('leaves out connections made after the job began, and keeps that cutoff when the job is started again', async () => {
+      const connections = [connection('old', { createdAt: Date.now() - 60_000 })]
+      const { runner, rotated } = build(connections)
+      await runner.start({ batchSize: 100, autoRun: false })
+      const { cutoff } = (await runner.status()).job
+      connections.push(connection('native', { createdAt: Date.now() + 60_000 }))
+
+      await runner.runOnce()
+      expect(rotated).toEqual(['old'])
+      expect((await runner.status()).job.status).toBe('completed')
+      expect((await runner.status()).counts).toMatchObject({ pending: 0, waiting: 1, updated: 1, total: 2 })
+
+      const restarted = await runner.start({ autoRun: false })
+      expect(restarted.job.cutoff).toBe(cutoff)
+      await runner.runOnce()
+      expect(rotated).toEqual(['old'])
     })
 
     it('considers every connection when there are more than one page of them', async () => {
@@ -224,6 +247,33 @@ describe('RotationRunner', () => {
       runner.stop()
 
       expect(again.job.batchSize).toBe(7)
+    })
+
+    it('revives a running job whose loop has died when it is started again', async () => {
+      const { runner, rotated } = build([connection('a')])
+      await runner.start({ autoRun: false })
+
+      await runner.start()
+      await eventually(() => 1 === rotated.length)
+      runner.stop()
+    })
+
+    it('keeps a job going after a batch fails', async () => {
+      const { runner, rotated } = build([connection('a')])
+      jest.spyOn(runner, 'runOnce').mockRejectedValueOnce(new Error('storage is busy'))
+
+      await runner.start({ intervalMs: 20 })
+      await eventually(() => 1 === rotated.length)
+      runner.stop()
+    })
+
+    it('reports the job as running right after it starts, even if the status was read just before', async () => {
+      const { runner } = build([])
+      expect((await runner.status()).job.status).toBe('idle')
+
+      const started = await runner.start({ autoRun: false })
+
+      expect(started.job.status).toBe('running')
     })
 
     it('after a restart, a new runner sees the job and keeps its settings', async () => {

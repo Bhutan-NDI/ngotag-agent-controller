@@ -2373,6 +2373,7 @@ const models: TsoaRoute.Models = {
             "intervalMs": {"dataType":"double","required":true},
             "startedAt": {"dataType":"string"},
             "completedAt": {"dataType":"string"},
+            "cutoff": {"dataType":"string"},
         },
         "additionalProperties": false,
     },

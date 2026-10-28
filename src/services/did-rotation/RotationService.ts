@@ -63,9 +63,11 @@ export class RotationService {
     if (DidCommDidExchangeState.Completed !== connection.state) return 'NOT_COMPLETED'
     if (!connection.did || !connection.theirDid) return 'NO_DID'
     if (connection.connectionTypes?.includes('mediator')) return 'MEDIATOR_CONNECTION'
-    if (getPendingCredoRotation(connection)) return 'ROTATION_IN_FLIGHT'
 
     const rotation = getRotation(connection)
+    // A Credo marker we have no record of is what a failure between createRotate and our own save leaves behind. That
+    // rotation was never sent, so it is cleared and redone (see rotate).
+    if (rotation && getPendingCredoRotation(connection)) return 'ROTATION_IN_FLIGHT'
     if (!rotation) return undefined
     if ('sent' === rotation.state || 'confirmed' === rotation.state) return 'ALREADY_ROTATED'
     if ('failed' === rotation.state) return force ? undefined : 'FAILED'
@@ -90,6 +92,9 @@ export class RotationService {
     if (skip) return { connectionId, outcome: 'skipped', reason: skip }
 
     const previous = getRotation(connection)
+    if (!previous && getPendingCredoRotation(connection)) {
+      await this.agent.dependencyManager.resolve(DidCommDidRotateService).clearDidRotationData(ctx, connection)
+    }
     // A retry reuses the DID created for the first attempt.
     const reuseDid =
       previous && ('retry' === previous.state || 'failed' === previous.state) ? previous.newDid : undefined
