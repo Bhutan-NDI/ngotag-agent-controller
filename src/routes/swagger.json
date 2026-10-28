@@ -7718,7 +7718,7 @@
 						}
 					},
 					"409": {
-						"description": "A wallet portability job is running for this tenant",
+						"description": "A wallet portability job is running, or the tenant has open sessions",
 						"content": {
 							"application/json": {
 								"schema": {

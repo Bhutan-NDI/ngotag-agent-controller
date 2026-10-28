@@ -171,7 +171,7 @@ export class MultiTenancyController extends Controller {
    * migrated) and routing records stay. Safe to repeat.
    */
   @Response<{ message: string }>(404, 'Tenant not found')
-  @Response<{ message: string }>(409, 'A wallet portability job is running for this tenant')
+  @Response<{ message: string }>(409, 'A wallet portability job is running, or the tenant has open sessions')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Post('/:tenantId/purge-profile')
   public async purgeProfile(

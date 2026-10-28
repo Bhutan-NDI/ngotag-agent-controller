@@ -11,7 +11,7 @@ import { TenantsModule } from '@credo-ts/tenants'
 import { askar } from '@openwallet-foundation/askar-nodejs'
 import { randomUUID } from 'crypto'
 
-import { BadRequestError } from '../../../errors/errors'
+import { BadRequestError, ConflictError } from '../../../errors/errors'
 import { isTenantMigrated } from '../../../utils/migratedTenant'
 import { purgeTenantProfile } from '../TenantProfilePurgeService'
 
@@ -158,6 +158,20 @@ describe('purgeTenantProfile against a real multi-tenant agent', () => {
     await expect(purgeTenantProfile(perWalletAgent as never, staying)).rejects.toBeInstanceOf(BadRequestError)
     expect(await profiles()).toContain(`tenant-${staying}`)
   })
+
+  it('refuses while another session is open on the tenant, and goes ahead once it is closed', async () => {
+    const busy = (await tenants.createTenant({ config: { label: 'busy-org' } })).id
+    await seed(busy)
+    const otherSession = await (
+      agent.modules as unknown as { tenants: { getTenantAgent: (o: { tenantId: string }) => Promise<any> } }
+    ).tenants.getTenantAgent({ tenantId: busy })
+
+    await expect(purgeTenantProfile(agent as never, busy, 300)).rejects.toBeInstanceOf(ConflictError)
+    expect(await profiles()).toContain(`tenant-${busy}`)
+
+    await otherSession.endSession()
+    await expect(purgeTenantProfile(agent as never, busy, 300)).resolves.toMatchObject({ profileRemoved: true })
+  }, 60000)
 
   it('throws RecordNotFoundError for an unknown tenant', async () => {
     await expect(purgeTenantProfile(agent as never, randomUUID())).rejects.toBeInstanceOf(RecordNotFoundError)
