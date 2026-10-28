@@ -89,6 +89,7 @@ import {
   getX509CertsByUrl,
 } from './utils/oid4vc-agent'
 import { tenantSessionConfig } from './utils/tenantSessionConfig'
+import { adminRequestTimeoutMs } from './utils/adminRequestTimeout'
 
 export type Transports = 'ws' | 'http'
 export type InboundTransport = {
@@ -671,6 +672,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   const server = app.listen(adminPort, () => {
     logger.info(`Successfully started server on port ${adminPort}`)
   })
+  server.requestTimeout = adminRequestTimeoutMs()
 
   // Graceful shutdown
   const shutdown = async () => {
