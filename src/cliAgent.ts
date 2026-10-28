@@ -80,6 +80,7 @@ import { setupServer } from './server'
 import { shutdownWalletPortabilityService } from './services/wallet-portability/WalletPortabilityService'
 import { CachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
+import { adminRequestTimeoutMs } from './utils/adminRequestTimeout'
 import { AuthTypes, getAuthType } from './utils/auth'
 import { generateSecretKey } from './utils/helpers'
 import { TsLogger } from './utils/logger'
@@ -89,7 +90,6 @@ import {
   getX509CertsByUrl,
 } from './utils/oid4vc-agent'
 import { tenantSessionConfig } from './utils/tenantSessionConfig'
-import { adminRequestTimeoutMs } from './utils/adminRequestTimeout'
 
 export type Transports = 'ws' | 'http'
 export type InboundTransport = {
