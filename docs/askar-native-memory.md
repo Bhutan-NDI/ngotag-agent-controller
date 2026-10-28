@@ -45,7 +45,18 @@ uses exists in 0.6.1, and Credo 0.7 accepts 0.6 officially.
 - The scan result-list patch moves to `askar-shared` 0.6.1 unchanged; 0.6.1 still
   does not release those lists ([details](single-record-query-bound.md)).
 - `askar.version()` returns a raw pointer in 0.6.1, so the DID write route no
-  longer logs it.
+  longer logs it, and the image check decodes it with `koffi`.
+- 0.6.1 keeps the process alive during each pending call with a `setImmediate`
+  loop, which runs the main thread at 100% while any Askar call is waiting
+  (event loop utilisation 1.0 instead of ≈0). It also starts that loop before
+  registering the callback, so a call rejected by `koffi`'s callback limit leaves
+  it spinning for good. A patch to `askar-nodejs` 0.6.1 uses an idle timer
+  instead and starts it only after the callback is registered.
+- `koffi` allows 8,192 callbacks per process, and each pending async Askar call
+  holds one. Beyond that, calls fail with `Too many callbacks are in use`
+  (10,000 concurrent fetches: 1,808 rejected). Tenant admission (`SESSION_LIMIT`,
+  default 10) bounds how many tenant sessions run at once; keep it well below
+  this limit.
 - `koffi` registers named types once per process. Jest re-loads modules for each
   test file in a worker, so `jest.koffi.cjs` reuses already-registered types in
   tests only.

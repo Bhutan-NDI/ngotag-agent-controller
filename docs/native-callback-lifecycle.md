@@ -49,8 +49,9 @@ It preserves callback dispatch, queue locking, condition-variable signalling and
 callback results. The async watcher remains unreferenced as initialized upstream.
 
 The caller must keep its pending asynchronous operation alive. Indy VDR retains
-each pending callback with a JavaScript timer until completion, as Askar did
-before it moved to `koffi`. Their lifetime ownership remains intact. The patch does
+each pending callback with a JavaScript timer until completion, and Askar still
+does under `koffi` (see [Askar native memory](askar-native-memory.md)). Their
+lifetime ownership remains intact. The patch does
 not add timers, suppress errors, force successful process exits, or change any
 wallet query, cryptographic operation, schema or public API.
 

@@ -1,8 +1,4 @@
-// Jest-only stand-in for 'koffi' (mapped in jest.config.base.ts). koffi keeps named types per
-// process, but Jest re-evaluates @openwallet-foundation/askar-nodejs for every test file a worker
-// runs, so the second load fails with "Duplicate type name 'ByteBuffer'". Reuse a named struct or
-// callback type that is already registered instead of declaring it again. Production loads
-// askar-nodejs once and never goes through this file.
+// Reuses already-registered koffi types so Jest can re-load askar-nodejs per test file.
 const koffi = require('koffi/index.js')
 
 const reuseNamed =
