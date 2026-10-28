@@ -98,11 +98,29 @@ describe('RotationService.skipReason', () => {
   it('treats a Credo marker we have no record of as a rotation that was never sent, and lets it be redone', () => {
     expect(service().skipReason(record({ marker: true }))).toBeUndefined()
   })
+
+  it('treats a marker next to a retry or failed record the same way, since only a sent record means it was sent', () => {
+    const svc = service()
+
+    expect(
+      svc.skipReason(
+        record({
+          marker: true,
+          rotation: { state: 'retry', newDid: 'n', attempts: 1, nextAttemptAt: '2026-10-31T23:00:00Z' },
+        }),
+      ),
+    ).toBeUndefined()
+    expect(
+      svc.skipReason(record({ marker: true, rotation: { state: 'failed', newDid: 'n', attempts: 5 } }), true),
+    ).toBeUndefined()
+  })
 })
 
 describe('RotationService.rotateConnection with a leftover Credo marker', () => {
-  it('clears the marker before it creates the rotation', async () => {
-    const connection = record({ marker: true })
+  it.each([
+    ['no record', record({ marker: true })],
+    ['a retry record', record({ marker: true, rotation: { state: 'retry', newDid: 'did:peer:new', attempts: 1 } })],
+  ])('clears the marker before it creates the rotation, with %s', async (_name, connection) => {
     const calls: string[] = []
     const services = new Map<unknown, unknown>([
       [DidCommConnectionService, { getById: async () => connection, update: async () => void calls.push('update') }],
