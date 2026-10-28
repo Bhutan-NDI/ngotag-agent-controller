@@ -63,7 +63,11 @@ describe('purgeTenantProfile against a real multi-tenant agent', () => {
         }
       })
 
+  const relayEnv = { enabled: process.env.MIGRATION_RELAY_ENABLED, redis: process.env.REDIS_URL }
+
   beforeAll(async () => {
+    process.env.MIGRATION_RELAY_ENABLED = 'true'
+    process.env.REDIS_URL = 'redis://relay.example.org:6379'
     agent = new Agent({
       config: {},
       dependencies: agentDependencies,
@@ -88,6 +92,10 @@ describe('purgeTenantProfile against a real multi-tenant agent', () => {
   }, 120000)
 
   afterAll(async () => {
+    const restore = (name: string, value: string | undefined) =>
+      undefined === value ? delete process.env[name] : (process.env[name] = value)
+    restore('MIGRATION_RELAY_ENABLED', relayEnv.enabled)
+    restore('REDIS_URL', relayEnv.redis)
     await agent.shutdown()
   })
 

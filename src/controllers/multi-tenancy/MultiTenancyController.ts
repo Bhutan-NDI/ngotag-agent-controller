@@ -171,7 +171,10 @@ export class MultiTenancyController extends Controller {
    * relay forwards to the new agent. The TenantRecord (tagged migrated) and routing records stay. Safe to repeat.
    */
   @Response<{ message: string }>(404, 'Tenant not found')
-  @Response<{ message: string }>(409, 'RELAY_NOT_FORWARDING, or a wallet portability job is running for this tenant')
+  @Response<{ message: string }>(
+    409,
+    'RELAY_NOT_FORWARDING, RELAY_DISABLED, or a wallet portability job is running for this tenant',
+  )
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Post('/:tenantId/purge-profile')
   public async purgeProfile(
