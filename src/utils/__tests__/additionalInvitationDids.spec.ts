@@ -227,6 +227,25 @@ describe('create-invitation with additionalInvitationDids (real agents)', () => 
       })
     })
 
+    it('a DID this agent created that has no DIDComm service', async () => {
+      await plain(async () => {
+        const created = await dedicated.dids.create({
+          method: 'key',
+          options: { createKey: { type: { kty: 'OKP', crv: 'Ed25519' } } },
+        })
+        const before = await oobCount()
+
+        const error = await create({
+          invitationDid: primary,
+          additionalInvitationDids: [created.didState.did as string],
+        }).catch((e: unknown) => e)
+
+        expect(error).toBeInstanceOf(BadRequestError)
+        expect((error as Error).message).toContain('no DIDComm service')
+        expect(await oobCount()).toBe(before)
+      })
+    })
+
     it('treats an empty list as no extra DIDs', async () => {
       await plain(async () => {
         const result = await create({ invitationDid: primary, additionalInvitationDids: [] })

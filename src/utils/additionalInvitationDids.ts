@@ -12,8 +12,9 @@ export const MAX_ADDITIONAL_INVITATION_DIDS = 3
 
 /**
  * Checks the extra invitation DIDs of a request before anything is created, so a bad request leaves no half-made
- * exchange or invitation behind. Each must be a well-formed DID that this agent created: an invitation advertising a
- * DID whose keys this agent does not hold would send holders somewhere it cannot answer.
+ * exchange or invitation behind. Each must be a well-formed DID that this agent created and that resolves to a DIDComm
+ * service: an invitation advertising a DID whose keys this agent does not hold, or that has no service, would send
+ * holders somewhere they cannot reach.
  */
 export const validateAdditionalInvitationDids = async (
   agent: RequestAgent,
@@ -28,6 +29,7 @@ export const validateAdditionalInvitationDids = async (
     throw new BadRequestError(`additionalInvitationDids can hold at most ${MAX_ADDITIONAL_INVITATION_DIDS} DIDs.`)
   }
 
+  const documentService = agent.dependencyManager.resolve(DidCommDocumentService)
   const seen = new Set<string>(primaryDid ? [primaryDid] : [])
   for (const did of dids as string[]) {
     if (!isDid(did)) {
@@ -39,6 +41,10 @@ export const validateAdditionalInvitationDids = async (
     seen.add(did)
     if (0 === (await agent.dids.getCreatedDids({ did })).length) {
       throw new BadRequestError(`additionalInvitationDids contains a DID this agent did not create: '${did}'.`)
+    }
+    const services = await documentService.resolveServicesFromDid(agent.context, did).catch(() => [])
+    if (0 === services.length) {
+      throw new BadRequestError(`additionalInvitationDids contains a DID with no DIDComm service to reach: '${did}'.`)
     }
   }
   return dids as string[]
