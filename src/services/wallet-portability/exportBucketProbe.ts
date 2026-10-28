@@ -33,7 +33,9 @@ export const probeExportBucket = async (
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetchFn(`https://${bucket}.s3.amazonaws.com/`, {
+    // S3's certificate covers one label, so a dotted bucket is served path-style (as the SDK does for the real pull).
+    const url = bucket.includes('.') ? `https://s3.amazonaws.com/${bucket}/` : `https://${bucket}.s3.amazonaws.com/`
+    const response = await fetchFn(url, {
       method: 'HEAD',
       redirect: 'manual',
       signal: controller.signal,

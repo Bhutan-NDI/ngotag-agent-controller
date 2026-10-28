@@ -35,6 +35,20 @@ describe('probeExportBucket', () => {
     )
   })
 
+  it('probes a dotted bucket name path-style, since the virtual-hosted host cannot match the S3 certificate', async () => {
+    const fetchFn = jest.fn(async () => new Response(null, { status: 403 }))
+
+    await expect(probeExportBucket('wallet.exports.ngotag.bt', fetchFn as never)).resolves.toEqual({
+      configured: true,
+      reachable: true,
+    })
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      'https://s3.amazonaws.com/wallet.exports.ngotag.bt/',
+      expect.objectContaining({ method: 'HEAD' }),
+    )
+  })
+
   it.each([
     ['ENOTFOUND', 'DNS'],
     ['EAI_AGAIN', 'DNS'],
