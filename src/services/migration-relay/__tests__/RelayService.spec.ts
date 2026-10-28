@@ -275,6 +275,18 @@ describe('RelayService', () => {
       await expect(service.remove(agent, TENANT)).rejects.toThrow(RelayNotFoundError)
     })
 
+    it('does not drop a buffer on the retry path when the record is already gone', async () => {
+      const { service, agent, records, store } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      await store.holdPush(TENANT, { receivedAt: 'now', contentType: 'x', body: '{}' })
+      records.clear()
+
+      await expect(service.remove(agent, TENANT)).rejects.toMatchObject({ code: 'RELAY_BUFFER_NOT_EMPTY' })
+
+      expect(await store.getEntry(TENANT)).toBeDefined()
+      expect(await store.holdLength(TENANT)).toBe(1)
+    })
+
     it('says so when there is nothing to remove', async () => {
       const { service, agent } = buildHarness()
 
