@@ -60,7 +60,7 @@ describe('mergeIntoRootProfile', () => {
     return store
   }
 
-  const buildTarget = async (extra?: { category: string; name: string }): Promise<Store> => {
+  const buildTarget = async (...extras: { category: string; name: string }[]): Promise<Store> => {
     const store = await createStore('target', TARGET_PROFILE)
     const session = await store.transaction(TARGET_PROFILE).open()
     await session.insert({ category: 'StorageVersionRecord', name: 'STORAGE_VERSION_RECORD_ID', value: '{}', tags: {} })
@@ -70,7 +70,9 @@ describe('mergeIntoRootProfile', () => {
       value: JSON.stringify({ content: { secretKey: 'target-secret' } }),
       tags: { hasSecretKey: 'true' },
     })
-    if (extra) await session.insert({ category: extra.category, name: extra.name, value: '{}', tags: {} })
+    for (const extra of extras) {
+      await session.insert({ category: extra.category, name: extra.name, value: '{}', tags: {} })
+    }
     await session.commit()
     return store
   }
@@ -212,6 +214,27 @@ describe('mergeIntoRootProfile', () => {
     const remaining = await read(source, SOURCE_PROFILE)
     expect(remaining.entries).toHaveLength(5 + 2)
     expect(remaining.keys).toHaveLength(2)
+  })
+
+  it('names the kinds of record, and the number of keys, that stood in the way, and never their content', async () => {
+    const source = await buildSource(1, 0)
+    const target = await buildTarget(
+      { category: 'ConnectionRecord', name: 'existing' },
+      { category: 'DidRecord', name: 'did-1' },
+    )
+
+    const error = await mergeIntoRootProfile({
+      source,
+      sourceProfile: SOURCE_PROFILE,
+      target,
+      targetProfile: TARGET_PROFILE,
+      dryRun: false,
+    }).catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(TargetNotPristineError)
+    expect((error as TargetNotPristineError).categories).toEqual(['ConnectionRecord', 'DidRecord'])
+    expect((error as TargetNotPristineError).keyCount).toBe(0)
+    expect((error as TargetNotPristineError).message).toBe('TARGET_NOT_PRISTINE')
   })
 
   it('merges a few thousand records across many batches', async () => {

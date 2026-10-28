@@ -63,4 +63,16 @@ describe('ImportSessionStore', () => {
     expect(store.get(sessions[10].sessionId)).toBeDefined()
     store.clear()
   })
+
+  it('never evicts a session a running import depends on', () => {
+    const store = new ImportSessionStore()
+    const first = store.create()
+    store.markInUse(first.sessionId)
+    const others = Array.from({ length: 10 }, () => store.create())
+
+    expect(store.get(first.sessionId)).toBeDefined()
+    expect(store.get(others[0].sessionId)).toBeUndefined()
+    expect(store.get(others[9].sessionId)).toBeDefined()
+    store.clear()
+  })
 })
