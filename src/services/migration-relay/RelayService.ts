@@ -137,6 +137,7 @@ export class RelayService {
     if (!record) {
       // An earlier call may have deleted the record and then failed before clearing Redis: finish that.
       if (!(await this.store.getEntry(tenantId))) throw new RelayNotFoundError(tenantId)
+      if (0 < (await this.store.holdLength(tenantId))) throw new RelayConflictError('RELAY_BUFFER_NOT_EMPTY')
       await this.dropFromRedis(agent, tenantId)
       return
     }
