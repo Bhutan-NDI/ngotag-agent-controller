@@ -1,0 +1,35 @@
+diff --git a/node_modules/@openwallet-foundation/askar-nodejs/build/NodeJSAskar.js b/node_modules/@openwallet-foundation/askar-nodejs/build/NodeJSAskar.js
+index 642b405..2dd7e7b 100644
+--- a/node_modules/@openwallet-foundation/askar-nodejs/build/NodeJSAskar.js
++++ b/node_modules/@openwallet-foundation/askar-nodejs/build/NodeJSAskar.js
+@@ -46,13 +46,12 @@ class NodeJSAskar {
+         this.callbackId = 1;
+         this.promisify = async (method, callbackType) => {
+             return new Promise((resolve, reject) => {
+-                let keepAlive;
+-                const scheduleKeepAlive = () => {
+-                    keepAlive = setImmediate(scheduleKeepAlive);
+-                };
+-                scheduleKeepAlive();
++                // PATCH: a pending koffi callback does not keep the event loop alive, so hold it open with an
++                // idle timer instead of a setImmediate loop that spins the main thread while a call is pending.
++                // Start it only after koffi.register succeeds: register throws once 8192 callbacks are in use,
++                // and a keep-alive started before it would never be cleared.
+                 const registeredCallback = koffi.register((_cbId, errorCode, result) => {
+-                    clearImmediate(keepAlive);
++                    clearInterval(keepAlive);
+                     koffi.unregister(registeredCallback);
+                     if (errorCode !== 0) {
+                         reject(this.getAskarError(errorCode));
+@@ -61,9 +60,10 @@ class NodeJSAskar {
+                         resolve(result);
+                     }
+                 }, koffi.pointer(callbackType));
++                const keepAlive = setInterval(() => { }, 0x7fffffff);
+                 const errorCode = method(registeredCallback, this.callbackId++);
+                 if (errorCode !== 0) {
+-                    clearImmediate(keepAlive);
++                    clearInterval(keepAlive);
+                     koffi.unregister(registeredCallback);
+                     reject(this.getAskarError(errorCode));
+                 }

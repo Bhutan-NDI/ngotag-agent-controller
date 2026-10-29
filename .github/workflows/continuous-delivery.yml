@@ -24,7 +24,9 @@ jobs:
 
       - name: Extract Git Tag
         id: get_tag
-        run: echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+        run: |
+          echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          echo "RELEASE_VERSION=$(jq -r .version package.json)+${GITHUB_SHA:0:12}" >> $GITHUB_ENV
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -46,6 +48,7 @@ jobs:
           file: Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
+          build-args: RELEASE_VERSION=${{ env.RELEASE_VERSION }}
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.SERVICE }}:${{ env.TAG }}
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.SERVICE }}:latest

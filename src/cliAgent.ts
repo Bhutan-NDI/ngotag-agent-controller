@@ -77,9 +77,15 @@ import {
 } from './purge/PurgeSchedulerFactory'
 import { buildPurgeConfig } from './purge/PurgeTypes'
 import { setupServer } from './server'
+import {
+  initRelayRuntime,
+  shutdownRelayRuntime,
+  warnIfRelayEntriesExist,
+} from './services/migration-relay/relayRuntime'
 import { shutdownWalletPortabilityService } from './services/wallet-portability/WalletPortabilityService'
 import { CachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
+import { adminRequestTimeoutMs } from './utils/adminRequestTimeout'
 import { AuthTypes, getAuthType } from './utils/auth'
 import { generateSecretKey } from './utils/helpers'
 import { TsLogger } from './utils/logger'
@@ -88,6 +94,7 @@ import {
   getX509CertsByClientToken,
   getX509CertsByUrl,
 } from './utils/oid4vc-agent'
+import { getProofRequestExpiryConfig } from './utils/proofRequestExpiry'
 import { tenantSessionConfig } from './utils/tenantSessionConfig'
 
 export type Transports = 'ws' | 'http'
@@ -590,6 +597,9 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     agent.modules.didcomm.registerOutboundTransport(new OutboundTransport())
   }
 
+  // The migration relay only exists on a shared (multi-tenant) agent, and only when it is explicitly enabled.
+  const relay = afjConfig.tenancy ? initRelayRuntime(logger) : undefined
+
   // Register inbound transports
   for (const inboundTransport of inboundTransports) {
     const InboundTransport = inboundTransportMapping[inboundTransport.transport]
@@ -605,6 +615,9 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
         }),
       )
       transport.app.use(bodyParser.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
+      // After the transport's own text parser, so the middleware reads the raw envelope; before its POST handler,
+      // which is only registered by agent.initialize().
+      if (relay) transport.app.use(relay.middleware)
     }
   }
 
@@ -613,6 +626,19 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   mountBaseMiddleware(expressApp)
 
   await agent.initialize()
+
+  if (relay) {
+    relay.service.watchRoutingKeys(agent as unknown as Agent<RestMultiTenantAgentModules>)
+    await relay.service
+      .rehydrate(agent as unknown as Agent<RestMultiTenantAgentModules>)
+      .then((count) => logger.info(`[Relay] restored ${count} relay entr${1 === count ? 'y' : 'ies'}`))
+      .catch((error) => logger.error(`[Relay] could not restore relay state: ${error}`))
+    relay.service.startMirror(agent as unknown as Agent<RestMultiTenantAgentModules>)
+  } else if (afjConfig.tenancy) {
+    await warnIfRelayEntriesExist(agent as unknown as Agent<RestMultiTenantAgentModules>, logger).catch((error) =>
+      logger.error(`[Relay] could not check for relay entries: ${error}`),
+    )
+  }
 
   const genericRecord = await agent.genericRecords.findAllByQuery({ hasSecretKey: 'true' })
   const recordsWithSecretKey = genericRecord[0]
@@ -651,10 +677,19 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
 
   logger.info('*** API Key: set')
 
-  // Start purge schedulers if enabled (NATS and Cron are independent)
   const purgeConfig = buildPurgeConfig()
+  if (purgeConfig) await validatePurgeConfig(purgeConfig)
+
+  // Fail at startup, not on the first request, if DIDCOMM_PROOF_REQUEST_EXPIRY is invalid or above
+  // the purge ceiling. Checked after the purge config so a bad purge TTL gets the validator's message.
+  const proofRequestExpiry = getProofRequestExpiryConfig()
+  logger.info(
+    `Proof request expiry: default ${proofRequestExpiry.defaultSeconds}s, max ${proofRequestExpiry.maxSeconds}s ` +
+      `(${proofRequestExpiry.ceilingSource})`,
+  )
+
+  // Start purge schedulers if enabled (NATS and Cron are independent)
   if (purgeConfig) {
-    await validatePurgeConfig(purgeConfig)
     initPurgeSchedulers(purgeConfig.natsConfig.enabled, purgeConfig.cronConfig.enabled)
 
     const purgeWebhookUrl = purgeConfig.webhookEnabled ? webhookUrl : undefined
@@ -671,6 +706,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   const server = app.listen(adminPort, () => {
     logger.info(`Successfully started server on port ${adminPort}`)
   })
+  server.requestTimeout = adminRequestTimeoutMs()
 
   // Graceful shutdown
   const shutdown = async () => {
@@ -682,6 +718,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       await cache.disconnect()
     }
     await shutdownWalletPortabilityService()
+    await shutdownRelayRuntime()
     await agent.shutdown()
     process.exit(0)
   }
