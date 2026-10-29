@@ -5,6 +5,8 @@ import type {
   SafeW3cJsonLdVerifyCredentialOptions,
   SelfAttestedW3cCredentialResponse,
   VerifyDataOptions,
+  WebhookProbeRequest,
+  WebhookProbeResponse,
 } from '../types'
 import type {
   JsonObject,
@@ -35,6 +37,7 @@ import { NotFoundError, BadRequestError } from '../../errors'
 import { getAgentRuntimeConfig, getReleaseVersion, getStorageVersion } from '../../utils/agentInfo'
 import { findDefaultDidRecords } from '../../utils/defaultDid'
 import { verifyDidBoundSignature } from '../../utils/didSignatureVerification'
+import { isProbeId, probeWebhook } from '../../utils/webhookProbe'
 
 // 100 years: effectively non-expiring default when the caller doesn't request an expiry (W3cCredential requires some value).
 const SELF_ATTESTED_DEFAULT_EXPIRATION_MS = 100 * 365.25 * 24 * 60 * 60 * 1000
@@ -164,6 +167,19 @@ export class AgentController extends Controller {
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }
+  }
+
+  /**
+   * Sends one test event to the agent's own webhook URL, so a caller can confirm the URL is set and reaches the
+   * platform. Whether it was accepted is for the receiver to confirm; this only says whether anything answered.
+   */
+  @Security('jwt', [SCOPES.DEDICATED_AGENT])
+  @Post('/webhook/probe')
+  public async probeWebhook(@Body() body: WebhookProbeRequest): Promise<WebhookProbeResponse> {
+    if (!isProbeId(body?.probeId)) {
+      throw new BadRequestError('probeId must be a UUID')
+    }
+    return probeWebhook(body.probeId)
   }
 
   /**
