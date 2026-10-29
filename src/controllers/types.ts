@@ -186,6 +186,7 @@ export interface CreateOfferOobOptions {
   imageUrl?: string
   recipientKey?: string
   invitationDid?: string
+  additionalInvitationDids?: string[]
 }
 export interface CredentialCreateOfferOptions {
   credentialRecord: DidCommCredentialExchangeRecord
@@ -206,6 +207,7 @@ export interface CreateProofRequestOobOptions {
   imageUrl?: string
   recipientKey?: string
   invitationDid?: string
+  additionalInvitationDids?: string[]
   /**
    * Seconds until the request expires (sent as `~timing.expires_time`). Whole number, at least
    * 300, at most the purge ceiling. Omit (or null) for the deployment default,
@@ -412,6 +414,7 @@ export interface CreateInvitationOptions {
   routing?: DidCommRouting
   appendedAttachments?: DidCommAttachment[]
   invitationDid?: string
+  additionalInvitationDids?: string[]
 }
 
 //todo:Add transaction type

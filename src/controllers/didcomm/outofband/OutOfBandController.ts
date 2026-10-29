@@ -17,6 +17,7 @@ import { injectable } from 'tsyringe'
 import { SCOPES } from '../../../enums'
 import ErrorHandlingService from '../../../errorHandlingService'
 import { InternalServerError, NotFoundError } from '../../../errors'
+import { addAdditionalInvitationDids, validateAdditionalInvitationDids } from '../../../utils/additionalInvitationDids'
 import { recordPageOptions, fetchRecordPage } from '../../../utils/recordPagination'
 import { ConnectionRecordExample, outOfBandInvitationExample, outOfBandRecordExample, RecordId } from '../../examples'
 import { AcceptInvitationConfig, ReceiveInvitationByUrlProps, ReceiveInvitationProps } from '../../types'
@@ -106,6 +107,13 @@ export class OutOfBandController extends Controller {
     @Body() config: CreateInvitationOptions & RecipientKeyOption, // props removed because of issues with serialization
   ) {
     try {
+      const { additionalInvitationDids, ...invitationConfig } = config
+      const extraInvitationDids = await validateAdditionalInvitationDids(
+        request.agent,
+        additionalInvitationDids,
+        config?.invitationDid,
+      )
+
       let invitationDid: string | undefined
       if (config?.invitationDid) {
         invitationDid = config?.invitationDid
@@ -138,7 +146,11 @@ export class OutOfBandController extends Controller {
         }
       }
 
-      const outOfBandRecord = await request.agent.modules.didcomm.oob.createInvitation({ ...config, invitationDid })
+      const outOfBandRecord = await request.agent.modules.didcomm.oob.createInvitation({
+        ...invitationConfig,
+        invitationDid,
+      })
+      await addAdditionalInvitationDids(request.agent, outOfBandRecord, extraInvitationDids)
       return {
         invitationUrl: outOfBandRecord.outOfBandInvitation.toUrl({
           domain: request.agent.modules.didcomm.config.endpoints[0],

@@ -2964,6 +2964,12 @@
 					},
 					"invitationDid": {
 						"type": "string"
+					},
+					"additionalInvitationDids": {
+						"items": {
+							"type": "string"
+						},
+						"type": "array"
 					}
 				},
 				"type": "object",
@@ -4938,6 +4944,12 @@
 					},
 					"invitationDid": {
 						"type": "string"
+					},
+					"additionalInvitationDids": {
+						"items": {
+							"type": "string"
+						},
+						"type": "array"
 					}
 				},
 				"required": [
@@ -5614,6 +5626,12 @@
 					},
 					"invitationDid": {
 						"type": "string"
+					},
+					"additionalInvitationDids": {
+						"items": {
+							"type": "string"
+						},
+						"type": "array"
 					},
 					"expiresInSeconds": {
 						"type": "number",
