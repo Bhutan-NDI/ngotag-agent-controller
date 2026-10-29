@@ -1,6 +1,6 @@
 import type { RestMultiTenantAgentModules } from '../../cliAgent'
-import type { PurgeTenantProfileResult } from '../../services/tenant-purge/TenantProfilePurgeService'
 import type { EndpointSchemeSummary } from '../../services/endpoint-schemes/endpointSchemes'
+import type { PurgeTenantProfileResult } from '../../services/tenant-purge/TenantProfilePurgeService'
 import type {
   ExportWalletResult,
   ImportWalletResult,
@@ -30,8 +30,8 @@ import {
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { ConflictError } from '../../errors/errors'
-import { purgeTenantProfile } from '../../services/tenant-purge/TenantProfilePurgeService'
 import { collectEndpointSchemes } from '../../services/endpoint-schemes/endpointSchemes'
+import { purgeTenantProfile } from '../../services/tenant-purge/TenantProfilePurgeService'
 import { getWalletPortabilityService } from '../../services/wallet-portability/WalletPortabilityService'
 import {
   WalletPortabilityJobConflictError,
