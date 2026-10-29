@@ -1,4 +1,5 @@
 import type { RestMultiTenantAgentModules } from '../../cliAgent'
+import type { EndpointSchemeSummary } from '../../services/endpoint-schemes/endpointSchemes'
 import type {
   DeleteExportResult,
   ExportWalletResult,
@@ -29,6 +30,7 @@ import {
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { ConflictError } from '../../errors/errors'
+import { collectEndpointSchemes } from '../../services/endpoint-schemes/endpointSchemes'
 import { getWalletPortabilityService } from '../../services/wallet-portability/WalletPortabilityService'
 import {
   WalletPortabilityJobConflictError,
@@ -163,6 +165,28 @@ export class MultiTenancyController extends Controller {
         })
       }
       return internalServerError(500, { message: `Something went wrong: ${error}` })
+    }
+  }
+
+  /**
+   * Which URL schemes the tenant's own DIDs advertise as service endpoints, with a count and example DIDs per
+   * scheme, so a caller can refuse a move for schemes the dedicated agent doesn't serve (ws, wss).
+   */
+  @Response<{ message: string }>(404, 'Tenant not found')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Get('/:tenantId/endpoint-schemes')
+  public async getEndpointSchemes(
+    @Request() request: Req,
+    @Path('tenantId') tenantId: string,
+  ): Promise<EndpointSchemeSummary> {
+    const agent = request.agent as Agent<RestMultiTenantAgentModules>
+    try {
+      await agent.modules.tenants.getTenantById(tenantId)
+      return await agent.modules.tenants.withTenantAgent({ tenantId }, (tenantAgent) =>
+        collectEndpointSchemes(tenantAgent, tenantId),
+      )
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
     }
   }
 
