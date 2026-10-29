@@ -1,4 +1,6 @@
+import { jest } from '@jest/globals'
 import { createServer } from 'http'
+import { Response as FetchResponse } from 'node-fetch'
 
 import { isProbeId, probeWebhook, setWebhookUrl } from '../webhookProbe'
 
@@ -53,6 +55,18 @@ describe('probeWebhook', () => {
     await target.close()
 
     expect(result).toEqual({ configured: true, delivered: true, status: 404 })
+  })
+
+  it('reads the answer body, so the connection can be reused', async () => {
+    const target = await listen((_req, res) => res.writeHead(200).end('ok'))
+    setWebhookUrl(target.url)
+    const consumed = jest.spyOn(FetchResponse.prototype, 'arrayBuffer')
+
+    await probeWebhook(PROBE_ID)
+    await target.close()
+
+    expect(consumed).toHaveBeenCalled()
+    consumed.mockRestore()
   })
 
   it('does not follow a redirect to somewhere else', async () => {

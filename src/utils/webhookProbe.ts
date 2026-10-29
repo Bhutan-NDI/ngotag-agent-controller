@@ -31,9 +31,12 @@ export const probeWebhook = async (probeId: string, timeoutMs = PROBE_TIMEOUT_MS
       method: 'POST',
       body: JSON.stringify({ type: 'WebhookProbe', probeId }),
       headers: { 'Content-Type': 'application/json' },
+      // A redirect is deliberately not followed, so a 3xx counts as not confirmed even though real events follow it.
       redirect: 'manual',
       signal: controller.signal,
     })
+    // node-fetch only frees a keep-alive socket once the body is consumed or destroyed.
+    await response.arrayBuffer().catch(() => undefined)
     return { configured: true, delivered: true, status: response.status }
   } catch {
     return { configured: true, delivered: false }
