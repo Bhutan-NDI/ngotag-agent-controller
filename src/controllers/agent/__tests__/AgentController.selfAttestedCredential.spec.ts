@@ -199,6 +199,58 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
   // (non-mocked) signCredential call throws "must be a valid date: undefined" for id/expirationDate
   // alike -- confirmed directly against a real in-memory Credo agent, not just inferred from
   // reading the library.
+  it('signs with the DID the caller names, not the default one, when the agent created it', async () => {
+    const otherDid = 'did:polygon:0xabc'
+    const otherMethod = `${otherDid}#key-1`
+    const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
+      return new W3cJsonLdVerifiableCredential({
+        ...options.credential,
+        proof: {
+          type: 'Ed25519Signature2018',
+          proofPurpose: 'assertionMethod',
+          verificationMethod: otherMethod,
+          created: new Date().toISOString(),
+          jws: 'fake-jws',
+        },
+      })
+    }) as jest.Mock
+    const agent = makeAgent({
+      defaultDid: SELF_DID,
+      didDocument: { assertionMethod: [{ id: otherMethod }] },
+      allCreatedDids: [{ did: otherDid }],
+      signCredentialImpl: signCredential,
+    })
+
+    await new AgentController().createW3cSelfAttestedCredential(makeRequest(agent), {
+      ...(REQUEST_BODY as object),
+      did: otherDid,
+    } as never)
+
+    const signedWith = signCredential.mock.calls[0][0] as { credential: unknown; verificationMethod: string }
+    expect((signedWith.credential as InstanceType<typeof W3cCredential>).issuerId).toBe(otherDid)
+    expect(signedWith.verificationMethod).toBe(otherMethod)
+    expect(agent.dids.getCreatedDids).toHaveBeenCalledWith({ did: otherDid })
+    expect(agent.dids.resolveCreatedDidDocumentWithKeys).toHaveBeenCalledWith(otherDid)
+  })
+
+  it('refuses a named DID this agent did not create, before signing', async () => {
+    const signCredential = jest.fn() as jest.Mock
+    const agent = makeAgent({
+      defaultDid: SELF_DID,
+      didDocument: { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] },
+      allCreatedDids: [],
+      signCredentialImpl: signCredential,
+    })
+
+    await expect(
+      new AgentController().createW3cSelfAttestedCredential(makeRequest(agent), {
+        ...(REQUEST_BODY as object),
+        did: 'did:polygon:0xnot-mine',
+      } as never),
+    ).rejects.toThrow('was not created by this agent')
+    expect(signCredential).not.toHaveBeenCalled()
+  })
+
   it('always supplies a real id and a far-future default expirationDate, since W3cCredential/vc-js require both present', async () => {
     const didDocument = { assertionMethod: [{ id: VERIFICATION_METHOD_ID }] }
     const signCredential = jest.fn(async (options: { credential: InstanceType<typeof W3cCredential> }) => {
