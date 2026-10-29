@@ -195,6 +195,7 @@ describe('purgeTenantProfile against a real multi-tenant agent', () => {
   it('lets a retry through after the profile removal fails once, instead of leaving a disposed context mapped', async () => {
     const flaky = (await tenants.createTenant({ config: { label: 'flaky-org' } })).id
     await seed(flaky)
+    await forwardRelay(flaky)
     const store = agent.dependencyManager.resolve(AskarStoreManager)
     const removal = jest.spyOn(store, 'deleteContext').mockRejectedValueOnce(new Error('database timeout'))
     const coordinator = (
