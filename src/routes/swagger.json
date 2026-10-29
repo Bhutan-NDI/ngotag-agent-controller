@@ -2549,6 +2549,26 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"DeleteExportResult": {
+				"properties": {
+					"jobId": {
+						"type": "string"
+					},
+					"deleted": {
+						"type": "boolean",
+						"enum": [
+							true
+						],
+						"nullable": false
+					}
+				},
+				"required": [
+					"jobId",
+					"deleted"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"WalletPortabilityJobType": {
 				"enum": [
 					"export",
@@ -2607,6 +2627,9 @@
 					},
 					"downloadUrl": {
 						"type": "string"
+					},
+					"artifactDeleted": {
+						"type": "boolean"
 					},
 					"backupProfile": {
 						"type": "string"
@@ -5624,6 +5647,36 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"ExportBucketProbeReason": {
+				"type": "string",
+				"enum": [
+					"DNS",
+					"TLS",
+					"TIMEOUT",
+					"UNREACHABLE",
+					"NO_SUCH_BUCKET"
+				]
+			},
+			"ExportBucketProbe": {
+				"properties": {
+					"configured": {
+						"type": "boolean",
+						"description": "Whether a usable export bucket name is set. Without one this agent cannot pull an export from S3 at all"
+					},
+					"reachable": {
+						"type": "boolean",
+						"description": "Whether this agent can reach the bucket over HTTPS; absent when no bucket is configured"
+					},
+					"reason": {
+						"$ref": "#/components/schemas/ExportBucketProbeReason"
+					}
+				},
+				"required": [
+					"configured"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"CreatedImportSession": {
 				"properties": {
 					"sessionId": {
@@ -8153,6 +8206,106 @@
 						}
 					}
 				}
+			}
+		},
+		"/multi-tenancy/export/{tenantId}/{jobId}": {
+			"delete": {
+				"operationId": "DeleteExportedWallet",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/DeleteExportResult"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "The export is still running",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Delete a finished export's artifact from S3. Safe to repeat; refused with 409 while the export is still running.",
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "jobId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
 			}
 		},
 		"/multi-tenancy/export/{tenantId}/status/{jobId}": {
@@ -12407,6 +12560,35 @@
 						}
 					}
 				]
+			}
+		},
+		"/agent/wallet/export-bucket": {
+			"get": {
+				"operationId": "GetExportBucket",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ExportBucketProbe"
+								}
+							}
+						}
+					}
+				},
+				"description": "Whether this agent can pull an export from its S3 bucket. When it cannot, the platform sends the export itself\nwith POST /agent/wallet/import/upload.",
+				"tags": [
+					"Agent"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": []
 			}
 		},
 		"/agent/wallet/import-session": {
