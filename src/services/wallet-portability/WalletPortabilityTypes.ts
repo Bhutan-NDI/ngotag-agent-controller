@@ -27,6 +27,8 @@ export interface WalletPortabilityJobRecord {
   checksum?: string
   // Computed on read, never persisted — see s3Key above.
   downloadUrl?: string
+  // Set once the artifact has been removed from S3 on request; s3Key is cleared at the same time.
+  artifactDeleted?: boolean
   // Populated on Completed (import only): the timestamped profile the tenant's pre-import data
   // was renamed to, in case it ever needs to be inspected/restored. Never deleted automatically.
   backupProfile?: string
@@ -54,6 +56,11 @@ export interface WalletImportCounts {
 export interface ExportWalletResult {
   jobId: string
   status: WalletPortabilityJobStatus
+}
+
+export interface DeleteExportResult {
+  jobId: string
+  deleted: true
 }
 
 export interface ImportWalletResult {

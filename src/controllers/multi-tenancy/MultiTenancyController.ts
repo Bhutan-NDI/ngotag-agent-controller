@@ -1,6 +1,7 @@
 import type { RestMultiTenantAgentModules } from '../../cliAgent'
 import type { EndpointSchemeSummary } from '../../services/endpoint-schemes/endpointSchemes'
 import type {
+  DeleteExportResult,
   ExportWalletResult,
   ImportWalletResult,
   WalletPortabilityJobRecord,
@@ -264,6 +265,31 @@ export class MultiTenancyController extends Controller {
     } catch (error) {
       // Export and import share the tenant's profile namespace and can't safely run
       // concurrently — see WalletPortabilityJobConflictError's docblock.
+      if (error instanceof WalletPortabilityJobConflictError) {
+        throw new ConflictError(error.message)
+      }
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  /**
+   * Delete a finished export's artifact from S3. Safe to repeat; refused with 409 while the export is still running.
+   */
+  @Response<{ message: string }>(409, 'The export is still running')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Delete('/export/:tenantId/:jobId')
+  public async deleteExportedWallet(
+    @Path('tenantId') tenantId: string,
+    @Path('jobId') jobId: string,
+    @Res() notFoundError: TsoaResponse<404, { reason: string }>,
+  ): Promise<DeleteExportResult> {
+    try {
+      const result = await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).deleteExport(
+        tenantId,
+        jobId,
+      )
+      return result ?? notFoundError(404, { reason: `Export job '${jobId}' not found for tenant '${tenantId}'.` })
+    } catch (error) {
       if (error instanceof WalletPortabilityJobConflictError) {
         throw new ConflictError(error.message)
       }
