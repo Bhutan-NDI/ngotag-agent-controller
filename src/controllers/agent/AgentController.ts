@@ -32,6 +32,7 @@ import { injectable } from 'tsyringe'
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { NotFoundError, BadRequestError } from '../../errors'
+import { getAgentRuntimeConfig, getReleaseVersion, getStorageVersion } from '../../utils/agentInfo'
 import { findDefaultDidRecords } from '../../utils/defaultDid'
 import { verifyDidBoundSignature } from '../../utils/didSignatureVerification'
 
@@ -156,6 +157,9 @@ export class AgentController extends Controller {
         endpoints: request.agent.modules.didcomm.config.endpoints,
         isInitialized: request.agent.isInitialized,
         publicDid: undefined,
+        releaseVersion: getReleaseVersion(),
+        storageVersion: await getStorageVersion(request.agent),
+        config: getAgentRuntimeConfig(request.agent),
       }
     } catch (error) {
       throw ErrorHandlingService.handle(error)
