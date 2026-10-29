@@ -106,7 +106,7 @@ export class RelayController extends Controller {
    * back to this agent first. Refused when the tenant's wallet has been purged.
    */
   @Response<{ message: string }>(404, 'No relay for this tenant')
-  @Response<{ message: string }>(409, 'TENANT_PURGED or RELAY_BUFFER_NOT_EMPTY')
+  @Response<{ message: string }>(409, 'TENANT_PURGED, RELAY_BUSY or RELAY_BUFFER_NOT_EMPTY')
   @Post('/:tenantId/restore')
   public async restore(
     @Request() request: Req,

@@ -11,6 +11,7 @@ import { randomUUID } from 'crypto'
 
 import { RelayMirror } from './RelayMirror'
 import {
+  FORWARD_TIMEOUT_MS,
   LOCK_POLL_MS,
   MIRROR_REFRESH_MS,
   PROBE_TIMEOUT_MS,
@@ -48,6 +49,7 @@ export interface RelayServiceOptions {
   probeFetch?: typeof fetch
   probeTimeoutMs?: number
   reinjectTimeoutMs?: number
+  forwardTimeoutMs?: number
 }
 
 export interface RelayStatus extends RelayEntry {
@@ -183,6 +185,12 @@ export class RelayService {
       this.mirror.set(holding, await this.listFingerprints(agent, tenantId))
       await this.store.setEntry(holding)
     }
+
+    // A forward that read FORWARD just before the flip can still end in neverLeft and push to the buffer; the entry's
+    // updatedAt keeps a retry from waiting again.
+    const flippedAt = Date.parse((await this.store.getEntry(tenantId))?.updatedAt ?? '') || Date.now()
+    const inFlightMs = flippedAt + (this.options.forwardTimeoutMs ?? FORWARD_TIMEOUT_MS) - Date.now()
+    if (0 < inFlightMs) await new Promise((resolve) => setTimeout(resolve, inFlightMs))
 
     const result = await this.injectHeld(agent, tenantId, RESTORE_LOCK_WAIT_MS)
     await this.remove(agent, tenantId)

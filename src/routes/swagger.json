@@ -12462,7 +12462,7 @@
 						}
 					},
 					"409": {
-						"description": "TENANT_PURGED or RELAY_BUFFER_NOT_EMPTY",
+						"description": "TENANT_PURGED, RELAY_BUSY or RELAY_BUFFER_NOT_EMPTY",
 						"content": {
 							"application/json": {
 								"schema": {

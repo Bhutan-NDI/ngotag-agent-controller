@@ -17,7 +17,7 @@ interface FakeRecord {
   tags: Record<string, string>
 }
 
-const buildHarness = () => {
+const buildHarness = (options: { forwardTimeoutMs?: number } = {}) => {
   const records = new Map<string, FakeRecord>()
   const routing = [
     { tenantId: TENANT, recipientKeyFingerprint: 'fp-1' },
@@ -91,6 +91,7 @@ const buildHarness = () => {
     probeFetch: ((...args: Parameters<typeof fetch>) => probeFetch(...args)) as typeof fetch,
     probeTimeoutMs: 50,
     reinjectTimeoutMs: 50,
+    forwardTimeoutMs: options.forwardTimeoutMs ?? 0,
   })
 
   return {
@@ -390,6 +391,36 @@ describe('RelayService', () => {
       expect(await store.getEntry(TENANT)).toBeUndefined()
       expect(await store.holdLength(TENANT)).toBe(0)
       await expect(store.findTenantIdByFingerprints(['fp-1', 'fp-2'])).resolves.toBeUndefined()
+    })
+
+    it('waits out the forward timeout after the flip, so a forward still in flight can push its message first', async () => {
+      const { service, agent, store, received } = buildHarness({ forwardTimeoutMs: 150 })
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      const startedAt = Date.now()
+      const held = service as unknown as { injectHeld: RelayService['reinject'] }
+      const injectHeld = held.injectHeld.bind(service)
+      let startedInjectingAfterMs = 0
+      jest.spyOn(held, 'injectHeld').mockImplementation(async (...args) => {
+        startedInjectingAfterMs = Date.now() - startedAt
+        return injectHeld(...args)
+      })
+      setTimeout(() => void store.holdPush(TENANT, envelope(7)), 40)
+
+      await expect(service.restore(agent, TENANT)).resolves.toEqual({ injected: 1, failed: 0 })
+
+      expect(startedInjectingAfterMs).toBeGreaterThanOrEqual(140)
+      expect(received).toEqual([{ protected: 'p7' }])
+    })
+
+    it('does not wait again on a retry, since the flip was long ago', async () => {
+      const { service, agent, store } = buildHarness({ forwardTimeoutMs: 150 })
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      await store.setEntry({ tenantId: TENANT, mode: 'HOLD', updatedAt: new Date(Date.now() - 60_000).toISOString() })
+      const startedAt = Date.now()
+
+      await service.restore(agent, TENANT)
+
+      expect(Date.now() - startedAt).toBeLessThan(100)
     })
 
     it('stops forwarding before it hands anything back, so no message goes to the lost agent in between', async () => {
