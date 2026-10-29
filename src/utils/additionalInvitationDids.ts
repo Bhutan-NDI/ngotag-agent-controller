@@ -39,6 +39,10 @@ export const validateAdditionalInvitationDids = async (
       throw new BadRequestError(`additionalInvitationDids repeats a DID, or repeats invitationDid: '${did}'.`)
     }
     seen.add(did)
+    // Holders cannot resolve these (the pairwise DIDs this agent creates for exchanges), so they could not accept it.
+    if (/^did:peer:1/.test(did) || /^did:peer:4[^:]*$/.test(did)) {
+      throw new BadRequestError(`additionalInvitationDids contains a DID holders cannot resolve: '${did}'.`)
+    }
     if (0 === (await agent.dids.getCreatedDids({ did })).length) {
       throw new BadRequestError(`additionalInvitationDids contains a DID this agent did not create: '${did}'.`)
     }

@@ -227,6 +227,18 @@ describe('create-invitation with additionalInvitationDids (real agents)', () => 
       })
     })
 
+    it.each([
+      ['a did:peer:1', 'did:peer:1zQmNotResolvableByHolders'],
+      ['a short-form did:peer:4', 'did:peer:4zQmShortFormNotResolvableByHolders'],
+    ])('%s, which holders cannot resolve, says so', async (_name, did) => {
+      await plain(async () => {
+        const error = await create({ invitationDid: primary, additionalInvitationDids: [did] }).catch((e: unknown) => e)
+
+        expect(error).toBeInstanceOf(BadRequestError)
+        expect((error as Error).message).toContain('holders cannot resolve')
+      })
+    })
+
     it('a DID this agent created that has no DIDComm service', async () => {
       await plain(async () => {
         const created = await dedicated.dids.create({
