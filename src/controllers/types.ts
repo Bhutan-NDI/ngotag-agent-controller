@@ -487,6 +487,8 @@ export interface jsonLdCredentialOptions {
   proofType: string
   // ISO 8601; defaulted server-side when omitted (W3cCredential requires a real date once signed).
   expirationDate?: string
+  // A DID this agent created, to sign with instead of the default DID.
+  did?: string
 }
 
 // Runtime shape of createW3cSelfAttestedCredential's response: JsonTransformer.toJSON() of the

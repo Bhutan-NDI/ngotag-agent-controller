@@ -80,6 +80,7 @@ import { setupServer } from './server'
 import { shutdownWalletPortabilityService } from './services/wallet-portability/WalletPortabilityService'
 import { CachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
+import { adminRequestTimeoutMs } from './utils/adminRequestTimeout'
 import { AuthTypes, getAuthType } from './utils/auth'
 import { generateSecretKey } from './utils/helpers'
 import { TsLogger } from './utils/logger'
@@ -681,6 +682,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   const server = app.listen(adminPort, () => {
     logger.info(`Successfully started server on port ${adminPort}`)
   })
+  server.requestTimeout = adminRequestTimeoutMs()
 
   // Graceful shutdown
   const shutdown = async () => {
