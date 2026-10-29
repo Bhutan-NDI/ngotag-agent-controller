@@ -1071,6 +1071,41 @@ export class WalletPortabilityService {
     await pipeline(source, gunzip, dest)
   }
 
+  /** Runs `work` while holding the tenant's active-job slot, so it cannot overlap an export or import. */
+  public async runExclusive<T>(tenantId: string, work: () => Promise<T>): Promise<T> {
+    const jobId = uuid()
+    const conflictingJobId = await this.jobStore.tryReserveActiveJob(tenantId, jobId)
+    if (conflictingJobId) {
+      throw new WalletPortabilityJobConflictError(tenantId, conflictingJobId)
+    }
+    // A record that is kept fresh is what stops the slot being reclaimed as dead once the grace period has passed.
+    const heartbeat = this.startHeartbeat(jobId, tenantId)
+    let succeeded = false
+    try {
+      const now = new Date().toISOString()
+      await this.jobStore.save({
+        jobId,
+        tenantId,
+        type: WalletPortabilityJobType.Import,
+        status: WalletPortabilityJobStatus.InProgress,
+        createdAt: now,
+        updatedAt: now,
+      })
+      const result = await work()
+      succeeded = true
+      return result
+    } finally {
+      clearInterval(heartbeat)
+      await this.setJobStatus(
+        jobId,
+        tenantId,
+        WalletPortabilityJobType.Import,
+        succeeded ? WalletPortabilityJobStatus.Completed : WalletPortabilityJobStatus.Failed,
+      ).catch(() => undefined)
+      await this.jobStore.releaseActiveJob(tenantId, jobId).catch(() => undefined)
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Root wallet import (dedicated agent)
   // ---------------------------------------------------------------------------
