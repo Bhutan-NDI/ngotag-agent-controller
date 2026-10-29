@@ -243,7 +243,9 @@ describe('RotationService across two tasks of one agent', () => {
       expect(created).toHaveLength(1)
       expect(outcomes.filter((outcome) => 'sent' === outcome.outcome)).toHaveLength(1)
       expect(outcomes).toContainEqual({ connectionId: 'c1', outcome: 'skipped', reason: 'ROTATION_IN_FLIGHT' })
-      await expect(second.rotateConnection('c1')).resolves.toMatchObject({ outcome: 'sent' })
+      // Whichever task lost can rotate once the winner has let go of the lease.
+      const loser = 'skipped' === outcomes[0].outcome ? first : second
+      await expect(loser.rotateConnection('c1')).resolves.toMatchObject({ outcome: 'sent' })
     } finally {
       await store.close().catch(() => undefined)
     }
