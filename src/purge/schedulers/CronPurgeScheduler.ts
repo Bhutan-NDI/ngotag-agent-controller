@@ -103,9 +103,11 @@ export class CronPurgeScheduler {
     let tenantsDeferred = 0
 
     if (isShared) {
-      const tenants: Array<{ id: string; getTag?: (name: string) => unknown }> = await (
-        agent as any
-      ).modules.tenants.getAllTenants()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tenantsModule = (agent as any).modules.tenants as {
+        getAllTenants(): Promise<Array<{ id: string; getTag?: (name: string) => unknown }>>
+      }
+      const tenants = await tenantsModule.getAllTenants()
 
       for (const tenant of tenants) {
         if (isTenantMigrated(tenant)) continue
