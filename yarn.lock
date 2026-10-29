@@ -2013,21 +2013,18 @@
   resolved "https://registry.yarnpkg.com/@opentelemetry/semantic-conventions/-/semantic-conventions-1.38.0.tgz#8b5f415395a7ddb7c8e0c7932171deb9278df1a3"
   integrity sha512-kocjix+/sSggfJhwXqClZ3i9Y/MI0fp7b+g7kCRm6psy2dsf8uApTRclwG18h8Avm7C9+fnt+O36PspJ/OzoWg==
 
-"@openwallet-foundation/askar-nodejs@^0.4.3":
-  version "0.4.3"
-  resolved "https://registry.yarnpkg.com/@openwallet-foundation/askar-nodejs/-/askar-nodejs-0.4.3.tgz#c53a29ef29fa9ef6dddb335034556f407919bf18"
-  integrity sha512-+7hJaCUz/GP9hhOdbLL+9OzYgb5vILcTmSyqSGTR3Qd/ba+j5HdN3BJfgRETK4Svz1jlbEKbjRLE7RwDqEr2RA==
+"@openwallet-foundation/askar-nodejs@^0.6.1":
+  version "0.6.1"
+  resolved "https://registry.yarnpkg.com/@openwallet-foundation/askar-nodejs/-/askar-nodejs-0.6.1.tgz#f6d40c00fbcf9606f0a33a1e9194b66b1fba3ea7"
+  integrity sha512-9cAXjAA9vHyUJ/wKZUCFpJZghcopR1DCEc98OdihY7X/RGSevuxA+twArLDgJSzasqINPNLMuGpp3FCJjVIlGg==
   dependencies:
-    "@2060.io/ffi-napi" "^4.0.9"
-    "@2060.io/ref-napi" "^3.0.6"
-    "@openwallet-foundation/askar-shared" "0.4.3"
-    ref-array-di "^1.2.2"
-    ref-struct-di "^1.1.1"
+    "@openwallet-foundation/askar-shared" "0.6.1"
+    koffi "^2.15.1"
 
-"@openwallet-foundation/askar-shared@0.4.3", "@openwallet-foundation/askar-shared@^0.4.3":
-  version "0.4.3"
-  resolved "https://registry.yarnpkg.com/@openwallet-foundation/askar-shared/-/askar-shared-0.4.3.tgz#e1e4576e347c922c18a3a6abd452945060bb1520"
-  integrity sha512-Zt9zlvjJxNs8UWlnRydZH594Lak15YPHY72VT1+iDbXh0OjTdyq6Bf0FIsh9sfFnRYIgh2zd8+VoXxZ07GjADA==
+"@openwallet-foundation/askar-shared@0.6.1", "@openwallet-foundation/askar-shared@^0.6.1":
+  version "0.6.1"
+  resolved "https://registry.yarnpkg.com/@openwallet-foundation/askar-shared/-/askar-shared-0.6.1.tgz#a3e3b1299f156b5d0ab967526a713f3108f6a788"
+  integrity sha512-xjFYyK5Zk/uTFKfTn2BnnldmBLGWBkVfPhOoXQl122YcRVPN7BadAvFUi6Ad+zu7Nk3axj416+fvXtUUQm1Vig==
   dependencies:
     buffer "^6.0.3"
     tar "^7.4.3"
@@ -6350,6 +6347,11 @@ kleur@^3.0.3:
   version "3.0.3"
   resolved "https://registry.yarnpkg.com/kleur/-/kleur-3.0.3.tgz#a79c9ecc86ee1ce3fa6206d1216c501f147fc07e"
   integrity sha512-eTIzlVOSUR+JxdDFepEYcBMtZ9Qqdef+rnzWdRZuMbOywu5tO2w2N7rqjoANZ5k9vywhL6Br1VRjUIgTQx4E8w==
+
+koffi@^2.15.1:
+  version "2.16.3"
+  resolved "https://registry.yarnpkg.com/koffi/-/koffi-2.16.3.tgz#1581aaf48fed3111cdf57b4e7a070f45e5ddbeec"
+  integrity sha512-E9y1AsgYGlaxMhcZzHr8y96QF2U5XzA12GGVAfbWqIubTwPNMXQarfBzePNXHe0xtIEtNd6ifAv3GAKYGUeBAQ==
 
 ky@^1.0.1:
   version "1.14.1"

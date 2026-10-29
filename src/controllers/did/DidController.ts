@@ -19,7 +19,7 @@ import {
   DidDocumentRole,
   RecordNotFoundError,
 } from '@credo-ts/core'
-import { Key, KeyAlgorithm, askar } from '@openwallet-foundation/askar-nodejs'
+import { Key, KeyAlgorithm } from '@openwallet-foundation/askar-nodejs'
 import axios from 'axios'
 import { Request as Req } from 'express'
 import { Body, Controller, Example, Get, Path, Post, Query, Route, Tags, Security, Request } from 'tsoa'
@@ -79,7 +79,6 @@ export class DidController extends Controller {
   public async writeDid(@Request() request: Req, @Body() createDidOptions: DidCreate) {
     let didRes
 
-    this.agent.config.logger.info(`askar version ${askar.version()}`)
     try {
       if (!createDidOptions.method) {
         throw new BadRequestError('Method is required')
