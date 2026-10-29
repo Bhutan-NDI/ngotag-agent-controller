@@ -36,7 +36,8 @@ export const collectEndpointSchemes = async (
   let unresolvedDids = 0
 
   for (let offset = 0; ; offset += pageSize) {
-    const page = { limit: pageSize, offset }
+    // Without an order, offset pages on a Postgres wallet are not stable and a DID could be skipped.
+    const page = { limit: pageSize, offset, orderBy: 'id' as const }
     const records = await repository.findByQuery(agent.context, { role: DidDocumentRole.Created }, page)
 
     for (const record of records) {

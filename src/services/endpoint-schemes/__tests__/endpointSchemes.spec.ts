@@ -8,6 +8,7 @@ import { Agent, createPeerDidDocumentFromServices, PeerDidNumAlgo } from '@credo
 import { DidCommModule } from '@credo-ts/didcomm'
 import { agentDependencies } from '@credo-ts/node'
 import { TenantsModule } from '@credo-ts/tenants'
+import { jest } from '@jest/globals'
 import { askar } from '@openwallet-foundation/askar-nodejs'
 import { randomUUID } from 'crypto'
 
@@ -148,6 +149,19 @@ describe('collectEndpointSchemes with documents that cannot be read', () => {
       didsScanned: 2,
       unresolvedDids: 1,
       schemes: [{ scheme: 'https', count: 1, exampleDids: ['did:peer:1zStored'] }],
+    })
+  })
+
+  it('asks for the DIDs in a fixed order, so offset pages on a Postgres wallet stay stable', async () => {
+    const findByQuery = jest.fn(async () => [] as unknown[])
+    const agent = { context: {}, dependencyManager: { resolve: () => ({ findByQuery }) }, dids: {} }
+
+    await collectEndpointSchemes(agent as never, 't1', 50)
+
+    expect(findByQuery).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      limit: 50,
+      offset: 0,
+      orderBy: 'id',
     })
   })
 
