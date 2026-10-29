@@ -593,6 +593,21 @@ describe('RelayService', () => {
       await expect(service.probe(TARGET)).resolves.toEqual({ reachable: true, status: 404 })
     })
 
+    it('drops the answer body without reading it', async () => {
+      const { service, setProbeFetch } = buildHarness()
+      let cancelled = false
+      const body = new ReadableStream({
+        pull: (controller) => controller.enqueue(new Uint8Array(1024)),
+        cancel: () => {
+          cancelled = true
+        },
+      })
+      setProbeFetch(async () => new Response(body, { status: 200 }))
+
+      await expect(service.probe(TARGET)).resolves.toEqual({ reachable: true, status: 200 })
+      expect(cancelled).toBe(true)
+    })
+
     it.each([
       ['a refused connection', 'ECONNREFUSED', 'UNREACHABLE'],
       ['an unknown host', 'ENOTFOUND', 'DNS'],

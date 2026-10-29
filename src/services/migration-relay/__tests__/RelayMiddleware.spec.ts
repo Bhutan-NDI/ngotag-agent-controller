@@ -220,6 +220,40 @@ describe('relay middleware', () => {
       expect(handled).toEqual([])
     })
 
+    it('hands the message to Credo, and takes it back out of the buffer, when the relay was removed while it was being held', async () => {
+      await setRelay('HOLD')
+      const rpush = redis.rpush.bind(redis)
+      redis.rpush = async (key: string, ...values: string[]) => {
+        const length = await rpush(key, ...values)
+        await store.markRemoved(TENANT)
+        await store.deleteEntry(TENANT)
+        return length
+      }
+      const envelope = buildEnvelope([recipient.kid])
+
+      const response = await send(envelope)
+
+      expect(response.status).toBe(200)
+      expect(handled).toEqual([envelope])
+      expect(await store.holdLength(TENANT)).toBe(0)
+    })
+
+    it('keeps holding when the entry vanished without a removal, since Redis may just have been flushed', async () => {
+      await setRelay('HOLD')
+      const rpush = redis.rpush.bind(redis)
+      redis.rpush = async (key: string, ...values: string[]) => {
+        const length = await rpush(key, ...values)
+        await store.deleteEntry(TENANT)
+        return length
+      }
+
+      const response = await send(buildEnvelope([recipient.kid]))
+
+      expect(response.status).toBe(202)
+      expect(handled).toEqual([])
+      expect(await store.holdLength(TENANT)).toBe(1)
+    })
+
     it('does not fall through to Credo when it cannot store a message it was holding', async () => {
       await setRelay('HOLD')
       redis.rpush = async () => {

@@ -285,7 +285,7 @@ export class RelayService {
         redirect: 'manual',
         signal: controller.signal,
       })
-      await response.arrayBuffer().catch(() => undefined)
+      await response.body?.cancel().catch(() => undefined)
       return { reachable: true, status: response.status }
     } catch (error) {
       const code = (error as { cause?: { code?: unknown } })?.cause?.code

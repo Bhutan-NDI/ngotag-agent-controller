@@ -14,8 +14,9 @@ export interface DrainerOptions {
 /**
  * Delivers a FORWARD tenant's buffered envelopes to its target: the buffer built up during the freeze, and anything a
  * live forward could not send because the target was unreachable. A Redis lock keeps the shared agent's tasks from
- * draining the same buffer twice. Only an envelope that never left is retried (with backoff); one that got any answer,
- * or may have been delivered, is removed so it cannot be sent twice.
+ * draining the same buffer twice. An envelope that never left, or that the target refused with 503 or 429 (nothing
+ * accepted it), is retried with backoff; one that got any other answer, or may have been delivered, is removed so it
+ * cannot be sent twice.
  */
 export class RelayDrainer {
   private readonly running = new Set<string>()
@@ -68,7 +69,9 @@ export class RelayDrainer {
         if (!envelope) return
 
         const result = await this.forward(entry.target, { contentType: envelope.contentType, body: envelope.body })
-        if ('neverLeft' === result.kind) {
+        // 503/429: the target did not take the message (e.g. no healthy target behind its load balancer); keep it.
+        const notTaken = 'response' === result.kind && (503 === result.status || 429 === result.status)
+        if ('neverLeft' === result.kind || notTaken) {
           retryAfterAttempt = attempt + 1
           return
         }

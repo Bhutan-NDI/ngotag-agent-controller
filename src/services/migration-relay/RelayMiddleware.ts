@@ -1,6 +1,6 @@
 import type { RelayDrainer } from './RelayDrainer'
 import type { RelayMirror } from './RelayMirror'
-import type { RelayEntry, RelayStore } from './RelayStore'
+import type { HeldEnvelope, RelayEntry, RelayStore } from './RelayStore'
 import type { ForwardFn } from './relayForwarder'
 import type { TsLogger } from '../../utils/logger'
 import type { RequestHandler } from 'express'
@@ -47,6 +47,19 @@ export const createRelayMiddleware = ({
     return mirrored
   }
 
+  // A relay removed while this task was pushing would never drain the message, so it is taken back out and handed to
+  // Credo. A Redis that merely lost the entry has no tombstone, and the message stays held.
+  const hold = async (tenantId: string, envelope: HeldEnvelope): Promise<'held' | 'full' | 'removed'> => {
+    if (!(await store.holdPush(tenantId, envelope))) return 'full'
+    try {
+      if ((await store.getEntry(tenantId)) || !(await store.isRemoved(tenantId))) return 'held'
+      await store.holdRemove(tenantId, envelope)
+      return 'removed'
+    } catch {
+      return 'held'
+    }
+  }
+
   return async (req, res, next) => {
     if ('POST' !== req.method) return next()
     const fingerprints = extractRecipientFingerprints(req.body)
@@ -63,12 +76,9 @@ export const createRelayMiddleware = ({
 
     try {
       if ('HOLD' === entry.mode) {
-        const held = await store.holdPush(entry.tenantId, {
-          receivedAt: new Date().toISOString(),
-          contentType,
-          body,
-        })
-        if (!held) {
+        const held = await hold(entry.tenantId, { receivedAt: new Date().toISOString(), contentType, body })
+        if ('removed' === held) return next()
+        if ('full' === held) {
           logger.error(`[RelayMiddleware] hold buffer for tenant '${entry.tenantId}' is full; message refused`)
           res.status(503).set('Retry-After', '30').end()
           return
@@ -87,7 +97,9 @@ export const createRelayMiddleware = ({
       }
       if ('neverLeft' === result.kind) {
         // The target is down: keep the message and deliver it when it is back.
-        if (await store.holdPush(entry.tenantId, { receivedAt: new Date().toISOString(), contentType, body })) {
+        const held = await hold(entry.tenantId, { receivedAt: new Date().toISOString(), contentType, body })
+        if ('removed' === held) return next()
+        if ('held' === held) {
           drainer.ensureDraining(entry.tenantId)
           countMessage()
           res.status(202).end()

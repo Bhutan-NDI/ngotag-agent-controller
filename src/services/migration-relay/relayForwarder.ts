@@ -33,6 +33,30 @@ const NEVER_LEFT_CODES = new Set([
   ...TLS_ERROR_CODES,
 ])
 
+// The target's body is read in chunks and abandoned once it passes the cap, so a hostile target cannot make the shared
+// agent buffer more than the cap per forwarded message. Undefined means it was over the cap.
+const readCapped = async (response: Response, cap: number): Promise<Buffer | undefined> => {
+  const declared = Number(response.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > cap) {
+    await response.body?.cancel().catch(() => undefined)
+    return undefined
+  }
+  if (!response.body) return Buffer.alloc(0)
+  const chunks: Buffer[] = []
+  let total = 0
+  const reader = response.body.getReader()
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) return Buffer.concat(chunks)
+    total += value.length
+    if (total > cap) {
+      await reader.cancel().catch(() => undefined)
+      return undefined
+    }
+    chunks.push(Buffer.from(value))
+  }
+}
+
 const errorCode = (error: unknown): string | undefined => {
   const cause = (error as { cause?: { code?: unknown } })?.cause
   const code = cause?.code ?? (error as { code?: unknown })?.code
@@ -57,8 +81,8 @@ export const createForwarder =
         redirect: 'error',
         signal: controller.signal,
       })
-      const body = Buffer.from(await response.arrayBuffer())
-      if (body.length > MAX_FORWARD_RESPONSE_BYTES) {
+      const body = await readCapped(response, MAX_FORWARD_RESPONSE_BYTES)
+      if (!body) {
         return { kind: 'ambiguous', reason: 'RESPONSE_TOO_LARGE' }
       }
       return {
