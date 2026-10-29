@@ -3303,6 +3303,49 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"AgentRuntimeConfig": {
+				"properties": {
+					"autoAcceptConnections": {
+						"type": "boolean"
+					},
+					"autoAcceptCredentials": {
+						"type": "string"
+					},
+					"autoAcceptProofs": {
+						"type": "string"
+					},
+					"inboundTransports": {
+						"items": {
+							"type": "string"
+						},
+						"type": "array"
+					},
+					"outboundTransports": {
+						"items": {
+							"type": "string"
+						},
+						"type": "array"
+					},
+					"cronPurgeEnabled": {
+						"type": "boolean"
+					},
+					"tenancy": {
+						"type": "boolean",
+						"description": "True on a multi-tenant (shared) agent; a dedicated agent is false"
+					}
+				},
+				"required": [
+					"autoAcceptConnections",
+					"autoAcceptCredentials",
+					"autoAcceptProofs",
+					"inboundTransports",
+					"outboundTransports",
+					"cronPurgeEnabled",
+					"tenancy"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"AgentInfo": {
 				"properties": {
 					"label": {
@@ -3317,13 +3360,24 @@
 					"isInitialized": {
 						"type": "boolean"
 					},
-					"publicDid": {}
+					"publicDid": {},
+					"releaseVersion": {
+						"type": "string"
+					},
+					"storageVersion": {
+						"type": "string"
+					},
+					"config": {
+						"$ref": "#/components/schemas/AgentRuntimeConfig"
+					}
 				},
 				"required": [
 					"label",
 					"endpoints",
 					"isInitialized",
-					"publicDid"
+					"publicDid",
+					"storageVersion",
+					"config"
 				],
 				"type": "object",
 				"additionalProperties": false

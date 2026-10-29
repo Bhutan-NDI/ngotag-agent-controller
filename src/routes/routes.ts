@@ -1454,6 +1454,20 @@ const models: TsoaRoute.Models = {
         "additionalProperties": false,
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "AgentRuntimeConfig": {
+        "dataType": "refObject",
+        "properties": {
+            "autoAcceptConnections": {"dataType":"boolean","required":true},
+            "autoAcceptCredentials": {"dataType":"string","required":true},
+            "autoAcceptProofs": {"dataType":"string","required":true},
+            "inboundTransports": {"dataType":"array","array":{"dataType":"string"},"required":true},
+            "outboundTransports": {"dataType":"array","array":{"dataType":"string"},"required":true},
+            "cronPurgeEnabled": {"dataType":"boolean","required":true},
+            "tenancy": {"dataType":"boolean","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "AgentInfo": {
         "dataType": "refObject",
         "properties": {
@@ -1461,6 +1475,9 @@ const models: TsoaRoute.Models = {
             "endpoints": {"dataType":"array","array":{"dataType":"string"},"required":true},
             "isInitialized": {"dataType":"boolean","required":true},
             "publicDid": {"dataType":"void","required":true},
+            "releaseVersion": {"dataType":"string"},
+            "storageVersion": {"dataType":"string","required":true},
+            "config": {"ref":"AgentRuntimeConfig","required":true},
         },
         "additionalProperties": false,
     },
