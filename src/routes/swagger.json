@@ -5491,7 +5491,8 @@
 					"DNS",
 					"TLS",
 					"TIMEOUT",
-					"UNREACHABLE"
+					"UNREACHABLE",
+					"NO_SUCH_BUCKET"
 				]
 			},
 			"ExportBucketProbe": {

@@ -2377,7 +2377,7 @@ const models: TsoaRoute.Models = {
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "ExportBucketProbeReason": {
         "dataType": "refAlias",
-        "type": {"dataType":"union","subSchemas":[{"dataType":"enum","enums":["DNS"]},{"dataType":"enum","enums":["TLS"]},{"dataType":"enum","enums":["TIMEOUT"]},{"dataType":"enum","enums":["UNREACHABLE"]}],"validators":{}},
+        "type": {"dataType":"union","subSchemas":[{"dataType":"enum","enums":["DNS"]},{"dataType":"enum","enums":["TLS"]},{"dataType":"enum","enums":["TIMEOUT"]},{"dataType":"enum","enums":["UNREACHABLE"]},{"dataType":"enum","enums":["NO_SUCH_BUCKET"]}],"validators":{}},
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "ExportBucketProbe": {
