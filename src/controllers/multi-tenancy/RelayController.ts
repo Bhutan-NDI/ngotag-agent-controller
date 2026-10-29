@@ -102,6 +102,24 @@ export class RelayController extends Controller {
   }
 
   /**
+   * Disaster restore: takes the tenant off the relay for good, including a FORWARD relay. Held and queued messages go
+   * back to this agent first. Refused when the tenant's wallet has been purged.
+   */
+  @Response<{ message: string }>(404, 'No relay for this tenant')
+  @Response<{ message: string }>(409, 'TENANT_PURGED, RELAY_BUSY or RELAY_BUFFER_NOT_EMPTY')
+  @Post('/:tenantId/restore')
+  public async restore(
+    @Request() request: Req,
+    @Path('tenantId') tenantId: string,
+  ): Promise<{ injected: number; failed: number }> {
+    try {
+      return await service().restore(request.agent as Agent<RestMultiTenantAgentModules>, tenantId)
+    } catch (error) {
+      throw mapRelayError(error)
+    }
+  }
+
+  /**
    * Hands the held messages back to this agent to process, for an aborted move.
    */
   @Response<{ message: string }>(409, 'RELAY_NOT_HOLDING or RELAY_BUSY (another re-inject is running)')

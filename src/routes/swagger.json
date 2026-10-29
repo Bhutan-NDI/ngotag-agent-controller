@@ -3519,6 +3519,42 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"WebhookProbeResponse": {
+				"properties": {
+					"configured": {
+						"type": "boolean",
+						"description": "Whether the agent has a webhook URL at all"
+					},
+					"delivered": {
+						"type": "boolean",
+						"description": "Whether anything answered the test event"
+					},
+					"status": {
+						"type": "number",
+						"format": "double",
+						"description": "The HTTP status of the answer, when there was one"
+					}
+				},
+				"required": [
+					"configured",
+					"delivered"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"WebhookProbeRequest": {
+				"properties": {
+					"probeId": {
+						"type": "string",
+						"description": "A UUID the platform made for this one check"
+					}
+				},
+				"required": [
+					"probeId"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"AgentToken": {
 				"properties": {
 					"token": {
@@ -8157,6 +8193,24 @@
 							}
 						}
 					},
+					"409": {
+						"description": "TENANT_HAS_RELAY",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
 					"500": {
 						"description": "",
 						"content": {
@@ -10542,6 +10596,45 @@
 					}
 				],
 				"parameters": []
+			}
+		},
+		"/agent/webhook/probe": {
+			"post": {
+				"operationId": "ProbeWebhook",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/WebhookProbeResponse"
+								}
+							}
+						}
+					}
+				},
+				"description": "Sends one test event to the agent's own webhook URL, so a caller can confirm the URL is set and reaches the\nplatform. Whether it was accepted is for the receiver to confirm; this only says whether anything answered.",
+				"tags": [
+					"Agent"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/WebhookProbeRequest"
+							}
+						}
+					}
+				}
 			}
 		},
 		"/agent/token": {
@@ -13547,6 +13640,94 @@
 						}
 					}
 				}
+			}
+		},
+		"/multi-tenancy/relay/{tenantId}/restore": {
+			"post": {
+				"operationId": "Restore",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"failed": {
+											"type": "number",
+											"format": "double"
+										},
+										"injected": {
+											"type": "number",
+											"format": "double"
+										}
+									},
+									"required": [
+										"failed",
+										"injected"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No relay for this tenant",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "TENANT_PURGED, RELAY_BUSY or RELAY_BUFFER_NOT_EMPTY",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Disaster restore: takes the tenant off the relay for good, including a FORWARD relay. Held and queued messages go\nback to this agent first. Refused when the tenant's wallet has been purged.",
+				"tags": [
+					"Multi-Tenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
 			}
 		},
 		"/multi-tenancy/relay/{tenantId}/reinject": {
