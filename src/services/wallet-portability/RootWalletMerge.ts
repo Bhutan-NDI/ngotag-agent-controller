@@ -15,8 +15,10 @@ const isFreshAgentRecord = (category: string, tags: Record<string, unknown>): bo
   STORAGE_VERSION_CATEGORY === category || (GENERIC_RECORD_CATEGORY === category && undefined !== tags[SECRET_KEY_TAG])
 
 export async function assertPristine(session: Session): Promise<void> {
-  const entries = await session.fetchAll({})
-  const keys = await session.fetchAllKeys({})
+  // A fresh agent has at most two entries and no keys, so a small page decides; a wallet that is not pristine is not
+  // loaded whole.
+  const entries = await session.fetchAll({ limit: 10 })
+  const keys = await session.fetchAllKeys({ limit: 1 })
   for (const key of keys) key.key.handle.free()
 
   const foreign = new Set(

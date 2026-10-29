@@ -113,6 +113,13 @@ export class ImportSessionNotFoundError extends Error {
   }
 }
 
+export class InvalidExportUrlError extends Error {
+  public constructor(reason: string) {
+    super(reason)
+    this.name = 'InvalidExportUrlError'
+  }
+}
+
 export class ArtifactChecksumMismatchError extends Error {
   public constructor() {
     super('The uploaded artifact does not match the supplied checksum.')

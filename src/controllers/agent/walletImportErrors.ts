@@ -3,6 +3,7 @@ import { BadRequestError, ConflictError, NotFoundError } from '../../errors/erro
 import {
   ArtifactChecksumMismatchError,
   ImportSessionNotFoundError,
+  InvalidExportUrlError,
   StorageVersionMismatchError,
   TargetNotPristineError,
   WalletPortabilityJobConflictError,
@@ -19,7 +20,7 @@ export const mapImportError = (error: unknown): unknown => {
   if (error instanceof ImportSessionNotFoundError) {
     return new NotFoundError(error.message)
   }
-  if (error instanceof ArtifactChecksumMismatchError) {
+  if (error instanceof ArtifactChecksumMismatchError || error instanceof InvalidExportUrlError) {
     return new BadRequestError(error.message)
   }
   return ErrorHandlingService.handle(error)

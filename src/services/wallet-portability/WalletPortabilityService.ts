@@ -27,6 +27,7 @@ import { HEARTBEAT_INTERVAL_MS, WalletPortabilityJobStore } from './WalletPortab
 import {
   ArtifactChecksumMismatchError,
   ImportSessionNotFoundError,
+  InvalidExportUrlError,
   StorageVersionMismatchError,
   TargetNotPristineError,
   WalletPortabilityJobConflictError,
@@ -925,14 +926,28 @@ export class WalletPortabilityService {
     return false
   }
 
+  private assertTrustedExportUrl(url: string): void {
+    if (!process.env.AWS_WALLET_EXPORT_BUCKET) {
+      throw new InvalidExportUrlError('AWS_WALLET_EXPORT_BUCKET is not configured on this agent')
+    }
+    let parsedUrl: URL
+    try {
+      parsedUrl = new URL(url)
+    } catch {
+      throw new InvalidExportUrlError('The export URL is not a valid URL')
+    }
+    if (parsedUrl.protocol !== 'https:' || !this.isTrustedExportHost(parsedUrl.hostname, parsedUrl.pathname)) {
+      throw new InvalidExportUrlError(
+        `Refusing to download export artifact from untrusted host '${parsedUrl.hostname}'`,
+      )
+    }
+  }
+
   private async downloadAndChecksum(url: string, destPath: string): Promise<string> {
     // https-only, no redirects followed, and a hard byte cap below so a large/endless response
     // can't fill the host's disk. Host (+ path, for the path-style form) is restricted to this
     // deployment's own export bucket — see isTrustedExportHost.
-    const parsedUrl = new URL(url)
-    if (parsedUrl.protocol !== 'https:' || !this.isTrustedExportHost(parsedUrl.hostname, parsedUrl.pathname)) {
-      throw new Error(`Refusing to download export artifact from untrusted host '${parsedUrl.hostname}'`)
-    }
+    this.assertTrustedExportUrl(url)
 
     const response = await fetch(url, { redirect: 'error', timeout: DOWNLOAD_TIMEOUT_MS })
     if (!response.ok || !response.body) {
@@ -1064,6 +1079,8 @@ export class WalletPortabilityService {
    * either way.
    */
   public async importRootWallet(agent: Agent, params: RootWalletImportParams): Promise<ImportWalletResult> {
+    // Before the import session is consumed, so a bad URL or a missing bucket setting leaves it usable.
+    this.assertTrustedExportUrl(params.exportUrl)
     const { jobId, heartbeat } = await this.reserveRootImport(agent, params)
     return this.launchRootImport(agent, jobId, params, heartbeat, { exportUrl: params.exportUrl })
   }
@@ -1093,6 +1110,13 @@ export class WalletPortabilityService {
       if (workDir) {
         await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined)
       }
+      await this.setJobStatus(
+        jobId,
+        ROOT_IMPORT_SCOPE_ID,
+        WalletPortabilityJobType.Import,
+        WalletPortabilityJobStatus.Failed,
+        IMPORT_FAILED_ERROR_CODE,
+      ).catch(() => undefined)
       await this.jobStore.releaseActiveJob(ROOT_IMPORT_SCOPE_ID, jobId).catch(() => undefined)
       throw error
     }
@@ -1120,17 +1144,8 @@ export class WalletPortabilityService {
       throw new WalletPortabilityJobConflictError(ROOT_IMPORT_SCOPE_ID, conflictingJobId)
     }
 
-    this.importSessions.markInUse(options.sessionId)
-    return { jobId, heartbeat: this.startHeartbeat(jobId, ROOT_IMPORT_SCOPE_ID) }
-  }
-
-  private async launchRootImport(
-    agent: Agent,
-    jobId: string,
-    options: RootWalletImportOptions,
-    heartbeat: NodeJS.Timeout,
-    source: RootImportSource,
-  ): Promise<ImportWalletResult> {
+    // Saved before anything streams in, so the reservation has a record the heartbeat can keep alive for as long as
+    // the upload takes; without one, another import could take the slot after the reservation's grace period.
     const now = new Date().toISOString()
     await this.jobStore.save({
       jobId,
@@ -1142,6 +1157,17 @@ export class WalletPortabilityService {
       dryRun: options.dryRun,
     })
 
+    this.importSessions.markInUse(options.sessionId)
+    return { jobId, heartbeat: this.startHeartbeat(jobId, ROOT_IMPORT_SCOPE_ID) }
+  }
+
+  private async launchRootImport(
+    agent: Agent,
+    jobId: string,
+    options: RootWalletImportOptions,
+    heartbeat: NodeJS.Timeout,
+    source: RootImportSource,
+  ): Promise<ImportWalletResult> {
     this.runRootImport(agent, jobId, options, heartbeat, source).catch((error) => {
       this.logger.error(`[WalletPortabilityService] root import job ${jobId} failed to start: ${withoutUrls(error)}`)
       this.setJobStatus(

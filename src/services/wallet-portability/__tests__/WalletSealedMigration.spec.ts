@@ -14,6 +14,7 @@ import { randomUUID } from 'crypto'
 import { createReadStream, promises as fs } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import { PassThrough } from 'stream'
 
 import { TsLogger } from '../../../utils/logger'
 import { ImportSessionStore } from '../ImportSessionStore'
@@ -21,6 +22,7 @@ import { WalletPortabilityJobStore } from '../WalletPortabilityJobStore'
 import { ROOT_IMPORT_SCOPE_ID, WalletPortabilityService } from '../WalletPortabilityService'
 import {
   ArtifactChecksumMismatchError,
+  InvalidExportUrlError,
   ImportSessionNotFoundError,
   StorageVersionMismatchError,
   TargetNotPristineError,
@@ -149,6 +151,7 @@ describe('sealed export -> root wallet import (real Askar)', () => {
     await session.insertKey({ name: 'key-1', key, tags: { purpose: 'test' } })
     await session.commit()
 
+    process.env.AWS_WALLET_EXPORT_BUCKET = 'export-bucket'
     // The constructor builds an AWS client, which the ESM test runtime cannot load; S3 is stubbed below anyway.
     const logger = new TsLogger(LogLevel.error, 'test')
     service = Object.assign(Object.create(WalletPortabilityService.prototype), {
@@ -164,6 +167,7 @@ describe('sealed export -> root wallet import (real Askar)', () => {
   }, 60000)
 
   afterAll(async () => {
+    delete process.env.AWS_WALLET_EXPORT_BUCKET
     await sourceStore.close().catch(() => undefined)
     for (const agent of agents) await agent.shutdown().catch(() => undefined)
     await service.disconnect()
@@ -338,6 +342,77 @@ describe('sealed export -> root wallet import (real Askar)', () => {
       checksum: exportJob.checksum as string,
     })
     expect((await waitForJob(retry.jobId)).status).toBe(WalletPortabilityJobStatus.Completed)
+  }, 60000)
+
+  it('saves the job record before a pushed artifact starts streaming, and marks it failed when the upload is refused', async () => {
+    const root = await buildRootAgent()
+    const session = await service.createImportSession(root)
+    const exportJob = await exportFor(session.importPublicKey)
+    const saved = jest.spyOn((service as unknown as { jobStore: WalletPortabilityJobStore }).jobStore, 'save')
+    const stream = new PassThrough()
+
+    const upload = service.importRootWalletFromUpload(root, stream, {
+      sessionId: session.sessionId,
+      checksum: 'b'.repeat(64),
+      sealedStoreKey: exportJob.sealedStoreKey as string,
+      storageVersion: '0.5',
+      dryRun: false,
+    })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(saved).toHaveBeenCalledWith(expect.objectContaining({ status: WalletPortabilityJobStatus.Pending }))
+    stream.end(await fs.readFile(artifactPath))
+    await expect(upload).rejects.toThrow(ArtifactChecksumMismatchError)
+    expect(saved).toHaveBeenCalledWith(expect.objectContaining({ status: WalletPortabilityJobStatus.Failed }))
+    saved.mockRestore()
+  }, 60000)
+
+  it('refuses an export URL it would not download from before it uses up the import session', async () => {
+    const root = await buildRootAgent()
+    const session = await service.createImportSession(root)
+    const exportJob = await exportFor(session.importPublicKey)
+    serveArtifact(exportJob.checksum as string)
+    const params = {
+      sessionId: session.sessionId,
+      checksum: exportJob.checksum as string,
+      sealedStoreKey: exportJob.sealedStoreKey as string,
+      storageVersion: '0.5',
+      dryRun: false,
+    }
+
+    await expect(
+      service.importRootWallet(root, { ...params, exportUrl: 'https://evil.example.com/artifact' }),
+    ).rejects.toThrow(InvalidExportUrlError)
+    await expect(
+      service.importRootWallet(root, { ...params, exportUrl: 'http://export-bucket.s3.amazonaws.com/artifact' }),
+    ).rejects.toThrow(InvalidExportUrlError)
+
+    const imported = await service.importRootWallet(root, {
+      ...params,
+      exportUrl: 'https://export-bucket.s3.amazonaws.com/artifact',
+    })
+    expect((await waitForJob(imported.jobId)).status).toBe(WalletPortabilityJobStatus.Completed)
+  }, 60000)
+
+  it('refuses a pull import when this agent has no export bucket configured', async () => {
+    const root = await buildRootAgent()
+    const session = await service.createImportSession(root)
+    delete process.env.AWS_WALLET_EXPORT_BUCKET
+
+    try {
+      await expect(
+        service.importRootWallet(root, {
+          sessionId: session.sessionId,
+          exportUrl: 'https://export-bucket.s3.amazonaws.com/artifact',
+          checksum: 'a'.repeat(64),
+          sealedStoreKey: 'AAAA',
+          storageVersion: '0.5',
+          dryRun: false,
+        }),
+      ).rejects.toThrow(InvalidExportUrlError)
+    } finally {
+      process.env.AWS_WALLET_EXPORT_BUCKET = 'export-bucket'
+    }
   }, 60000)
 
   it('refuses a root wallet that already holds data', async () => {
