@@ -127,6 +127,12 @@ function sanitiseLogPayload(data?: Record<string, any>): { primaryError?: Error;
   }
 }
 
+// The level arrives unchecked from --log-level, AFJ_REST_LOG_LEVEL or the config file. Out of range
+// (or NaN) it would fail every isEnabled() check and silence errors too.
+function isLogLevel(value: unknown): value is LogLevel {
+  return Number.isInteger(value) && LogLevel.test <= (value as number) && (value as number) <= LogLevel.off
+}
+
 export class TsLogger extends BaseLogger {
   private logger: Logger
 
@@ -142,9 +148,11 @@ export class TsLogger extends BaseLogger {
   } as const
 
   public constructor(logLevel: LogLevel, name: string = 'credo-controller-service' as string) {
-    super(logLevel)
+    super(isLogLevel(logLevel) ? logLevel : LogLevel.info)
 
-    const minLevel = this.logLevel == LogLevel.off ? undefined : this.tsLogLevelMap[this.logLevel]
+    // log() returns before tslog for LogLevel.off; 'fatal' only keeps minLevel defined, since tslog
+    // reads undefined as "log everything".
+    const minLevel = this.logLevel == LogLevel.off ? 'fatal' : this.tsLogLevelMap[this.logLevel]
 
     this.logger = new Logger({
       name,
@@ -152,27 +160,29 @@ export class TsLogger extends BaseLogger {
       type: 'json' === process.env.LOG_FORMAT ? 'json' : 'pretty',
       minLevel,
       ignoreStackLevels: 5,
-      // minLevel is undefined only when LogLevel.off, in which case no transport should fire anyway.
-      attachedTransports:
-        logFilePath && minLevel
-          ? [
-              {
-                transportLogger: {
-                  silly: logToTransport,
-                  debug: logToTransport,
-                  trace: logToTransport,
-                  info: logToTransport,
-                  warn: logToTransport,
-                  error: logToTransport,
-                  fatal: logToTransport,
-                },
-                // tslog filters attached transports independently of the logger's own minLevel,
-                // so this must be set explicitly to match — otherwise the file sink gets everything.
-                minLevel,
+      attachedTransports: logFilePath
+        ? [
+            {
+              transportLogger: {
+                silly: logToTransport,
+                debug: logToTransport,
+                trace: logToTransport,
+                info: logToTransport,
+                warn: logToTransport,
+                error: logToTransport,
+                fatal: logToTransport,
               },
-            ]
-          : [],
+              // tslog filters attached transports independently of the logger's own minLevel,
+              // so this must be set explicitly to match — otherwise the file sink gets everything.
+              minLevel,
+            },
+          ]
+        : [],
     })
+
+    if (!isLogLevel(logLevel)) {
+      this.warn(`Invalid log level ${String(logLevel)}; falling back to info`)
+    }
   }
 
   private log(
@@ -180,6 +190,11 @@ export class TsLogger extends BaseLogger {
     message: string | { message: string },
     data?: Record<string, any>,
   ): void {
+    // Disabled levels cost nothing, as in Credo's ConsoleLogger; this also keeps LogLevel.off silent.
+    if (!this.isEnabled(level)) {
+      return
+    }
+
     const tsLogLevel = this.tsLogLevelMap[level]
 
     // Sanitised once, here, so no call site can leak by forgetting to. tslog inspects a plain
