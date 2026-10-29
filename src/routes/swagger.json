@@ -2451,6 +2451,30 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"PurgeTenantProfileResult": {
+				"properties": {
+					"tenantId": {
+						"type": "string"
+					},
+					"migrated": {
+						"type": "boolean",
+						"enum": [
+							true
+						],
+						"nullable": false
+					},
+					"profileRemoved": {
+						"type": "boolean"
+					}
+				},
+				"required": [
+					"tenantId",
+					"migrated",
+					"profileRemoved"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"EndpointSchemeSummary": {
 				"properties": {
 					"tenantId": {
@@ -8134,6 +8158,98 @@
 						}
 					}
 				},
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"/multi-tenancy/{tenantId}/purge-profile": {
+			"post": {
+				"operationId": "PurgeProfile",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/PurgeTenantProfileResult"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Tenant not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "A wallet portability job is running, or the tenant has open sessions",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Remove the tenant's wallet from this agent after it has moved to a dedicated agent. The TenantRecord (tagged\nmigrated) and routing records stay. Safe to repeat.",
 				"tags": [
 					"MultiTenancy"
 				],
