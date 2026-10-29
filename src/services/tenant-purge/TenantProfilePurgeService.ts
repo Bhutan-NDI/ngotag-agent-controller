@@ -26,6 +26,16 @@ const openSessions = (agent: Agent<RestMultiTenantAgentModules>, tenantId: strin
   return provider.tenantSessionCoordinator?.getSessionCountForTenant(tenantId) ?? 0
 }
 
+// When removing the profile throws, Credo has already disposed the context but keeps it mapped, so every later
+// getTenantAgent for the tenant takes a session slot and then fails on the disposed context, and the retries drain the
+// pool. Dropping the mapping lets the retry open a fresh context.
+const forgetTenantContext = (agent: Agent<RestMultiTenantAgentModules>, tenantId: string): void => {
+  const provider = agent.dependencyManager.resolve<{
+    tenantSessionCoordinator?: { tenantAgentContextMapping?: Record<string, unknown> }
+  }>(InjectionSymbols.AgentContextProvider)
+  delete provider.tenantSessionCoordinator?.tenantAgentContextMapping?.[`tenant-${tenantId}`]
+}
+
 const tenantProfileExists = async (agent: Agent<RestMultiTenantAgentModules>, tenantId: string): Promise<boolean> => {
   const { store } = await agent.dependencyManager
     .resolve(AskarStoreManager)
@@ -76,9 +86,14 @@ export const purgeTenantProfile = async (
     }
     await new Promise((resolve) => setTimeout(resolve, SESSION_POLL_MS))
   }
-  await agent.dependencyManager
-    .resolve<AgentContextProvider>(InjectionSymbols.AgentContextProvider)
-    .deleteAgentContext(tenantAgent.context)
+  try {
+    await agent.dependencyManager
+      .resolve<AgentContextProvider>(InjectionSymbols.AgentContextProvider)
+      .deleteAgentContext(tenantAgent.context)
+  } catch (error) {
+    forgetTenantContext(agent, tenantId)
+    throw error
+  }
 
   return { tenantId, migrated: true, profileRemoved: true }
 }
