@@ -5340,6 +5340,12 @@
 					},
 					"willConfirm": {
 						"type": "boolean"
+					},
+					"expiresInSeconds": {
+						"type": "number",
+						"format": "double",
+						"nullable": true,
+						"description": "Seconds until the request expires (sent as `~timing.expires_time`). Whole number, at least\n300, at most the purge ceiling. Omit (or null) for the deployment default,\nDIDCOMM_PROOF_REQUEST_EXPIRY."
 					}
 				},
 				"required": [
@@ -5384,6 +5390,12 @@
 					},
 					"invitationDid": {
 						"type": "string"
+					},
+					"expiresInSeconds": {
+						"type": "number",
+						"format": "double",
+						"nullable": true,
+						"description": "Seconds until the request expires (sent as `~timing.expires_time`). Whole number, at least\n300, at most the purge ceiling. Omit (or null) for the deployment default,\nDIDCOMM_PROOF_REQUEST_EXPIRY."
 					}
 				},
 				"required": [

@@ -178,6 +178,12 @@ export interface CreateProofRequestOobOptions {
   imageUrl?: string
   recipientKey?: string
   invitationDid?: string
+  /**
+   * Seconds until the request expires (sent as `~timing.expires_time`). Whole number, at least
+   * 300, at most the purge ceiling. Omit (or null) for the deployment default,
+   * DIDCOMM_PROOF_REQUEST_EXPIRY.
+   */
+  expiresInSeconds?: number | null
 }
 
 export interface OfferCredentialOptions {
@@ -283,6 +289,12 @@ export interface RequestProofOptions {
   goalCode?: string
   parentThreadId?: string
   willConfirm?: boolean
+  /**
+   * Seconds until the request expires (sent as `~timing.expires_time`). Whole number, at least
+   * 300, at most the purge ceiling. Omit (or null) for the deployment default,
+   * DIDCOMM_PROOF_REQUEST_EXPIRY.
+   */
+  expiresInSeconds?: number | null
 }
 
 // TODO: added type in protocolVersion
