@@ -45,6 +45,8 @@ import { ConnectionRotationController } from './../controllers/didcomm/connectio
 import { AgentWalletController } from './../controllers/agent/AgentWalletController';
 // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
 import { VerifierController } from './../controllers/openid4vc/verifiers/verifier.Controller';
+// WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+import { RelayController } from './../controllers/multi-tenancy/RelayController';
 import { expressAuthentication } from './../authentication';
 // @ts-ignore - no great way to install types from subpackage
 import { iocContainer } from './../utils/tsyringeTsoaIocContainer';
@@ -1111,6 +1113,15 @@ const models: TsoaRoute.Models = {
         "additionalProperties": false,
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "DeleteExportResult": {
+        "dataType": "refObject",
+        "properties": {
+            "jobId": {"dataType":"string","required":true},
+            "deleted": {"dataType":"enum","enums":[true],"required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "WalletPortabilityJobType": {
         "dataType": "refEnum",
         "enums": ["export","import"],
@@ -1138,6 +1149,7 @@ const models: TsoaRoute.Models = {
             "s3Key": {"dataType":"string"},
             "checksum": {"dataType":"string"},
             "downloadUrl": {"dataType":"string"},
+            "artifactDeleted": {"dataType":"boolean"},
             "backupProfile": {"dataType":"string"},
             "sealedStoreKey": {"dataType":"string"},
             "storageVersion": {"dataType":"string"},
@@ -2449,6 +2461,21 @@ const models: TsoaRoute.Models = {
         "type": {"dataType":"union","subSchemas":[{"dataType":"nestedObjectLiteral","nestedProperties":{"uncertain":{"dataType":"boolean"},"newDid":{"dataType":"string","required":true},"outcome":{"dataType":"enum","enums":["sent"],"required":true},"connectionId":{"dataType":"string","required":true}}},{"dataType":"nestedObjectLiteral","nestedProperties":{"nextAttemptAt":{"dataType":"string"},"newDid":{"dataType":"string","required":true},"outcome":{"dataType":"union","subSchemas":[{"dataType":"enum","enums":["retry"]},{"dataType":"enum","enums":["failed"]}],"required":true},"connectionId":{"dataType":"string","required":true}}},{"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true},"outcome":{"dataType":"enum","enums":["skipped"],"required":true},"connectionId":{"dataType":"string","required":true}}}],"validators":{}},
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "ExportBucketProbeReason": {
+        "dataType": "refAlias",
+        "type": {"dataType":"union","subSchemas":[{"dataType":"enum","enums":["DNS"]},{"dataType":"enum","enums":["TLS"]},{"dataType":"enum","enums":["TIMEOUT"]},{"dataType":"enum","enums":["UNREACHABLE"]},{"dataType":"enum","enums":["NO_SUCH_BUCKET"]}],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "ExportBucketProbe": {
+        "dataType": "refObject",
+        "properties": {
+            "configured": {"dataType":"boolean","required":true},
+            "reachable": {"dataType":"boolean"},
+            "reason": {"ref":"ExportBucketProbeReason"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "CreatedImportSession": {
         "dataType": "refObject",
         "properties": {
@@ -2486,6 +2513,40 @@ const models: TsoaRoute.Models = {
         "dataType": "refObject",
         "properties": {
             "clientMetadata": {"ref":"OpenId4VcSiopVerifierClientMetadata"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RelayMode": {
+        "dataType": "refAlias",
+        "type": {"dataType":"union","subSchemas":[{"dataType":"enum","enums":["HOLD"]},{"dataType":"enum","enums":["FORWARD"]}],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "RelayStatus": {
+        "dataType": "refObject",
+        "properties": {
+            "tenantId": {"dataType":"string","required":true},
+            "mode": {"ref":"RelayMode","required":true},
+            "target": {"dataType":"string"},
+            "updatedAt": {"dataType":"string","required":true},
+            "holdCount": {"dataType":"double","required":true},
+            "recipientKeys": {"dataType":"double","required":true},
+            "forwardedLast30Days": {"dataType":"double","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "ProbeReason": {
+        "dataType": "refAlias",
+        "type": {"dataType":"union","subSchemas":[{"dataType":"enum","enums":["UNREACHABLE"]},{"dataType":"enum","enums":["DNS"]},{"dataType":"enum","enums":["TLS"]},{"dataType":"enum","enums":["TIMEOUT"]}],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "ProbeResult": {
+        "dataType": "refObject",
+        "properties": {
+            "reachable": {"dataType":"boolean","required":true},
+            "status": {"dataType":"double"},
+            "reason": {"ref":"ProbeReason"},
         },
         "additionalProperties": false,
     },
@@ -4066,6 +4127,44 @@ export function RegisterRoutes(app: Router) {
 
               await templateService.apiHandler({
                 methodName: 'exportTenantWallet',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsMultiTenancyController_deleteExportedWallet: Record<string, TsoaRoute.ParameterSchema> = {
+                tenantId: {"in":"path","name":"tenantId","required":true,"dataType":"string"},
+                jobId: {"in":"path","name":"jobId","required":true,"dataType":"string"},
+                notFoundError: {"in":"res","name":"404","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true}}},
+        };
+        app.delete('/multi-tenancy/export/:tenantId/:jobId',
+            authenticateMiddleware([{"jwt":["Basewallet"]}]),
+            ...(fetchMiddlewares<RequestHandler>(MultiTenancyController)),
+            ...(fetchMiddlewares<RequestHandler>(MultiTenancyController.prototype.deleteExportedWallet)),
+
+            async function MultiTenancyController_deleteExportedWallet(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsMultiTenancyController_deleteExportedWallet, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<MultiTenancyController>(MultiTenancyController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'deleteExportedWallet',
                 controller,
                 response,
                 next,
@@ -6582,6 +6681,41 @@ export function RegisterRoutes(app: Router) {
             }
         });
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsAgentWalletController_getExportBucket: Record<string, TsoaRoute.ParameterSchema> = {
+        };
+        app.get('/agent/wallet/export-bucket',
+            authenticateMiddleware([{"jwt":["dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(AgentWalletController)),
+            ...(fetchMiddlewares<RequestHandler>(AgentWalletController.prototype.getExportBucket)),
+
+            async function AgentWalletController_getExportBucket(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsAgentWalletController_getExportBucket, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<AgentWalletController>(AgentWalletController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'getExportBucket',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
         const argsAgentWalletController_createImportSession: Record<string, TsoaRoute.ParameterSchema> = {
                 request: {"in":"request","name":"request","required":true,"dataType":"object"},
         };
@@ -6868,6 +7002,227 @@ export function RegisterRoutes(app: Router) {
 
               await templateService.apiHandler({
                 methodName: 'deleteVerifier',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsRelayController_getHealth: Record<string, TsoaRoute.ParameterSchema> = {
+        };
+        app.get('/multi-tenancy/relay/health',
+            authenticateMiddleware([{"jwt":["Basewallet"]}]),
+            ...(fetchMiddlewares<RequestHandler>(RelayController)),
+            ...(fetchMiddlewares<RequestHandler>(RelayController.prototype.getHealth)),
+
+            async function RelayController_getHealth(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsRelayController_getHealth, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<RelayController>(RelayController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'getHealth',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsRelayController_putRelay: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                tenantId: {"in":"path","name":"tenantId","required":true,"dataType":"string"},
+                body: {"in":"body","name":"body","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"target":{"dataType":"string"},"mode":{"dataType":"union","subSchemas":[{"dataType":"enum","enums":["HOLD"]},{"dataType":"enum","enums":["FORWARD"]}],"required":true}}},
+        };
+        app.put('/multi-tenancy/relay/:tenantId',
+            authenticateMiddleware([{"jwt":["Basewallet"]}]),
+            ...(fetchMiddlewares<RequestHandler>(RelayController)),
+            ...(fetchMiddlewares<RequestHandler>(RelayController.prototype.putRelay)),
+
+            async function RelayController_putRelay(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsRelayController_putRelay, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<RelayController>(RelayController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'putRelay',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsRelayController_getRelay: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                tenantId: {"in":"path","name":"tenantId","required":true,"dataType":"string"},
+        };
+        app.get('/multi-tenancy/relay/:tenantId',
+            authenticateMiddleware([{"jwt":["Basewallet"]}]),
+            ...(fetchMiddlewares<RequestHandler>(RelayController)),
+            ...(fetchMiddlewares<RequestHandler>(RelayController.prototype.getRelay)),
+
+            async function RelayController_getRelay(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsRelayController_getRelay, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<RelayController>(RelayController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'getRelay',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsRelayController_deleteRelay: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                tenantId: {"in":"path","name":"tenantId","required":true,"dataType":"string"},
+        };
+        app.delete('/multi-tenancy/relay/:tenantId',
+            authenticateMiddleware([{"jwt":["Basewallet"]}]),
+            ...(fetchMiddlewares<RequestHandler>(RelayController)),
+            ...(fetchMiddlewares<RequestHandler>(RelayController.prototype.deleteRelay)),
+
+            async function RelayController_deleteRelay(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsRelayController_deleteRelay, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<RelayController>(RelayController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'deleteRelay',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsRelayController_probe: Record<string, TsoaRoute.ParameterSchema> = {
+                _tenantId: {"in":"path","name":"tenantId","required":true,"dataType":"string"},
+                body: {"in":"body","name":"body","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"target":{"dataType":"string","required":true}}},
+        };
+        app.post('/multi-tenancy/relay/:tenantId/probe',
+            authenticateMiddleware([{"jwt":["Basewallet"]}]),
+            ...(fetchMiddlewares<RequestHandler>(RelayController)),
+            ...(fetchMiddlewares<RequestHandler>(RelayController.prototype.probe)),
+
+            async function RelayController_probe(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsRelayController_probe, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<RelayController>(RelayController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'probe',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsRelayController_reinject: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                tenantId: {"in":"path","name":"tenantId","required":true,"dataType":"string"},
+        };
+        app.post('/multi-tenancy/relay/:tenantId/reinject',
+            authenticateMiddleware([{"jwt":["Basewallet"]}]),
+            ...(fetchMiddlewares<RequestHandler>(RelayController)),
+            ...(fetchMiddlewares<RequestHandler>(RelayController.prototype.reinject)),
+
+            async function RelayController_reinject(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsRelayController_reinject, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<RelayController>(RelayController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'reinject',
                 controller,
                 response,
                 next,
