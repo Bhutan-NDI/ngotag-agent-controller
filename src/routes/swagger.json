@@ -2503,6 +2503,29 @@
 				],
 				"type": "string"
 			},
+			"WalletImportCounts": {
+				"properties": {
+					"entries": {
+						"type": "number",
+						"format": "double"
+					},
+					"keys": {
+						"type": "number",
+						"format": "double"
+					},
+					"skipped": {
+						"type": "number",
+						"format": "double"
+					}
+				},
+				"required": [
+					"entries",
+					"keys",
+					"skipped"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"WalletPortabilityJobRecord": {
 				"properties": {
 					"jobId": {
@@ -2537,6 +2560,18 @@
 					},
 					"backupProfile": {
 						"type": "string"
+					},
+					"sealedStoreKey": {
+						"type": "string"
+					},
+					"storageVersion": {
+						"type": "string"
+					},
+					"counts": {
+						"$ref": "#/components/schemas/WalletImportCounts"
+					},
+					"dryRun": {
+						"type": "boolean"
 					},
 					"error": {
 						"type": "string"
@@ -3326,6 +3361,49 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"AgentRuntimeConfig": {
+				"properties": {
+					"autoAcceptConnections": {
+						"type": "boolean"
+					},
+					"autoAcceptCredentials": {
+						"type": "string"
+					},
+					"autoAcceptProofs": {
+						"type": "string"
+					},
+					"inboundTransports": {
+						"items": {
+							"type": "string"
+						},
+						"type": "array"
+					},
+					"outboundTransports": {
+						"items": {
+							"type": "string"
+						},
+						"type": "array"
+					},
+					"cronPurgeEnabled": {
+						"type": "boolean"
+					},
+					"tenancy": {
+						"type": "boolean",
+						"description": "True on a multi-tenant (shared) agent; a dedicated agent is false"
+					}
+				},
+				"required": [
+					"autoAcceptConnections",
+					"autoAcceptCredentials",
+					"autoAcceptProofs",
+					"inboundTransports",
+					"outboundTransports",
+					"cronPurgeEnabled",
+					"tenancy"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"AgentInfo": {
 				"properties": {
 					"label": {
@@ -3340,13 +3418,24 @@
 					"isInitialized": {
 						"type": "boolean"
 					},
-					"publicDid": {}
+					"publicDid": {},
+					"releaseVersion": {
+						"type": "string"
+					},
+					"storageVersion": {
+						"type": "string"
+					},
+					"config": {
+						"$ref": "#/components/schemas/AgentRuntimeConfig"
+					}
 				},
 				"required": [
 					"label",
 					"endpoints",
 					"isInitialized",
-					"publicDid"
+					"publicDid",
+					"storageVersion",
+					"config"
 				],
 				"type": "object",
 				"additionalProperties": false
@@ -3798,6 +3887,9 @@
 						"type": "string"
 					},
 					"expirationDate": {
+						"type": "string"
+					},
+					"did": {
 						"type": "string"
 					}
 				},
@@ -5363,6 +5455,12 @@
 					},
 					"willConfirm": {
 						"type": "boolean"
+					},
+					"expiresInSeconds": {
+						"type": "number",
+						"format": "double",
+						"nullable": true,
+						"description": "Seconds until the request expires (sent as `~timing.expires_time`). Whole number, at least\n300, at most the purge ceiling. Omit (or null) for the deployment default,\nDIDCOMM_PROOF_REQUEST_EXPIRY."
 					}
 				},
 				"required": [
@@ -5407,6 +5505,12 @@
 					},
 					"invitationDid": {
 						"type": "string"
+					},
+					"expiresInSeconds": {
+						"type": "number",
+						"format": "double",
+						"nullable": true,
+						"description": "Seconds until the request expires (sent as `~timing.expires_time`). Whole number, at least\n300, at most the purge ceiling. Omit (or null) for the deployment default,\nDIDCOMM_PROOF_REQUEST_EXPIRY."
 					}
 				},
 				"required": [
@@ -5466,6 +5570,26 @@
 				},
 				"required": [
 					"proofFormats"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"CreatedImportSession": {
+				"properties": {
+					"sessionId": {
+						"type": "string"
+					},
+					"importPublicKey": {
+						"type": "string"
+					},
+					"expiresAt": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"sessionId",
+					"importPublicKey",
+					"expiresAt"
 				],
 				"type": "object",
 				"additionalProperties": false
@@ -7798,6 +7922,9 @@
 						"application/json": {
 							"schema": {
 								"properties": {
+									"recipientPublicKey": {
+										"type": "string"
+									},
 									"walletID": {
 										"type": "string"
 									},
@@ -7805,9 +7932,6 @@
 										"type": "string"
 									}
 								},
-								"required": [
-									"passKey"
-								],
 								"type": "object"
 							}
 						}
@@ -12161,6 +12285,247 @@
 					{
 						"in": "path",
 						"name": "schemaId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"/agent/wallet/import-session": {
+			"post": {
+				"operationId": "CreateImportSession",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/CreatedImportSession"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "TARGET_NOT_PRISTINE",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Checks the root wallet is pristine and starts an import session. The returned public key is what the\nexport's store key is sealed to; the private half stays in this agent's memory.",
+				"tags": [
+					"Agent"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": []
+			}
+		},
+		"/agent/wallet/import": {
+			"post": {
+				"operationId": "ImportWallet",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ImportWalletResult"
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Import session not found or expired",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "TARGET_NOT_PRISTINE, STORAGE_VERSION_MISMATCH or an import already running",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Merges a sealed export into the root wallet. Async job: returns a job id, poll the status route. With\n`dryRun` the merge is rolled back after it has run.",
+				"tags": [
+					"Agent"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"dryRun": {
+										"type": "boolean"
+									},
+									"storageVersion": {
+										"type": "string"
+									},
+									"sealedStoreKey": {
+										"type": "string"
+									},
+									"checksum": {
+										"type": "string"
+									},
+									"exportUrl": {
+										"type": "string"
+									},
+									"sessionId": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"storageVersion",
+									"sealedStoreKey",
+									"checksum",
+									"exportUrl",
+									"sessionId"
+								],
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/agent/wallet/import/status/{jobId}": {
+			"get": {
+				"operationId": "GetImportStatus",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/WalletPortabilityJobRecord"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Poll an import job. On completion it reports how many records and keys the merge inserted.",
+				"tags": [
+					"Agent"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "jobId",
 						"required": true,
 						"schema": {
 							"type": "string"

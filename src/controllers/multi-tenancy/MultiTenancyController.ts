@@ -34,6 +34,7 @@ import {
   WalletPortabilityJobConflictError,
   WalletPortabilityJobType,
 } from '../../services/wallet-portability/WalletPortabilityTypes'
+import { InvalidRecipientKeyError, parseRecipientKey } from '../../services/wallet-portability/sealedStoreKey'
 import { TsLogger } from '../../utils/logger'
 import { CreateTenantOptions } from '../types'
 
@@ -192,11 +193,23 @@ export class MultiTenancyController extends Controller {
   public async exportTenantWallet(
     @Request() request: Req,
     @Path('tenantId') tenantId: string,
-    @Body() exportWalletRequest: { passKey: string; walletID?: string },
+    @Body() exportWalletRequest: { passKey?: string; walletID?: string; recipientPublicKey?: string },
     @Res() badRequestError: TsoaResponse<400, { reason: string }>,
   ): Promise<ExportWalletResult> {
-    const { passKey, walletID } = exportWalletRequest
-    if (!passKey || passKey.length < MIN_PASSKEY_LENGTH) {
+    const { passKey, walletID, recipientPublicKey } = exportWalletRequest
+    if (recipientPublicKey) {
+      if (passKey || undefined !== walletID) {
+        return badRequestError(400, { reason: 'recipientPublicKey cannot be combined with passKey or walletID.' })
+      }
+      try {
+        parseRecipientKey(recipientPublicKey).handle.free()
+      } catch (error) {
+        if (error instanceof InvalidRecipientKeyError) {
+          return badRequestError(400, { reason: error.message })
+        }
+        throw ErrorHandlingService.handle(error)
+      }
+    } else if (!passKey || passKey.length < MIN_PASSKEY_LENGTH) {
       return badRequestError(400, { reason: `passKey must be at least ${MIN_PASSKEY_LENGTH} characters.` })
     }
     // walletID becomes the literal Askar profile name mobile's import must match exactly.
@@ -223,6 +236,7 @@ export class MultiTenancyController extends Controller {
         tenantId,
         passKey,
         walletID,
+        recipientPublicKey,
       )
     } catch (error) {
       // Export and import share the tenant's profile namespace and can't safely run
