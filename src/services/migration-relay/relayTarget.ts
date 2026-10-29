@@ -43,7 +43,10 @@ export const assertValidRelayTarget = (target: unknown): string => {
   if (url.username || url.password) {
     throw new InvalidRelayTargetError('must not carry credentials')
   }
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  const host = url.hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.$/, '')
   const ipv4 = embeddedIpv4(host) ?? host
   if (
     'localhost' === host ||

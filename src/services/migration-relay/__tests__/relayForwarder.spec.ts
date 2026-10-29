@@ -33,6 +33,39 @@ describe('forwardEnvelope', () => {
     await target.close()
   })
 
+  it('refuses a response that declares more than the cap, without reading it', async () => {
+    const target = await startTarget((_request, res) => {
+      res.writeHead(200, { 'content-length': String(6 * 1024 * 1024) })
+      res.write('x')
+    })
+
+    await expect(forward(target.url, { contentType: MIME, body: '{}' })).resolves.toEqual({
+      kind: 'ambiguous',
+      reason: 'RESPONSE_TOO_LARGE',
+    })
+    await target.close()
+  })
+
+  it('stops reading a streamed response once it passes the cap', async () => {
+    const chunk = Buffer.alloc(1024 * 1024, 'x')
+    let written = 0
+    const target = await startTarget((_request, res) => {
+      res.writeHead(200)
+      const writeMore = (): void => {
+        while (written < 40 && res.write(chunk)) written += 1
+        if (written < 40) res.once('drain', writeMore)
+        else res.end()
+      }
+      writeMore()
+    })
+
+    await expect(createForwarder(2000)(target.url, { contentType: MIME, body: '{}' })).resolves.toEqual({
+      kind: 'ambiguous',
+      reason: 'RESPONSE_TOO_LARGE',
+    })
+    await target.close()
+  })
+
   it('reports a refused connection as never having left', async () => {
     const port = await freePort()
 

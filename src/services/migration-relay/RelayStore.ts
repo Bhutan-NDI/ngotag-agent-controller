@@ -32,6 +32,7 @@ export interface RelayRedis {
   rpush(key: string, ...values: string[]): Promise<number>
   rpop(key: string): Promise<string | null>
   lpop(key: string): Promise<string | null>
+  lrem(key: string, count: number, value: string): Promise<number>
   lindex(key: string, index: number): Promise<string | null>
   llen(key: string): Promise<number>
   expire(key: string, seconds: number): Promise<number>
@@ -135,6 +136,11 @@ export class RelayStore {
     }
     await this.redis.expire(holdKey(tenantId), holdBufferTtlSeconds())
     return true
+  }
+
+  /** Takes one copy of an envelope back out of the buffer, for a message that turned out not to need holding. */
+  public async holdRemove(tenantId: string, envelope: HeldEnvelope): Promise<void> {
+    await this.redis.lrem(holdKey(tenantId), 1, JSON.stringify(envelope))
   }
 
   public async holdLength(tenantId: string): Promise<number> {

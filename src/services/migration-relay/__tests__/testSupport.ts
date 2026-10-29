@@ -66,6 +66,15 @@ export class FakeRedis implements RelayRedis {
     return this.lists.get(key)?.shift() ?? null
   }
 
+  public async lrem(key: string, _count: number, value: string) {
+    this.guard('lrem')
+    const list = this.lists.get(key) ?? []
+    const index = list.indexOf(value)
+    if (0 > index) return 0
+    list.splice(index, 1)
+    return 1
+  }
+
   public async lindex(key: string, index: number) {
     this.guard('lindex')
     return this.lists.get(key)?.[index] ?? null

@@ -94,7 +94,23 @@ describe('RelayDrainer', () => {
     expect(target.received.map((request) => request.body)).toEqual(['{"n":1}', '{"n":2}'])
   })
 
-  it('treats any answer from the target as delivered, including an error', async () => {
+  it.each([503, 429])(
+    'keeps the buffer while the target answers %s, and delivers once it takes the message',
+    async (status) => {
+      let answers = 0
+      const target = await startTarget((_request, res) => res.writeHead(3 > ++answers ? status : 200).end())
+      cleanups.push(() => target.close())
+      await store.setEntry({ tenantId: TENANT, mode: 'FORWARD', target: target.url, updatedAt: 'now' })
+      for (const n of [1, 2]) await store.holdPush(TENANT, held(n))
+
+      drainer.ensureDraining(TENANT)
+
+      await eventually(async () => 0 === (await store.holdLength(TENANT)))
+      expect(target.received.map((request) => request.body)).toEqual(['{"n":1}', '{"n":1}', '{"n":1}', '{"n":2}'])
+    },
+  )
+
+  it('treats any other answer from the target as delivered, including an error', async () => {
     const target = await startTarget((_request, res) => res.writeHead(500).end())
     cleanups.push(() => target.close())
     await store.setEntry({ tenantId: TENANT, mode: 'FORWARD', target: target.url, updatedAt: 'now' })
