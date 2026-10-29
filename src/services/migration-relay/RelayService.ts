@@ -10,7 +10,14 @@ import { TenantRoutingRecord } from '@credo-ts/tenants'
 import { randomUUID } from 'crypto'
 
 import { RelayMirror } from './RelayMirror'
-import { MIRROR_REFRESH_MS, PROBE_TIMEOUT_MS, REINJECT_PROCESSED_TIMEOUT_MS } from './relayConfig'
+import {
+  FORWARD_TIMEOUT_MS,
+  LOCK_POLL_MS,
+  MIRROR_REFRESH_MS,
+  PROBE_TIMEOUT_MS,
+  REINJECT_PROCESSED_TIMEOUT_MS,
+  RESTORE_LOCK_WAIT_MS,
+} from './relayConfig'
 import { TLS_ERROR_CODES } from './relayForwarder'
 import { assertValidRelayTarget } from './relayTarget'
 
@@ -22,6 +29,7 @@ export type RelayConflictCode =
   | 'RELAY_BUFFER_NOT_EMPTY'
   | 'RELAY_NOT_HOLDING'
   | 'RELAY_BUSY'
+  | 'TENANT_PURGED'
 
 export class RelayConflictError extends Error {
   public constructor(public readonly code: RelayConflictCode) {
@@ -41,6 +49,7 @@ export interface RelayServiceOptions {
   probeFetch?: typeof fetch
   probeTimeoutMs?: number
   reinjectTimeoutMs?: number
+  forwardTimeoutMs?: number
 }
 
 export interface RelayStatus extends RelayEntry {
@@ -151,16 +160,65 @@ export class RelayService {
   }
 
   /**
+   * Takes a tenant off the relay for good, for a disaster restore: the new agent is lost and this agent serves the
+   * organisation again from the wallet it kept. A FORWARD relay is permanent in every other case, so this is the one
+   * way out of it. It stops forwarding (new messages are held), hands every message held or queued for the lost
+   * target back to this agent, and removes the entry. Safe to repeat if it stops half way.
+   * @throws RelayConflictError TENANT_PURGED when the tenant's wallet was already removed, so there is nothing to serve
+   */
+  public async restore(agent: RootAgent, tenantId: string): Promise<{ injected: number; failed: number }> {
+    const record = await this.findRecord(agent, tenantId)
+    // No record but an entry: an earlier attempt deleted the record in remove and failed before Redis was cleared.
+    if (!record && !(await this.store.getEntry(tenantId))) throw new RelayNotFoundError(tenantId)
+
+    // The tag purge-profile writes; with the wallet gone, putting the tenant back would send messages nowhere.
+    const tenant = (await agent.modules.tenants.getTenantById(tenantId)) as { getTag?: (name: string) => unknown }
+    if (true === tenant.getTag?.('migrated')) throw new RelayConflictError('TENANT_PURGED')
+
+    const holding: RelayEntry = { tenantId, mode: 'HOLD', updatedAt: new Date().toISOString() }
+    if (record && 'FORWARD' === record.content.mode) {
+      this.logger.warn(`[RelayService] restoring tenant '${tenantId}': its FORWARD relay is being taken off`)
+      await this.saveRecord(agent, record, holding)
+    }
+    // Also when only the record says HOLD: an earlier attempt may have saved it and then failed before Redis changed.
+    if ('HOLD' !== (await this.store.getEntry(tenantId))?.mode) {
+      this.mirror.set(holding, await this.listFingerprints(agent, tenantId))
+      await this.store.setEntry(holding)
+    }
+
+    // A forward that read FORWARD just before the flip can still end in neverLeft and push to the buffer; the entry's
+    // updatedAt keeps a retry from waiting again.
+    const flippedAt = Date.parse((await this.store.getEntry(tenantId))?.updatedAt ?? '') || Date.now()
+    const inFlightMs = flippedAt + (this.options.forwardTimeoutMs ?? FORWARD_TIMEOUT_MS) - Date.now()
+    if (0 < inFlightMs) await new Promise((resolve) => setTimeout(resolve, inFlightMs))
+
+    const result = await this.injectHeld(agent, tenantId, RESTORE_LOCK_WAIT_MS)
+    await this.remove(agent, tenantId)
+    return result
+  }
+
+  /**
    * Feeds the HOLD buffer back to Credo as if the messages had just arrived (an aborted move). Returns how many were
    * processed and how many did not finish within the timeout.
    */
-  public async reinject(agent: RootAgent, tenantId: string): Promise<{ injected: number; failed: number }> {
+  public async reinject(
+    agent: RootAgent,
+    tenantId: string,
+    lockWaitMs: number = 0,
+  ): Promise<{ injected: number; failed: number }> {
     const record = await this.findRecord(agent, tenantId)
     if (!record) throw new RelayNotFoundError(tenantId)
     if ('HOLD' !== record.content.mode) throw new RelayConflictError('RELAY_NOT_HOLDING')
+    return this.injectHeld(agent, tenantId, lockWaitMs)
+  }
 
+  private async injectHeld(
+    agent: RootAgent,
+    tenantId: string,
+    lockWaitMs: number,
+  ): Promise<{ injected: number; failed: number }> {
     const token = randomUUID()
-    if (!(await this.store.acquireDrainLock(tenantId, token))) throw new RelayConflictError('RELAY_BUSY')
+    if (!(await this.acquireLock(tenantId, token, lockWaitMs))) throw new RelayConflictError('RELAY_BUSY')
     try {
       const eventEmitter = agent.dependencyManager.resolve(EventEmitter)
       let injected = 0
@@ -184,6 +242,16 @@ export class RelayService {
       return { injected, failed }
     } finally {
       await this.store.releaseDrainLock(tenantId, token).catch(() => undefined)
+    }
+  }
+
+  // A drainer that is mid-forward when a restore flips the relay to HOLD stops after that forward and frees the lock.
+  private async acquireLock(tenantId: string, token: string, waitMs: number): Promise<boolean> {
+    const deadline = Date.now() + waitMs
+    for (;;) {
+      if (await this.store.acquireDrainLock(tenantId, token)) return true
+      if (Date.now() >= deadline) return false
+      await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS))
     }
   }
 
