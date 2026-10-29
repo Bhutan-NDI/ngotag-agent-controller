@@ -4,10 +4,11 @@
  */
 import '@openwallet-foundation/askar-nodejs'
 import { AskarModule, AskarMultiWalletDatabaseScheme, AskarStoreManager } from '@credo-ts/askar'
-import { Agent, RecordNotFoundError } from '@credo-ts/core'
+import { Agent, InjectionSymbols, RecordNotFoundError } from '@credo-ts/core'
 import { DidCommModule } from '@credo-ts/didcomm'
 import { agentDependencies } from '@credo-ts/node'
 import { TenantsModule } from '@credo-ts/tenants'
+import { jest } from '@jest/globals'
 import { askar } from '@openwallet-foundation/askar-nodejs'
 import { randomUUID } from 'crypto'
 
@@ -171,6 +172,29 @@ describe('purgeTenantProfile against a real multi-tenant agent', () => {
 
     await otherSession.endSession()
     await expect(purgeTenantProfile(agent as never, busy, 300)).resolves.toMatchObject({ profileRemoved: true })
+  }, 60000)
+
+  it('lets a retry through after the profile removal fails once, instead of leaving a disposed context mapped', async () => {
+    const flaky = (await tenants.createTenant({ config: { label: 'flaky-org' } })).id
+    await seed(flaky)
+    const store = agent.dependencyManager.resolve(AskarStoreManager)
+    const removal = jest.spyOn(store, 'deleteContext').mockRejectedValueOnce(new Error('database timeout'))
+    const coordinator = (
+      agent.dependencyManager.resolve(InjectionSymbols.AgentContextProvider) as unknown as {
+        tenantSessionCoordinator: {
+          tenantAgentContextMapping: Record<string, unknown>
+          getSessionCountForTenant: (id: string) => number
+        }
+      }
+    ).tenantSessionCoordinator
+
+    await expect(purgeTenantProfile(agent as never, flaky, 300)).rejects.toThrow('onDeleteContext')
+    expect(coordinator.tenantAgentContextMapping[`tenant-${flaky}`]).toBeUndefined()
+
+    removal.mockRestore()
+    await expect(purgeTenantProfile(agent as never, flaky, 300)).resolves.toMatchObject({ profileRemoved: true })
+    expect(await profiles()).not.toContain(`tenant-${flaky}`)
+    expect(coordinator.getSessionCountForTenant(flaky)).toBe(0)
   }, 60000)
 
   it('throws RecordNotFoundError for an unknown tenant', async () => {
