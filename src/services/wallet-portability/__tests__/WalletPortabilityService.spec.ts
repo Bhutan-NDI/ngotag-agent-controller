@@ -136,6 +136,11 @@ jest.unstable_mockModule('@openwallet-foundation/askar-shared', () => ({
   Store: { provision: storeProvision, open: storeOpen },
   StoreKeyMethod: jest.fn(),
   KdfMethod: { Raw: 'raw', Argon2IMod: 'argon2i-mod' },
+  // Imported (not called) by sealedStoreKey.ts, which the sealed-export path uses; this spec covers the
+  // passphrase path only. The sealed path runs against the real binding in WalletSealedMigration.spec.ts.
+  Key: {},
+  KeyAlgorithm: {},
+  CryptoBox: {},
 }))
 
 const fetchMock = jest.fn() as jest.Mock

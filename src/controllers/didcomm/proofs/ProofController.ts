@@ -19,6 +19,11 @@ import { BadRequestError } from '../../../errors'
 import { PurgeRecordType } from '../../../purge/PurgeTypes'
 import { SchedulePurge } from '../../../purge/decorators/SchedulePurge'
 import { addAdditionalInvitationDids, validateAdditionalInvitationDids } from '../../../utils/additionalInvitationDids'
+import {
+  applyProofRequestExpiry,
+  requestProofWithExpiry,
+  resolveProofRequestExpiresTime,
+} from '../../../utils/proofRequestExpiry'
 import { recordPageOptions, fetchRecordPage } from '../../../utils/recordPagination'
 import { ProofRecordExample, RecordId } from '../../examples'
 import {
@@ -159,7 +164,8 @@ export class ProofController extends Controller {
         parentThreadId: requestProofOptions.parentThreadId,
         willConfirm: requestProofOptions.willConfirm,
       }
-      const proof = await request.agent.modules.didcomm.proofs.requestProof(requestProofPayload)
+      const expiresTime = resolveProofRequestExpiresTime(requestProofOptions.expiresInSeconds)
+      const proof = await requestProofWithExpiry(request.agent, requestProofPayload, expiresTime)
 
       return proof
     } catch (error) {
@@ -183,6 +189,8 @@ export class ProofController extends Controller {
         createRequestOptions?.additionalInvitationDids,
         createRequestOptions?.invitationDid,
       )
+      // Resolved before the peer DID is created, so an invalid expiry is rejected without side effects.
+      const expiresTime = resolveProofRequestExpiresTime(createRequestOptions.expiresInSeconds)
 
       if (createRequestOptions?.invitationDid) {
         invitationDid = createRequestOptions?.invitationDid
@@ -220,6 +228,7 @@ export class ProofController extends Controller {
         comment: createRequestOptions.comment,
       })
       const proofMessage = proof.message
+      await applyProofRequestExpiry(request.agent.context, proofMessage, proof.proofRecord, expiresTime)
       const outOfBandRecord = await request.agent.modules.didcomm.oob.createInvitation({
         label: createRequestOptions.label,
         messages: [proofMessage],

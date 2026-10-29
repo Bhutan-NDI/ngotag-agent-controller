@@ -56,11 +56,25 @@ export type CustomTenantConfig = { label: string } & {
   connectionImageUrl?: string
 }
 
+export interface AgentRuntimeConfig {
+  autoAcceptConnections: boolean
+  autoAcceptCredentials: string
+  autoAcceptProofs: string
+  inboundTransports: string[]
+  outboundTransports: string[]
+  cronPurgeEnabled: boolean
+  /** True on a multi-tenant (shared) agent; a dedicated agent is false */
+  tenancy: boolean
+}
+
 export interface AgentInfo {
   label: string
   endpoints: string[]
   isInitialized: boolean
   publicDid: void
+  releaseVersion?: string
+  storageVersion: string
+  config: AgentRuntimeConfig
 }
 
 export interface AgentToken {
@@ -180,6 +194,12 @@ export interface CreateProofRequestOobOptions {
   recipientKey?: string
   invitationDid?: string
   additionalInvitationDids?: string[]
+  /**
+   * Seconds until the request expires (sent as `~timing.expires_time`). Whole number, at least
+   * 300, at most the purge ceiling. Omit (or null) for the deployment default,
+   * DIDCOMM_PROOF_REQUEST_EXPIRY.
+   */
+  expiresInSeconds?: number | null
 }
 
 export interface OfferCredentialOptions {
@@ -285,6 +305,12 @@ export interface RequestProofOptions {
   goalCode?: string
   parentThreadId?: string
   willConfirm?: boolean
+  /**
+   * Seconds until the request expires (sent as `~timing.expires_time`). Whole number, at least
+   * 300, at most the purge ceiling. Omit (or null) for the deployment default,
+   * DIDCOMM_PROOF_REQUEST_EXPIRY.
+   */
+  expiresInSeconds?: number | null
 }
 
 // TODO: added type in protocolVersion
@@ -464,6 +490,8 @@ export interface jsonLdCredentialOptions {
   proofType: string
   // ISO 8601; defaulted server-side when omitted (W3cCredential requires a real date once signed).
   expirationDate?: string
+  // A DID this agent created, to sign with instead of the default DID.
+  did?: string
 }
 
 // Runtime shape of createW3cSelfAttestedCredential's response: JsonTransformer.toJSON() of the

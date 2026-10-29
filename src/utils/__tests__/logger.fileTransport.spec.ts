@@ -12,17 +12,15 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
+import { tracerMock } from './loggerTestUtils'
+
 const logDir = mkdtempSync(join(tmpdir(), 'credo-logger-'))
 const logFile = join(logDir, 'logs.txt')
 
 process.env.LOG_FILE_PATH = logFile
 process.env.LOG_FORMAT = 'json'
 
-jest.unstable_mockModule('../../tracer', () => ({
-  otelLogger: { emit: () => {} },
-  otelLoggerProviderInstance: {},
-  otelSDK: {},
-}))
+jest.unstable_mockModule('../../tracer', () => tracerMock())
 
 const { TsLogger } = await import('../logger')
 const { LogLevel } = await import('@credo-ts/core')
