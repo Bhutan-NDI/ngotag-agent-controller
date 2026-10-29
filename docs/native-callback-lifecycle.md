@@ -2,8 +2,10 @@
 
 The incomplete missing-record runs, native aborts and processes that hung after
 store closure were traced to `@2060.io/ffi-napi` 4.0.9's callback dispatcher.
-This dependency is used by the existing Askar Node bindings; the failure also
-reproduced with the original unbounded wallet query behavior.
+This dependency was used by the Askar Node bindings at the time and is still used
+by the AnonCreds and Indy VDR Node bindings; Askar now uses `koffi` (see
+[Askar native memory](askar-native-memory.md)). The failure also reproduced with
+the original unbounded wallet query behavior.
 
 ## Cause and evidence
 
@@ -46,9 +48,10 @@ The version-pinned native patch removes the two cross-thread reference mutations
 It preserves callback dispatch, queue locking, condition-variable signalling and
 callback results. The async watcher remains unreferenced as initialized upstream.
 
-The caller must keep its pending asynchronous operation alive. Askar already
-retains each pending callback with a JavaScript timer until completion; Indy VDR
-uses the same pattern. Their lifetime ownership remains intact. The patch does
+The caller must keep its pending asynchronous operation alive. Indy VDR retains
+each pending callback with a JavaScript timer until completion, and Askar still
+does under `koffi` (see [Askar native memory](askar-native-memory.md)). Their
+lifetime ownership remains intact. The patch does
 not add timers, suppress errors, force successful process exits, or change any
 wallet query, cryptographic operation, schema or public API.
 
@@ -71,6 +74,8 @@ Run `yarn test --runInBand src/storage/__tests__/nativeCallbackLifecycle.spec.ts
 The parent requires a valid completion report **and a normal child exit**. Its
 outer timeout catches a hang even after a success report was printed. The test
 uses temporary SQLite data and never opens configured application databases.
+Since Askar moved to `koffi`, this test drives Askar's `koffi` callbacks, not the
+patched `ffi-napi` dispatcher; it still guards wallet callback lifetime and exit.
 
 The PostgreSQL matrix can be repeated with:
 
