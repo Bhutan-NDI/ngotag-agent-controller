@@ -14,6 +14,12 @@ jest.unstable_mockModule('../../../utils/additionalInvitationDids', () => ({
   addAdditionalInvitationDids: add,
 }))
 
+const actualExpiry = await import('../../../utils/proofRequestExpiry')
+jest.unstable_mockModule('../../../utils/proofRequestExpiry', () => ({
+  ...actualExpiry,
+  applyProofRequestExpiry: jest.fn(async () => undefined),
+}))
+
 const { CredentialController } = await import('../credentials/CredentialController')
 const { ProofController } = await import('../proofs/ProofController')
 
