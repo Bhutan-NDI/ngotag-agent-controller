@@ -77,6 +77,12 @@ import {
 } from './purge/PurgeSchedulerFactory'
 import { buildPurgeConfig } from './purge/PurgeTypes'
 import { setupServer } from './server'
+import { initRotationRuntime, shutdownRotationRuntime } from './services/did-rotation/rotationRuntime'
+import {
+  initRelayRuntime,
+  shutdownRelayRuntime,
+  warnIfRelayEntriesExist,
+} from './services/migration-relay/relayRuntime'
 import { shutdownWalletPortabilityService } from './services/wallet-portability/WalletPortabilityService'
 import { CachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
@@ -84,6 +90,7 @@ import { adminRequestTimeoutMs } from './utils/adminRequestTimeout'
 import { AuthTypes, getAuthType } from './utils/auth'
 import { generateSecretKey } from './utils/helpers'
 import { TsLogger } from './utils/logger'
+import { withNetworkErrorCodes } from './utils/networkErrorCodes'
 import {
   getMixedCredentialRequestToCredentialMapper,
   getX509CertsByClientToken,
@@ -583,7 +590,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     modules: {
       ...modules,
     },
-    dependencies: agentDependencies,
+    dependencies: { ...agentDependencies, fetch: withNetworkErrorCodes(agentDependencies.fetch) },
   })
 
   // Register outbound transports
@@ -591,6 +598,9 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     const OutboundTransport = outboundTransportMapping[outboundTransport]
     agent.modules.didcomm.registerOutboundTransport(new OutboundTransport())
   }
+
+  // The migration relay only exists on a shared (multi-tenant) agent, and only when it is explicitly enabled.
+  const relay = afjConfig.tenancy ? initRelayRuntime(logger) : undefined
 
   // Register inbound transports
   for (const inboundTransport of inboundTransports) {
@@ -607,6 +617,9 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
         }),
       )
       transport.app.use(bodyParser.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
+      // After the transport's own text parser, so the middleware reads the raw envelope; before its POST handler,
+      // which is only registered by agent.initialize().
+      if (relay) transport.app.use(relay.middleware)
     }
   }
 
@@ -615,6 +628,24 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   mountBaseMiddleware(expressApp)
 
   await agent.initialize()
+
+  if (relay) {
+    relay.service.watchRoutingKeys(agent as unknown as Agent<RestMultiTenantAgentModules>)
+    await relay.service
+      .rehydrate(agent as unknown as Agent<RestMultiTenantAgentModules>)
+      .then((count) => logger.info(`[Relay] restored ${count} relay entr${1 === count ? 'y' : 'ies'}`))
+      .catch((error) => logger.error(`[Relay] could not restore relay state: ${error}`))
+    relay.service.startMirror(agent as unknown as Agent<RestMultiTenantAgentModules>)
+  } else if (afjConfig.tenancy) {
+    await warnIfRelayEntriesExist(agent as unknown as Agent<RestMultiTenantAgentModules>, logger).catch((error) =>
+      logger.error(`[Relay] could not check for relay entries: ${error}`),
+    )
+  }
+
+  // A dedicated agent can receive an organisation's wallet and then rotate its connections to this agent.
+  if (!afjConfig.tenancy) {
+    await initRotationRuntime(agent as unknown as Agent, logger)
+  }
 
   const genericRecord = await agent.genericRecords.findAllByQuery({ hasSecretKey: 'true' })
   const recordsWithSecretKey = genericRecord[0]
@@ -694,6 +725,8 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       await cache.disconnect()
     }
     await shutdownWalletPortabilityService()
+    await shutdownRelayRuntime()
+    await shutdownRotationRuntime()
     await agent.shutdown()
     process.exit(0)
   }
