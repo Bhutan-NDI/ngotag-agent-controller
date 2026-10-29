@@ -5647,6 +5647,252 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"JobStatus": {
+				"type": "string",
+				"enum": [
+					"idle",
+					"running",
+					"completed"
+				]
+			},
+			"RotationJob": {
+				"properties": {
+					"status": {
+						"$ref": "#/components/schemas/JobStatus"
+					},
+					"batchSize": {
+						"type": "number",
+						"format": "double"
+					},
+					"intervalMs": {
+						"type": "number",
+						"format": "double"
+					},
+					"startedAt": {
+						"type": "string"
+					},
+					"completedAt": {
+						"type": "string"
+					},
+					"cutoff": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"status",
+					"batchSize",
+					"intervalMs"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"Record_RotationBucket.number_": {
+				"properties": {
+					"pending": {
+						"type": "number",
+						"format": "double"
+					},
+					"retrying": {
+						"type": "number",
+						"format": "double"
+					},
+					"failed": {
+						"type": "number",
+						"format": "double"
+					},
+					"waiting": {
+						"type": "number",
+						"format": "double"
+					},
+					"stale": {
+						"type": "number",
+						"format": "double"
+					},
+					"refused": {
+						"type": "number",
+						"format": "double"
+					},
+					"updated": {
+						"type": "number",
+						"format": "double"
+					}
+				},
+				"required": [
+					"pending",
+					"retrying",
+					"failed",
+					"waiting",
+					"stale",
+					"refused",
+					"updated"
+				],
+				"type": "object",
+				"description": "Construct a type with a set of properties K of type T"
+			},
+			"RotationCounts": {
+				"allOf": [
+					{
+						"$ref": "#/components/schemas/Record_RotationBucket.number_"
+					},
+					{
+						"properties": {
+							"total": {
+								"type": "number",
+								"format": "double"
+							}
+						},
+						"required": [
+							"total"
+						],
+						"type": "object"
+					}
+				]
+			},
+			"RotationStatus": {
+				"properties": {
+					"job": {
+						"$ref": "#/components/schemas/RotationJob"
+					},
+					"counts": {
+						"$ref": "#/components/schemas/RotationCounts"
+					}
+				},
+				"required": [
+					"job",
+					"counts"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"RotateOutcome": {
+				"anyOf": [
+					{
+						"properties": {
+							"uncertain": {
+								"type": "boolean"
+							},
+							"newDid": {
+								"type": "string"
+							},
+							"outcome": {
+								"type": "string",
+								"enum": [
+									"sent"
+								],
+								"nullable": false
+							},
+							"connectionId": {
+								"type": "string"
+							}
+						},
+						"required": [
+							"newDid",
+							"outcome",
+							"connectionId"
+						],
+						"type": "object"
+					},
+					{
+						"properties": {
+							"nextAttemptAt": {
+								"type": "string"
+							},
+							"newDid": {
+								"type": "string"
+							},
+							"outcome": {
+								"type": "string",
+								"enum": [
+									"retry",
+									"failed"
+								]
+							},
+							"connectionId": {
+								"type": "string"
+							}
+						},
+						"required": [
+							"newDid",
+							"outcome",
+							"connectionId"
+						],
+						"type": "object"
+					},
+					{
+						"properties": {
+							"reason": {
+								"type": "string"
+							},
+							"outcome": {
+								"type": "string",
+								"enum": [
+									"skipped"
+								],
+								"nullable": false
+							},
+							"connectionId": {
+								"type": "string"
+							}
+						},
+						"required": [
+							"reason",
+							"outcome",
+							"connectionId"
+						],
+						"type": "object"
+					}
+				]
+			},
+			"ExportBucketProbeReason": {
+				"type": "string",
+				"enum": [
+					"DNS",
+					"TLS",
+					"TIMEOUT",
+					"UNREACHABLE",
+					"NO_SUCH_BUCKET"
+				]
+			},
+			"ExportBucketProbe": {
+				"properties": {
+					"configured": {
+						"type": "boolean",
+						"description": "Whether a usable export bucket name is set. Without one this agent cannot pull an export from S3 at all"
+					},
+					"reachable": {
+						"type": "boolean",
+						"description": "Whether this agent can reach the bucket over HTTPS; absent when no bucket is configured"
+					},
+					"reason": {
+						"$ref": "#/components/schemas/ExportBucketProbeReason"
+					}
+				},
+				"required": [
+					"configured"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"CreatedImportSession": {
+				"properties": {
+					"sessionId": {
+						"type": "string"
+					},
+					"importPublicKey": {
+						"type": "string"
+					},
+					"expiresAt": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"sessionId",
+					"importPublicKey",
+					"expiresAt"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"RelayMode": {
 				"type": "string",
 				"enum": [
@@ -5716,56 +5962,6 @@
 				},
 				"required": [
 					"reachable"
-				],
-				"type": "object",
-				"additionalProperties": false
-			},
-			"ExportBucketProbeReason": {
-				"type": "string",
-				"enum": [
-					"DNS",
-					"TLS",
-					"TIMEOUT",
-					"UNREACHABLE",
-					"NO_SUCH_BUCKET"
-				]
-			},
-			"ExportBucketProbe": {
-				"properties": {
-					"configured": {
-						"type": "boolean",
-						"description": "Whether a usable export bucket name is set. Without one this agent cannot pull an export from S3 at all"
-					},
-					"reachable": {
-						"type": "boolean",
-						"description": "Whether this agent can reach the bucket over HTTPS; absent when no bucket is configured"
-					},
-					"reason": {
-						"$ref": "#/components/schemas/ExportBucketProbeReason"
-					}
-				},
-				"required": [
-					"configured"
-				],
-				"type": "object",
-				"additionalProperties": false
-			},
-			"CreatedImportSession": {
-				"properties": {
-					"sessionId": {
-						"type": "string"
-					},
-					"importPublicKey": {
-						"type": "string"
-					},
-					"expiresAt": {
-						"type": "string"
-					}
-				},
-				"required": [
-					"sessionId",
-					"importPublicKey",
-					"expiresAt"
 				],
 				"type": "object",
 				"additionalProperties": false
@@ -12635,6 +12831,410 @@
 				]
 			}
 		},
+		"/didcomm/connections/rotate-all": {
+			"post": {
+				"operationId": "RotateAll",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RotationStatus"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "ROTATION_UNAVAILABLE",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Starts rotating every completed connection, most recently active first, in batches (50 a minute by default).\nReturns the job status; a job that is already running is left alone.",
+				"tags": [
+					"Connections"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"intervalSeconds": {
+										"type": "number",
+										"format": "double"
+									},
+									"batchSize": {
+										"type": "number",
+										"format": "double"
+									}
+								},
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/didcomm/connections/rotate-all/status": {
+			"get": {
+				"operationId": "GetRotationStatus",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RotationStatus"
+								}
+							}
+						}
+					}
+				},
+				"description": "Progress of the rotation: how many connections are pending, waiting for an acknowledgement, stale (no answer for\n30 days), refused, updated, retrying or failed.",
+				"tags": [
+					"Connections"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": []
+			}
+		},
+		"/didcomm/connections/{connectionId}/rotate": {
+			"post": {
+				"operationId": "RotateConnection",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RotateOutcome"
+								}
+							}
+						}
+					}
+				},
+				"description": "Rotates one connection now. Also retries a connection whose earlier attempts gave up.",
+				"tags": [
+					"Connections"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "connectionId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"/agent/wallet/export-bucket": {
+			"get": {
+				"operationId": "GetExportBucket",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ExportBucketProbe"
+								}
+							}
+						}
+					}
+				},
+				"description": "Whether this agent can pull an export from its S3 bucket. When it cannot, the platform sends the export itself\nwith POST /agent/wallet/import/upload.",
+				"tags": [
+					"Agent"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": []
+			}
+		},
+		"/agent/wallet/import-session": {
+			"post": {
+				"operationId": "CreateImportSession",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/CreatedImportSession"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "TARGET_NOT_PRISTINE",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Checks the root wallet is pristine and starts an import session. The returned public key is what the\nexport's store key is sealed to; the private half stays in this agent's memory.",
+				"tags": [
+					"Agent"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": []
+			}
+		},
+		"/agent/wallet/import": {
+			"post": {
+				"operationId": "ImportWallet",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ImportWalletResult"
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Import session not found or expired",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "TARGET_NOT_PRISTINE, STORAGE_VERSION_MISMATCH or an import already running",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Merges a sealed export into the root wallet. Async job: returns a job id, poll the status route. With\n`dryRun` the merge is rolled back after it has run.",
+				"tags": [
+					"Agent"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"dryRun": {
+										"type": "boolean"
+									},
+									"storageVersion": {
+										"type": "string"
+									},
+									"sealedStoreKey": {
+										"type": "string"
+									},
+									"checksum": {
+										"type": "string"
+									},
+									"exportUrl": {
+										"type": "string"
+									},
+									"sessionId": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"storageVersion",
+									"sealedStoreKey",
+									"checksum",
+									"exportUrl",
+									"sessionId"
+								],
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/agent/wallet/import/status/{jobId}": {
+			"get": {
+				"operationId": "GetImportStatus",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/WalletPortabilityJobRecord"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Poll an import job. On completion it reports how many records and keys the merge inserted.",
+				"tags": [
+					"Agent"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "jobId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
 		"/multi-tenancy/relay/health": {
 			"get": {
 				"operationId": "GetHealth",
@@ -12993,276 +13593,6 @@
 					{
 						"in": "path",
 						"name": "tenantId",
-						"required": true,
-						"schema": {
-							"type": "string"
-						}
-					}
-				]
-			}
-		},
-		"/agent/wallet/export-bucket": {
-			"get": {
-				"operationId": "GetExportBucket",
-				"responses": {
-					"200": {
-						"description": "Ok",
-						"content": {
-							"application/json": {
-								"schema": {
-									"$ref": "#/components/schemas/ExportBucketProbe"
-								}
-							}
-						}
-					}
-				},
-				"description": "Whether this agent can pull an export from its S3 bucket. When it cannot, the platform sends the export itself\nwith POST /agent/wallet/import/upload.",
-				"tags": [
-					"Agent"
-				],
-				"security": [
-					{
-						"jwt": [
-							"dedicated"
-						]
-					}
-				],
-				"parameters": []
-			}
-		},
-		"/agent/wallet/import-session": {
-			"post": {
-				"operationId": "CreateImportSession",
-				"responses": {
-					"200": {
-						"description": "Ok",
-						"content": {
-							"application/json": {
-								"schema": {
-									"$ref": "#/components/schemas/CreatedImportSession"
-								}
-							}
-						}
-					},
-					"409": {
-						"description": "TARGET_NOT_PRISTINE",
-						"content": {
-							"application/json": {
-								"schema": {
-									"properties": {
-										"message": {
-											"type": "string"
-										}
-									},
-									"required": [
-										"message"
-									],
-									"type": "object"
-								}
-							}
-						}
-					}
-				},
-				"description": "Checks the root wallet is pristine and starts an import session. The returned public key is what the\nexport's store key is sealed to; the private half stays in this agent's memory.",
-				"tags": [
-					"Agent"
-				],
-				"security": [
-					{
-						"jwt": [
-							"dedicated"
-						]
-					}
-				],
-				"parameters": []
-			}
-		},
-		"/agent/wallet/import": {
-			"post": {
-				"operationId": "ImportWallet",
-				"responses": {
-					"200": {
-						"description": "Ok",
-						"content": {
-							"application/json": {
-								"schema": {
-									"$ref": "#/components/schemas/ImportWalletResult"
-								}
-							}
-						}
-					},
-					"400": {
-						"description": "",
-						"content": {
-							"application/json": {
-								"schema": {
-									"properties": {
-										"reason": {
-											"type": "string"
-										}
-									},
-									"required": [
-										"reason"
-									],
-									"type": "object"
-								}
-							}
-						}
-					},
-					"404": {
-						"description": "Import session not found or expired",
-						"content": {
-							"application/json": {
-								"schema": {
-									"properties": {
-										"message": {
-											"type": "string"
-										}
-									},
-									"required": [
-										"message"
-									],
-									"type": "object"
-								}
-							}
-						}
-					},
-					"409": {
-						"description": "TARGET_NOT_PRISTINE, STORAGE_VERSION_MISMATCH or an import already running",
-						"content": {
-							"application/json": {
-								"schema": {
-									"properties": {
-										"message": {
-											"type": "string"
-										}
-									},
-									"required": [
-										"message"
-									],
-									"type": "object"
-								}
-							}
-						}
-					}
-				},
-				"description": "Merges a sealed export into the root wallet. Async job: returns a job id, poll the status route. With\n`dryRun` the merge is rolled back after it has run.",
-				"tags": [
-					"Agent"
-				],
-				"security": [
-					{
-						"jwt": [
-							"dedicated"
-						]
-					}
-				],
-				"parameters": [],
-				"requestBody": {
-					"required": true,
-					"content": {
-						"application/json": {
-							"schema": {
-								"properties": {
-									"dryRun": {
-										"type": "boolean"
-									},
-									"storageVersion": {
-										"type": "string"
-									},
-									"sealedStoreKey": {
-										"type": "string"
-									},
-									"checksum": {
-										"type": "string"
-									},
-									"exportUrl": {
-										"type": "string"
-									},
-									"sessionId": {
-										"type": "string"
-									}
-								},
-								"required": [
-									"storageVersion",
-									"sealedStoreKey",
-									"checksum",
-									"exportUrl",
-									"sessionId"
-								],
-								"type": "object"
-							}
-						}
-					}
-				}
-			}
-		},
-		"/agent/wallet/import/status/{jobId}": {
-			"get": {
-				"operationId": "GetImportStatus",
-				"responses": {
-					"200": {
-						"description": "Ok",
-						"content": {
-							"application/json": {
-								"schema": {
-									"$ref": "#/components/schemas/WalletPortabilityJobRecord"
-								}
-							}
-						}
-					},
-					"404": {
-						"description": "",
-						"content": {
-							"application/json": {
-								"schema": {
-									"properties": {
-										"reason": {
-											"type": "string"
-										}
-									},
-									"required": [
-										"reason"
-									],
-									"type": "object"
-								}
-							}
-						}
-					},
-					"500": {
-						"description": "Internal Server Error",
-						"content": {
-							"application/json": {
-								"schema": {
-									"properties": {
-										"message": {
-											"type": "string"
-										}
-									},
-									"required": [
-										"message"
-									],
-									"type": "object"
-								}
-							}
-						}
-					}
-				},
-				"description": "Poll an import job. On completion it reports how many records and keys the merge inserted.",
-				"tags": [
-					"Agent"
-				],
-				"security": [
-					{
-						"jwt": [
-							"dedicated"
-						]
-					}
-				],
-				"parameters": [
-					{
-						"in": "path",
-						"name": "jobId",
 						"required": true,
 						"schema": {
 							"type": "string"
