@@ -17,7 +17,7 @@ interface FakeRecord {
   tags: Record<string, string>
 }
 
-const buildHarness = () => {
+const buildHarness = (options: { forwardTimeoutMs?: number } = {}) => {
   const records = new Map<string, FakeRecord>()
   const routing = [
     { tenantId: TENANT, recipientKeyFingerprint: 'fp-1' },
@@ -53,6 +53,7 @@ const buildHarness = () => {
       routing.filter((record) => record.tenantId === query.tenantId),
   }
   const knownTenants = new Set([TENANT])
+  const purgedTenants = new Set<string>()
   const agent = {
     context: { name: 'root' },
     genericRecords: {
@@ -69,7 +70,10 @@ const buildHarness = () => {
       tenants: {
         getTenantById: jest.fn(async (id: string) => {
           if (!knownTenants.has(id)) throw new Error('tenant not found')
-          return { id }
+          return {
+            id,
+            getTag: (name: string) => ('migrated' === name ? purgedTenants.has(id) || undefined : undefined),
+          }
         }),
       },
     },
@@ -87,6 +91,7 @@ const buildHarness = () => {
     probeFetch: ((...args: Parameters<typeof fetch>) => probeFetch(...args)) as typeof fetch,
     probeTimeoutMs: 50,
     reinjectTimeoutMs: 50,
+    forwardTimeoutMs: options.forwardTimeoutMs ?? 0,
   })
 
   return {
@@ -94,6 +99,7 @@ const buildHarness = () => {
     agent: agent as never,
     rawAgent: agent,
     records,
+    purgeTenant: (id: string) => purgedTenants.add(id),
     redis,
     store,
     drainer,
@@ -363,6 +369,220 @@ describe('RelayService', () => {
 
       await expect(service.reinject(agent, TENANT)).rejects.toMatchObject({ code: 'RELAY_NOT_HOLDING' })
       await expect(service.reinject(agent, 'ghost')).rejects.toThrow(RelayNotFoundError)
+    })
+  })
+
+  describe('restore', () => {
+    const envelope = (n: number) => ({
+      receivedAt: 'now',
+      contentType: 'x',
+      body: JSON.stringify({ protected: `p${n}` }),
+    })
+
+    it('takes a FORWARD relay off for good and hands the messages queued for the lost target back to the agent', async () => {
+      const { service, agent, store, records, received } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      for (const n of [1, 2]) await store.holdPush(TENANT, envelope(n))
+
+      await expect(service.restore(agent, TENANT)).resolves.toEqual({ injected: 2, failed: 0 })
+
+      expect(received).toEqual([{ protected: 'p1' }, { protected: 'p2' }])
+      expect(records.size).toBe(0)
+      expect(await store.getEntry(TENANT)).toBeUndefined()
+      expect(await store.holdLength(TENANT)).toBe(0)
+      await expect(store.findTenantIdByFingerprints(['fp-1', 'fp-2'])).resolves.toBeUndefined()
+    })
+
+    it('waits out the forward timeout after the flip, so a forward still in flight can push its message first', async () => {
+      const { service, agent, store, received } = buildHarness({ forwardTimeoutMs: 150 })
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      const startedAt = Date.now()
+      const held = service as unknown as { injectHeld: RelayService['reinject'] }
+      const injectHeld = held.injectHeld.bind(service)
+      let startedInjectingAfterMs = 0
+      jest.spyOn(held, 'injectHeld').mockImplementation(async (...args) => {
+        startedInjectingAfterMs = Date.now() - startedAt
+        return injectHeld(...args)
+      })
+      setTimeout(() => void store.holdPush(TENANT, envelope(7)), 40)
+
+      await expect(service.restore(agent, TENANT)).resolves.toEqual({ injected: 1, failed: 0 })
+
+      expect(startedInjectingAfterMs).toBeGreaterThanOrEqual(140)
+      expect(received).toEqual([{ protected: 'p7' }])
+    })
+
+    it('does not wait again on a retry, since the flip was long ago', async () => {
+      const { service, agent, store } = buildHarness({ forwardTimeoutMs: 150 })
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      await store.setEntry({ tenantId: TENANT, mode: 'HOLD', updatedAt: new Date(Date.now() - 60_000).toISOString() })
+      const startedAt = Date.now()
+
+      await service.restore(agent, TENANT)
+
+      expect(Date.now() - startedAt).toBeLessThan(100)
+    })
+
+    it('stops forwarding before it hands anything back, so no message goes to the lost agent in between', async () => {
+      const { service, agent, store, records } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      await store.holdPush(TENANT, envelope(1))
+      const modes: unknown[] = []
+      const held = service as unknown as { injectHeld: RelayService['reinject'] }
+      const injectHeld = held.injectHeld.bind(service)
+      jest.spyOn(held, 'injectHeld').mockImplementation(async (...args) => {
+        modes.push((await store.getEntry(TENANT))?.mode, records.get(`migration-relay-${TENANT}`)?.content.mode)
+        return injectHeld(...args)
+      })
+
+      await service.restore(agent, TENANT)
+
+      expect(modes).toEqual(['HOLD', 'HOLD'])
+    })
+
+    it('stops the mirror forwarding too, and forgets the tenant once the relay is gone', async () => {
+      const { service, agent, store } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      await store.holdPush(TENANT, envelope(1))
+      const seen: unknown[] = []
+      const held = service as unknown as { injectHeld: RelayService['reinject'] }
+      const injectHeld = held.injectHeld.bind(service)
+      jest.spyOn(held, 'injectHeld').mockImplementation(async (...args) => {
+        seen.push(service.mirror.find(['fp-1'])?.mode)
+        return injectHeld(...args)
+      })
+
+      await service.restore(agent, TENANT)
+
+      expect(seen).toEqual(['HOLD'])
+      expect(service.mirror.find(['fp-1', 'fp-2'])).toBeUndefined()
+    })
+
+    it('does not ask the drainer to forward anything', async () => {
+      const { service, agent, drainer } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      drainer.ensureDraining.mockClear()
+
+      await service.restore(agent, TENANT)
+
+      expect(drainer.ensureDraining).not.toHaveBeenCalled()
+    })
+
+    it('works on a relay that is only holding, which is how a restore that stopped half way is finished', async () => {
+      const { service, agent, store, records } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      for (const n of [1, 2, 3]) await store.holdPush(TENANT, envelope(n))
+
+      await expect(service.restore(agent, TENANT)).resolves.toEqual({ injected: 3, failed: 0 })
+
+      expect(records.size).toBe(0)
+    })
+
+    it('finishes a restore that stopped half way through the held messages', async () => {
+      const { service, agent, store, received } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      for (const n of [1, 2, 3]) await store.holdPush(TENANT, envelope(n))
+      jest.spyOn(service, 'remove').mockRejectedValueOnce(new Error('crashed before the entry was removed'))
+      await expect(service.restore(agent, TENANT)).rejects.toThrow('crashed')
+      jest.restoreAllMocks()
+      await store.holdPush(TENANT, envelope(4))
+
+      await expect(service.restore(agent, TENANT)).resolves.toEqual({ injected: 1, failed: 0 })
+
+      expect(received.map((message) => (message as { protected: string }).protected)).toEqual(['p1', 'p2', 'p3', 'p4'])
+    })
+
+    it('counts a message that could not be processed, but still removes the relay', async () => {
+      const { service, agent, store, records, ignoreMessages } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      for (const n of [1, 2]) await store.holdPush(TENANT, envelope(n))
+      ignoreMessages((message) => 'p1' === (message as { protected: string }).protected)
+
+      await expect(service.restore(agent, TENANT)).resolves.toEqual({ injected: 1, failed: 1 })
+
+      expect(records.size).toBe(0)
+    })
+
+    it('leaves the relay holding, and says so, when new messages arrived while it was handing back', async () => {
+      const { service, agent, store, records } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      jest.spyOn(store, 'holdLength').mockResolvedValueOnce(1)
+
+      await expect(service.restore(agent, TENANT)).rejects.toMatchObject({ code: 'RELAY_BUFFER_NOT_EMPTY' })
+
+      expect((await store.getEntry(TENANT))?.mode).toBe('HOLD')
+      expect(records.size).toBe(1)
+    })
+
+    it('refuses a tenant whose wallet was purged, and changes nothing', async () => {
+      const { service, agent, store, records, purgeTenant } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      await store.holdPush(TENANT, envelope(1))
+      purgeTenant(TENANT)
+
+      await expect(service.restore(agent, TENANT)).rejects.toMatchObject({ code: 'TENANT_PURGED' })
+
+      expect((await store.getEntry(TENANT))?.mode).toBe('FORWARD')
+      expect(records.get(`migration-relay-${TENANT}`)?.content.mode).toBe('FORWARD')
+      expect(await store.holdLength(TENANT)).toBe(1)
+    })
+
+    it('says so when the tenant has no relay', async () => {
+      const { service, agent } = buildHarness()
+
+      await expect(service.restore(agent, TENANT)).rejects.toThrow(RelayNotFoundError)
+    })
+
+    it('finishes a remove that deleted the record and then failed, instead of answering 404', async () => {
+      const { service, agent, store, records, received } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'HOLD' })
+      for (const n of [1, 2]) await store.holdPush(TENANT, envelope(n))
+      records.clear()
+
+      await expect(service.restore(agent, TENANT)).resolves.toEqual({ injected: 2, failed: 0 })
+
+      expect(received).toEqual([{ protected: 'p1' }, { protected: 'p2' }])
+      expect(await store.getEntry(TENANT)).toBeUndefined()
+      await expect(store.findTenantIdByFingerprints(['fp-1'])).resolves.toBeUndefined()
+    })
+
+    it('puts Redis on HOLD when an earlier attempt saved the record as HOLD and then failed', async () => {
+      const { service, agent, store, records, received } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      await store.holdPush(TENANT, envelope(1))
+      const saved = records.get(`migration-relay-${TENANT}`)!
+      saved.content = { ...saved.content, mode: 'HOLD', target: undefined }
+
+      await expect(service.restore(agent, TENANT)).resolves.toEqual({ injected: 1, failed: 0 })
+
+      expect(received).toEqual([{ protected: 'p1' }])
+      expect(await store.getEntry(TENANT)).toBeUndefined()
+    })
+
+    it('waits for a drainer that is mid-forward to let go of the buffer before it re-injects', async () => {
+      const { service, agent, store, received } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      await store.holdPush(TENANT, envelope(1))
+      await store.acquireDrainLock(TENANT, 'drainer')
+      setTimeout(() => void store.releaseDrainLock(TENANT, 'drainer'), 300)
+
+      await expect(service.restore(agent, TENANT)).resolves.toEqual({ injected: 1, failed: 0 })
+
+      expect(received).toEqual([{ protected: 'p1' }])
+    })
+
+    it('leaves other tenants relays alone', async () => {
+      const { service, agent, records, rawAgent } = buildHarness()
+      await service.put(agent, TENANT, { mode: 'FORWARD', target: TARGET })
+      rawAgent.genericRecords.save({
+        id: 'migration-relay-someone-else',
+        content: { tenantId: 'someone-else', mode: 'FORWARD', target: TARGET },
+        tags: {},
+      })
+
+      await service.restore(agent, TENANT)
+
+      expect([...records.keys()]).toEqual(['migration-relay-someone-else'])
     })
   })
 

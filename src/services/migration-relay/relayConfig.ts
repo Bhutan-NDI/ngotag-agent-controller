@@ -35,3 +35,6 @@ export const DRAIN_LOCK_MS = 30_000
 export const DRAIN_BACKOFF_BASE_MS = 1_000
 export const DRAIN_BACKOFF_MAX_MS = 60_000
 export const REINJECT_PROCESSED_TIMEOUT_MS = 10_000
+// A restore waits this long for a drainer that is mid-forward (FORWARD_TIMEOUT_MS) to let go of the lock.
+export const RESTORE_LOCK_WAIT_MS = FORWARD_TIMEOUT_MS + 5_000
+export const LOCK_POLL_MS = 250

@@ -155,4 +155,34 @@ describe('relay end to end (real agents, real HTTP)', () => {
       await target.close()
     }
   }, 90000)
+
+  it('takes a forwarding relay off after the new agent is lost: queued messages reach the tenant, later ones go straight to it', async () => {
+    // The relay left by the previous test forwards to a server that has since been closed.
+    expect((await store.getEntry(tenantId))?.mode).toBe('FORWARD')
+    const connectionsBefore = await tenantConnections()
+    const invite = async (): Promise<unknown> => {
+      let created: unknown
+      await (shared.modules as any).tenants.withTenantAgent({ tenantId }, async (tenant: any) => {
+        created = (await tenant.modules.didcomm.oob.createInvitation()).outOfBandInvitation
+      })
+      return created
+    }
+
+    await plain(async () => {
+      await (holder.modules as any).didcomm.oob.receiveInvitation(await invite(), { label: 'holder' })
+      await eventually(async () => 1 <= (await store.holdLength(tenantId)), 15000)
+      expect(await tenantConnections()).toBe(connectionsBefore)
+
+      const queued = await store.holdLength(tenantId)
+      await expect(service.restore(shared as never, tenantId)).resolves.toEqual({ injected: queued, failed: 0 })
+
+      await eventually(async () => connectionsBefore + 1 === (await tenantConnections()), 15000)
+      expect(await store.getEntry(tenantId)).toBeUndefined()
+      expect(await store.holdLength(tenantId)).toBe(0)
+
+      await (holder.modules as any).didcomm.oob.receiveInvitation(await invite(), { label: 'holder' })
+      await eventually(async () => connectionsBefore + 2 === (await tenantConnections()), 15000)
+      expect(await store.holdLength(tenantId)).toBe(0)
+    })
+  }, 120000)
 })
