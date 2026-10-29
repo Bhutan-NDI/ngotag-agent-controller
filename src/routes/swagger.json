@@ -8213,7 +8213,7 @@
 						}
 					},
 					"409": {
-						"description": "A wallet portability job is running, or the tenant has open sessions",
+						"description": "RELAY_NOT_FORWARDING, RELAY_DISABLED, a wallet portability job is running, or the tenant has open sessions",
 						"content": {
 							"application/json": {
 								"schema": {
@@ -8249,7 +8249,7 @@
 						}
 					}
 				},
-				"description": "Remove the tenant's wallet from this agent after it has moved to a dedicated agent. The TenantRecord (tagged\nmigrated) and routing records stay. Safe to repeat.",
+				"description": "Remove the tenant's wallet from this agent after it has moved to a dedicated agent. Refused until the tenant's\nrelay forwards to the new agent. The TenantRecord (tagged migrated) and routing records stay. Safe to repeat.",
 				"tags": [
 					"MultiTenancy"
 				],

@@ -12,7 +12,7 @@ import { jest } from '@jest/globals'
 import { askar } from '@openwallet-foundation/askar-nodejs'
 import { randomUUID } from 'crypto'
 
-import { BadRequestError, ConflictError } from '../../../errors/errors'
+import { BadRequestError } from '../../../errors/errors'
 import { isTenantMigrated } from '../../../utils/migratedTenant'
 import { purgeTenantProfile } from '../TenantProfilePurgeService'
 
@@ -37,6 +37,13 @@ describe('purgeTenantProfile against a real multi-tenant agent', () => {
     return store.listProfiles()
   }
 
+  // The relay's entry in the base wallet; purge-profile refuses until it forwards.
+  const forwardRelay = (tenantId: string) =>
+    agent.genericRecords.save({
+      id: `migration-relay-${tenantId}`,
+      content: { tenantId, mode: 'FORWARD', target: 'https://didcomm.org.example.org/' },
+    })
+
   const seed = (tenantId: string) =>
     tenants.withTenantAgent({ tenantId }, async (tenantAgent) => {
       await tenantAgent.genericRecords.save({ id: 'marker', content: { owner: tenantId } })
@@ -57,7 +64,11 @@ describe('purgeTenantProfile against a real multi-tenant agent', () => {
         }
       })
 
+  const relayEnv = { enabled: process.env.MIGRATION_RELAY_ENABLED, redis: process.env.REDIS_URL }
+
   beforeAll(async () => {
+    process.env.MIGRATION_RELAY_ENABLED = 'true'
+    process.env.REDIS_URL = 'redis://relay.example.org:6379'
     agent = new Agent({
       config: {},
       dependencies: agentDependencies,
@@ -78,9 +89,14 @@ describe('purgeTenantProfile against a real multi-tenant agent', () => {
     staying = (await tenants.createTenant({ config: { label: 'staying-org' } })).id
     await seed(migrating)
     await seed(staying)
+    await forwardRelay(migrating)
   }, 120000)
 
   afterAll(async () => {
+    const restore = (name: string, value: string | undefined) =>
+      undefined === value ? delete process.env[name] : (process.env[name] = value)
+    restore('MIGRATION_RELAY_ENABLED', relayEnv.enabled)
+    restore('REDIS_URL', relayEnv.redis)
     await agent.shutdown()
   })
 
@@ -117,6 +133,7 @@ describe('purgeTenantProfile against a real multi-tenant agent', () => {
   it('finishes the removal when a previous attempt tagged the record but stopped before removing the wallet', async () => {
     const interrupted = (await tenants.createTenant({ config: { label: 'interrupted-org' } })).id
     await seed(interrupted)
+    await forwardRelay(interrupted)
     const record = await tenants.getTenantById(interrupted)
     ;(record as unknown as { setTag: (n: string, v: boolean) => void }).setTag('migrated', true)
     await (
@@ -163,11 +180,12 @@ describe('purgeTenantProfile against a real multi-tenant agent', () => {
   it('refuses while another session is open on the tenant, and goes ahead once it is closed', async () => {
     const busy = (await tenants.createTenant({ config: { label: 'busy-org' } })).id
     await seed(busy)
+    await forwardRelay(busy)
     const otherSession = await (
       agent.modules as unknown as { tenants: { getTenantAgent: (o: { tenantId: string }) => Promise<any> } }
     ).tenants.getTenantAgent({ tenantId: busy })
 
-    await expect(purgeTenantProfile(agent as never, busy, 300)).rejects.toBeInstanceOf(ConflictError)
+    await expect(purgeTenantProfile(agent as never, busy, 300)).rejects.toThrow('open sessions')
     expect(await profiles()).toContain(`tenant-${busy}`)
 
     await otherSession.endSession()
@@ -177,6 +195,7 @@ describe('purgeTenantProfile against a real multi-tenant agent', () => {
   it('lets a retry through after the profile removal fails once, instead of leaving a disposed context mapped', async () => {
     const flaky = (await tenants.createTenant({ config: { label: 'flaky-org' } })).id
     await seed(flaky)
+    await forwardRelay(flaky)
     const store = agent.dependencyManager.resolve(AskarStoreManager)
     const removal = jest.spyOn(store, 'deleteContext').mockRejectedValueOnce(new Error('database timeout'))
     const coordinator = (
