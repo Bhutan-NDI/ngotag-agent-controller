@@ -171,11 +171,14 @@ export class MultiTenancyController extends Controller {
   }
 
   /**
-   * Remove the tenant's wallet from this agent after it has moved to a dedicated agent. The TenantRecord (tagged
-   * migrated) and routing records stay. Safe to repeat.
+   * Remove the tenant's wallet from this agent after it has moved to a dedicated agent. Refused until the tenant's
+   * relay forwards to the new agent. The TenantRecord (tagged migrated) and routing records stay. Safe to repeat.
    */
   @Response<{ message: string }>(404, 'Tenant not found')
-  @Response<{ message: string }>(409, 'A wallet portability job is running, or the tenant has open sessions')
+  @Response<{ message: string }>(
+    409,
+    'RELAY_NOT_FORWARDING, RELAY_DISABLED, a wallet portability job is running, or the tenant has open sessions',
+  )
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Post('/:tenantId/purge-profile')
   public async purgeProfile(
