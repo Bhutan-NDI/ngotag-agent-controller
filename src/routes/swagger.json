@@ -5600,6 +5600,36 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"ExportBucketProbeReason": {
+				"type": "string",
+				"enum": [
+					"DNS",
+					"TLS",
+					"TIMEOUT",
+					"UNREACHABLE",
+					"NO_SUCH_BUCKET"
+				]
+			},
+			"ExportBucketProbe": {
+				"properties": {
+					"configured": {
+						"type": "boolean",
+						"description": "Whether a usable export bucket name is set. Without one this agent cannot pull an export from S3 at all"
+					},
+					"reachable": {
+						"type": "boolean",
+						"description": "Whether this agent can reach the bucket over HTTPS; absent when no bucket is configured"
+					},
+					"reason": {
+						"$ref": "#/components/schemas/ExportBucketProbeReason"
+					}
+				},
+				"required": [
+					"configured"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"CreatedImportSession": {
 				"properties": {
 					"sessionId": {
@@ -12291,6 +12321,35 @@
 						}
 					}
 				]
+			}
+		},
+		"/agent/wallet/export-bucket": {
+			"get": {
+				"operationId": "GetExportBucket",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ExportBucketProbe"
+								}
+							}
+						}
+					}
+				},
+				"description": "Whether this agent can pull an export from its S3 bucket. When it cannot, the platform sends the export itself\nwith POST /agent/wallet/import/upload.",
+				"tags": [
+					"Agent"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": []
 			}
 		},
 		"/agent/wallet/import-session": {
