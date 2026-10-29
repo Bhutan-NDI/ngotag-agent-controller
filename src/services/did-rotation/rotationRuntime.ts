@@ -8,7 +8,7 @@ import { RotationService } from './RotationService'
 export interface RotationRuntime {
   service: RotationService
   runner: RotationRunner
-  stop: () => void
+  stop: () => Promise<void>
 }
 
 let runtime: RotationRuntime | undefined
@@ -27,8 +27,9 @@ export const initRotationRuntime = async (agent: Agent, logger: TsLogger): Promi
   runtime = {
     service,
     runner,
-    stop: () => {
-      runner.stop()
+    stop: async () => {
+      runner.halt()
+      await runner.stop()
       detach()
     },
   }
@@ -38,7 +39,8 @@ export const initRotationRuntime = async (agent: Agent, logger: TsLogger): Promi
 
 export const getRotationRuntime = (): RotationRuntime | undefined => runtime
 
-export const shutdownRotationRuntime = (): void => {
-  runtime?.stop()
+export const shutdownRotationRuntime = async (): Promise<void> => {
+  const stopping = runtime?.stop()
   runtime = undefined
+  await stopping
 }

@@ -5,7 +5,9 @@ import type { Agent } from '@credo-ts/core'
 import type { DidCommConnectionRecord } from '@credo-ts/didcomm'
 
 import { DidCommConnectionService, DidCommDidExchangeState } from '@credo-ts/didcomm'
+import { randomUUID } from 'crypto'
 
+import { type Leasing, RUNNER_LEASE, RotationLease } from './RotationLease'
 import { bucketFor } from './rotationMetadata'
 
 export const DEFAULT_BATCH_SIZE = 50
@@ -13,6 +15,8 @@ export const DEFAULT_INTERVAL_MS = 60_000
 const PAGE_SIZE = 500
 const JOB_RECORD_ID = 'migration-rotation-job'
 const STATUS_CACHE_MS = 5_000
+// Renewed before each connection, so it only has to outlast one rotation; a task that dies frees the runner soon after.
+const RUNNER_LEASE_MS = 90_000
 
 export type JobStatus = 'idle' | 'running' | 'completed'
 
@@ -62,6 +66,9 @@ export class RotationRunner {
   // Batches never overlap, whether they come from the timer or from a caller.
   private queue: Promise<unknown> = Promise.resolve()
   private stopped = false
+  private halted = false
+  // Across the tasks of one agent only one runs batches at a time (see RotationLease).
+  private readonly owner = randomUUID()
   private cachedStatus?: { at: number; value: RotationStatus }
 
   public constructor(
@@ -69,6 +76,7 @@ export class RotationRunner {
     private readonly rotation: RotationService,
     private readonly logger: TsLogger,
     private readonly now: () => Date = () => new Date(),
+    private readonly lease: Leasing = RotationLease.forAgent(agent),
   ) {}
 
   /** Starts the job, or reports the one already running. */
@@ -105,10 +113,17 @@ export class RotationRunner {
     this.schedule(0)
   }
 
-  public stop(): void {
+  /** For a shutdown: the batch in progress sends no further connections, so it ends after the one it is on. */
+  public halt(): void {
+    this.halted = true
+  }
+
+  /** Stops scheduling and resolves once the batch in progress has finished, so a shutdown does not cut a send short. */
+  public stop(): Promise<void> {
     this.stopped = true
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined
+    return this.queue.then(() => undefined)
   }
 
   /**
@@ -128,11 +143,21 @@ export class RotationRunner {
       .sort((a, b) => (b.updatedAt?.getTime() ?? 0) - (a.updatedAt?.getTime() ?? 0))
 
     const batch = due.slice(0, job.batchSize)
-    for (const connection of batch) {
+    let attempted = 0
+    // Another task of this agent running the batch (a deploy overlaps two) means this one leaves it alone.
+    if (await this.lease.acquire(RUNNER_LEASE, this.owner, RUNNER_LEASE_MS)) {
       try {
-        await this.rotation.rotateConnection(connection.id)
-      } catch (error) {
-        this.logger.error(`[RotationRunner] could not rotate connection '${connection.id}': ${error}`)
+        for (const connection of batch) {
+          if (this.halted || !(await this.lease.acquire(RUNNER_LEASE, this.owner, RUNNER_LEASE_MS))) break
+          attempted += 1
+          try {
+            await this.rotation.rotateConnection(connection.id)
+          } catch (error) {
+            this.logger.error(`[RotationRunner] could not rotate connection '${connection.id}': ${error}`)
+          }
+        }
+      } finally {
+        await this.lease.release(RUNNER_LEASE, this.owner).catch(() => undefined)
       }
     }
     this.cachedStatus = undefined
@@ -144,7 +169,7 @@ export class RotationRunner {
     if (0 === remaining && 'running' === job.status) {
       await this.saveJob({ ...job, status: 'completed', completedAt: this.now().toISOString() })
     }
-    return { rotated: batch.length, remaining }
+    return { rotated: attempted, remaining }
   }
 
   public async status(): Promise<RotationStatus> {

@@ -113,4 +113,11 @@ describe('bucketFor', () => {
   ])('puts %s in the right bucket', (_name, rotation, marker, bucket) => {
     expect(bucketFor(connection(rotation, marker), now)).toBe(bucket)
   })
+
+  it('counts a connection already on the new DID as updated, even though the commit did not land', () => {
+    const moved = connection({ state: 'sent', newDid: 'did:peer:moved', attempts: 1, sentAt: sentAt(1000) }, false)
+    moved.did = 'did:peer:moved'
+
+    expect(bucketFor(moved, now)).toBe('updated')
+  })
 })

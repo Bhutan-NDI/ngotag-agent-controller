@@ -78,6 +78,8 @@ export const bucketFor = (connection: DidCommConnectionRecord, now: Date): Rotat
     case 'failed':
       return 'failed'
     default: {
+      // The connection already moved to the new DID, even if the committer's own update did not land.
+      if (connection.did === rotation.newDid) return 'updated'
       // Credo drops its marker when the holder answers the rotation with a problem report.
       if (!getPendingCredoRotation(connection)) return 'refused'
       const age = now.getTime() - new Date(rotation.sentAt ?? now).getTime()

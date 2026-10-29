@@ -1,3 +1,4 @@
+import 'reflect-metadata'
 import {
   DidCommConnectionRecord,
   DidCommConnectionService,
@@ -8,11 +9,14 @@ import {
   DidCommRoutingService,
 } from '@credo-ts/didcomm'
 import { jest } from '@jest/globals'
+import '@openwallet-foundation/askar-nodejs'
+import { KdfMethod, Store, StoreKeyMethod } from '@openwallet-foundation/askar-shared'
 
+import { RotationLease } from '../RotationLease'
 import { RotationService } from '../RotationService'
 import { CREDO_DID_ROTATE_KEY, MIGRATION_ROTATION_KEY } from '../rotationMetadata'
 
-import { silentLogger } from './rotationTestSupport'
+import { grantingLease, silentLogger } from './rotationTestSupport'
 
 const record = (
   options: {
@@ -90,9 +94,15 @@ describe('RotationService.skipReason', () => {
     expect(svc.skipReason(record({ rotation: { state: 'confirmed', newDid: 'n', attempts: 1 } }), true)).toBe(
       'ALREADY_ROTATED',
     )
-    expect(svc.skipReason(record({ marker: true, rotation: { state: 'sent', newDid: 'n', attempts: 1 } }), true)).toBe(
+    expect(svc.skipReason(record({ marker: true, rotation: { state: 'sent', newDid: 'n', attempts: 1 } }))).toBe(
       'ROTATION_IN_FLIGHT',
     )
+  })
+
+  it('force sends a rotation again that was recorded as sent but still has its marker, since a shutdown may have cut it off', () => {
+    expect(
+      service().skipReason(record({ marker: true, rotation: { state: 'sent', newDid: 'n', attempts: 1 } }), true),
+    ).toBeUndefined()
   })
 
   it('treats a Credo marker we have no record of as a rotation that was never sent, and lets it be redone', () => {
@@ -118,10 +128,20 @@ describe('RotationService.skipReason', () => {
 
 describe('RotationService.rotateConnection with a leftover Credo marker', () => {
   it.each([
-    ['no record', record({ marker: true })],
-    ['a retry record', record({ marker: true, rotation: { state: 'retry', newDid: 'did:peer:new', attempts: 1 } })],
-  ])('clears the marker before it creates the rotation, with %s', async (_name, connection) => {
+    ['no record', record({ marker: true }), false],
+    [
+      'a retry record',
+      record({ marker: true, rotation: { state: 'retry', newDid: 'did:peer:new', attempts: 1 } }),
+      false,
+    ],
+    [
+      'a sent record that is forced',
+      record({ marker: true, rotation: { state: 'sent', newDid: 'did:peer:new', attempts: 1 } }),
+      true,
+    ],
+  ])('clears the marker before it creates the rotation, with %s', async (_name, connection, force) => {
     const calls: string[] = []
+    const created: unknown[] = []
     const services = new Map<unknown, unknown>([
       [DidCommConnectionService, { getById: async () => connection, update: async () => void calls.push('update') }],
       [DidCommRoutingService, { getRouting: async () => ({}) }],
@@ -129,8 +149,9 @@ describe('RotationService.rotateConnection with a leftover Credo marker', () => 
         DidCommDidRotateService,
         {
           clearDidRotationData: async () => void calls.push('clear'),
-          createRotate: async () => {
+          createRotate: async (_ctx: unknown, options: unknown) => {
             calls.push('create')
+            created.push(options)
             return { toDid: 'did:peer:new' }
           },
         },
@@ -139,10 +160,19 @@ describe('RotationService.rotateConnection with a leftover Credo marker', () => 
     ])
     const agent = { context: {}, dependencyManager: { resolve: (token: unknown) => services.get(token) } }
 
-    const outcome = await new RotationService(agent as never, silentLogger()).rotateConnection('c1')
+    const hadRecord = Boolean(connection.metadata.get(MIGRATION_ROTATION_KEY))
+    const outcome = await new RotationService(
+      agent as never,
+      silentLogger(),
+      undefined,
+      grantingLease,
+    ).rotateConnection('c1', {
+      force,
+    })
 
     expect(outcome).toMatchObject({ outcome: 'sent', newDid: 'did:peer:new' })
     expect(calls).toEqual(['clear', 'create', 'update', 'send'])
+    expect(created[0]).toMatchObject({ toDid: hadRecord ? 'did:peer:new' : undefined })
   })
 })
 
@@ -170,5 +200,65 @@ describe('RotationService locking', () => {
 
     await expect(svc.rotateConnection('a')).rejects.toThrow('boom')
     await expect(svc.rotateConnection('a')).resolves.toMatchObject({ outcome: 'sent' })
+  })
+})
+
+describe('RotationService across two tasks of one agent', () => {
+  it('sends one rotation when two tasks pick the same connection at once, and leaves the other with ROTATION_IN_FLIGHT', async () => {
+    const store = await Store.provision({
+      uri: 'sqlite://:memory:',
+      keyMethod: new StoreKeyMethod(KdfMethod.Raw),
+      passKey: Store.generateRawKey(),
+      recreate: true,
+      profile: 'tasks',
+    })
+    const lease = new RotationLease(async () => ({ store, profile: 'tasks' }))
+    const created: string[] = []
+    const taskAgent = (taskId: string) => {
+      const connection = record()
+      const services = new Map<unknown, unknown>([
+        [DidCommConnectionService, { getById: async () => connection, update: async () => undefined }],
+        [DidCommRoutingService, { getRouting: async () => ({}) }],
+        [
+          DidCommDidRotateService,
+          {
+            clearDidRotationData: async () => undefined,
+            createRotate: async () => {
+              created.push(taskId)
+              await new Promise((resolve) => setTimeout(resolve, 50))
+              return { toDid: `did:peer:new-${taskId}` }
+            },
+          },
+        ],
+        [DidCommMessageSender, { sendMessage: async () => undefined }],
+      ])
+      return { context: {}, dependencyManager: { resolve: (token: unknown) => services.get(token) } }
+    }
+    const first = new RotationService(taskAgent('a') as never, silentLogger(), undefined, lease)
+    const second = new RotationService(taskAgent('b') as never, silentLogger(), undefined, lease)
+
+    try {
+      const outcomes = await Promise.all([first.rotateConnection('c1'), second.rotateConnection('c1')])
+
+      expect(created).toHaveLength(1)
+      expect(outcomes.filter((outcome) => 'sent' === outcome.outcome)).toHaveLength(1)
+      expect(outcomes).toContainEqual({ connectionId: 'c1', outcome: 'skipped', reason: 'ROTATION_IN_FLIGHT' })
+      await expect(second.rotateConnection('c1')).resolves.toMatchObject({ outcome: 'sent' })
+    } finally {
+      await store.close().catch(() => undefined)
+    }
+  }, 30000)
+
+  it('frees the lease when a rotation throws, so the next attempt is not blocked', async () => {
+    const acquire = jest.fn(async () => true)
+    const release = jest.fn(async () => undefined)
+    const svc = new RotationService({} as never, silentLogger(), undefined, { acquire, release })
+    jest
+      .spyOn(svc as unknown as { rotateLeased: () => Promise<unknown> }, 'rotateLeased')
+      .mockRejectedValue(new Error('boom'))
+
+    await expect(svc.rotateConnection('c1')).rejects.toThrow('boom')
+
+    expect(release).toHaveBeenCalledWith('connection:c1', expect.any(String))
   })
 })

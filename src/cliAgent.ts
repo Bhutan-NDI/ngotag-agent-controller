@@ -689,7 +689,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       await cache.disconnect()
     }
     await shutdownWalletPortabilityService()
-    shutdownRotationRuntime()
+    await shutdownRotationRuntime()
     await agent.shutdown()
     process.exit(0)
   }

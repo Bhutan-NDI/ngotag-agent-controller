@@ -10,7 +10,9 @@ import {
   DidCommOutboundMessageContext,
   DidCommRoutingService,
 } from '@credo-ts/didcomm'
+import { randomUUID } from 'crypto'
 
+import { type Leasing, RotationLease, connectionLease } from './RotationLease'
 import {
   MAX_SEND_ATTEMPTS,
   MIGRATION_ROTATION_KEY,
@@ -19,6 +21,10 @@ import {
   isNeverLeftError,
   retryDelayMs,
 } from './rotationMetadata'
+
+// Long enough for one rotation (a routing lookup, the DID creation and a send), short enough that a task that died
+// holding it does not block the connection for long.
+const CONNECTION_LEASE_MS = 2 * 60 * 1000
 
 export type RotateOutcome =
   | { connectionId: string; outcome: 'sent'; newDid: string; uncertain?: boolean }
@@ -47,11 +53,14 @@ export class RotationService {
   // One rotation per connection at a time: a batch and a manual request, or two batches, must not both pass the
   // eligibility check and send two different new DIDs to the same holder.
   private readonly locks = new Map<string, Promise<unknown>>()
+  // Across the tasks of one agent the same is done with a lease in the wallet (see RotationLease).
+  private readonly owner = randomUUID()
 
   public constructor(
     private readonly agent: Agent,
     private readonly logger: TsLogger,
     private readonly now: () => Date = () => new Date(),
+    private readonly lease: Leasing = RotationLease.forAgent(agent),
   ) {}
 
   private get connectionService(): DidCommConnectionService {
@@ -66,8 +75,9 @@ export class RotationService {
 
     const rotation = getRotation(connection)
     // rotate() records 'sent' before it sends, so a Credo marker next to any other state was never sent: it is cleared
-    // and redone (see rotate).
-    if ('sent' === rotation?.state && getPendingCredoRotation(connection)) return 'ROTATION_IN_FLIGHT'
+    // and redone (see rotate). A 'sent' one may not have gone out either (a shutdown cut it off): `force` sends it again.
+    if ('sent' === rotation?.state && getPendingCredoRotation(connection))
+      return force ? undefined : 'ROTATION_IN_FLIGHT'
     if (!rotation) return undefined
     if ('sent' === rotation.state || 'confirmed' === rotation.state) return 'ALREADY_ROTATED'
     if ('failed' === rotation.state) return force ? undefined : 'FAILED'
@@ -86,18 +96,32 @@ export class RotationService {
   }
 
   private async rotate(connectionId: string, options: { force?: boolean }): Promise<RotateOutcome> {
+    const name = connectionLease(connectionId)
+    if (!(await this.lease.acquire(name, this.owner, CONNECTION_LEASE_MS))) {
+      return { connectionId, outcome: 'skipped', reason: 'ROTATION_IN_FLIGHT' }
+    }
+    try {
+      return await this.rotateLeased(connectionId, options)
+    } finally {
+      await this.lease.release(name, this.owner).catch(() => undefined)
+    }
+  }
+
+  private async rotateLeased(connectionId: string, options: { force?: boolean }): Promise<RotateOutcome> {
     const ctx = this.agent.context
     const connection = await this.connectionService.getById(ctx, connectionId)
     const skip = this.skipReason(connection, options.force)
     if (skip) return { connectionId, outcome: 'skipped', reason: skip }
 
     const previous = getRotation(connection)
-    if ('sent' !== previous?.state && getPendingCredoRotation(connection)) {
+    if (('sent' !== previous?.state || options.force) && getPendingCredoRotation(connection)) {
       await this.agent.dependencyManager.resolve(DidCommDidRotateService).clearDidRotationData(ctx, connection)
     }
     // A retry reuses the DID created for the first attempt.
     const reuseDid =
-      previous && ('retry' === previous.state || 'failed' === previous.state) ? previous.newDid : undefined
+      previous && ('retry' === previous.state || 'failed' === previous.state || 'sent' === previous.state)
+        ? previous.newDid
+        : undefined
     const attempts = (previous?.attempts ?? 0) + 1
 
     const routing = reuseDid

@@ -14,3 +14,6 @@ export const eventually = async (check: () => boolean | Promise<boolean>, timeou
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
 }
+
+// A lease that is always granted, for tests that stand in for a single task.
+export const grantingLease = { acquire: async () => true, release: async () => undefined }

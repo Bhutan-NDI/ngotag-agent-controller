@@ -5,7 +5,7 @@ import { DEFAULT_BATCH_SIZE, DEFAULT_INTERVAL_MS, RotationRunner } from '../Rota
 import { RotationService } from '../RotationService'
 import { CREDO_DID_ROTATE_KEY, MIGRATION_ROTATION_KEY } from '../rotationMetadata'
 
-import { eventually, silentLogger } from './rotationTestSupport'
+import { eventually, grantingLease, silentLogger } from './rotationTestSupport'
 
 const connection = (
   id: string,
@@ -33,7 +33,11 @@ const connection = (
   return record
 }
 
-const build = (connections: DidCommConnectionRecord[], rotateImpl?: (id: string) => Promise<unknown>) => {
+const build = (
+  connections: DidCommConnectionRecord[],
+  rotateImpl?: (id: string) => Promise<unknown>,
+  lease: { acquire: () => Promise<boolean>; release: () => Promise<void> } = grantingLease,
+) => {
   const records = new Map<string, { id: string; content: Record<string, unknown> }>()
   const agent = {
     context: {},
@@ -49,7 +53,7 @@ const build = (connections: DidCommConnectionRecord[], rotateImpl?: (id: string)
       }),
     },
   }
-  const service = new RotationService(agent as never, silentLogger())
+  const service = new RotationService(agent as never, silentLogger(), undefined, grantingLease)
   const rotated: string[] = []
   jest.spyOn(service, 'rotateConnection').mockImplementation((async (id: string) => {
     rotated.push(id)
@@ -65,11 +69,93 @@ const build = (connections: DidCommConnectionRecord[], rotateImpl?: (id: string)
     connections.find((c) => c.id === id)?.metadata.set(CREDO_DID_ROTATE_KEY, { threadId: 't', did: `new-${id}` })
     return { connectionId: id, outcome: 'sent' }
   }) as never)
-  const runner = new RotationRunner(agent as never, service, silentLogger())
+  const runner = new RotationRunner(agent as never, service, silentLogger(), undefined, lease)
   return { runner, rotated, records, agent, service }
 }
 
 describe('RotationRunner', () => {
+  describe('stop', () => {
+    it('resolves only once the batch in progress has finished, so a shutdown does not cut a send short', async () => {
+      let release: () => void = () => undefined
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const { runner } = build([connection('c1')], async () => {
+        await gate
+        return { connectionId: 'c1', outcome: 'sent' }
+      })
+      await runner.start({ batchSize: 5, autoRun: false })
+      const batch = runner.runOnce()
+      let stopped = false
+
+      const stopping = runner.stop().then(() => {
+        stopped = true
+      })
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect(stopped).toBe(false)
+
+      release()
+      await stopping
+      await batch
+      expect(stopped).toBe(true)
+    })
+
+    it('lets the batch finish the connection it is on but start no more once halted', async () => {
+      const connections = [1, 2, 3].map((n) => connection(`c${n}`, { updatedAt: n }))
+      let release: () => void = () => undefined
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const { runner, rotated } = build(connections, async (id) => {
+        await gate
+        return { connectionId: id, outcome: 'sent' }
+      })
+      await runner.start({ batchSize: 5, autoRun: false })
+      const batch = runner.runOnce()
+      await eventually(async () => 1 === rotated.length)
+
+      runner.halt()
+      release()
+      await runner.stop()
+      await batch
+
+      expect(rotated).toEqual(['c3'])
+    })
+  })
+
+  describe('with another task of the same agent', () => {
+    it('rotates nothing while another task holds the runner lease, but still reports what is left', async () => {
+      const connections = [1, 2].map((n) => connection(`c${n}`, { updatedAt: n }))
+      const { runner, rotated } = build(connections, undefined, {
+        acquire: async () => false,
+        release: async () => undefined,
+      })
+      await runner.start({ batchSize: 5, autoRun: false })
+
+      const result = await runner.runOnce()
+
+      expect(rotated).toEqual([])
+      expect(result).toEqual({ rotated: 0, remaining: 2 })
+    })
+
+    it('stops the batch when it loses the lease part way, and gives the lease back when it is done', async () => {
+      const connections = [1, 2, 3].map((n) => connection(`c${n}`, { updatedAt: n }))
+      let asked = 0
+      const release = jest.fn(async () => undefined)
+      const { runner, rotated } = build(connections, undefined, {
+        // Granted for the batch and for the first connection, then lost.
+        acquire: async () => 3 > ++asked,
+        release,
+      })
+      await runner.start({ batchSize: 5, autoRun: false })
+
+      await runner.runOnce()
+
+      expect(rotated).toEqual(['c3'])
+      expect(release).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('runOnce', () => {
     it('rotates one bounded batch, the most recently active connections first', async () => {
       const connections = [1, 2, 3, 4, 5].map((n) => connection(`c${n}`, { updatedAt: n * 1000 }))
@@ -283,7 +369,13 @@ describe('RotationRunner', () => {
       first.runner.stop()
       await first.runner.runOnce()
 
-      const restarted = new RotationRunner(first.agent as never, first.service, silentLogger())
+      const restarted = new RotationRunner(
+        first.agent as never,
+        first.service,
+        silentLogger(),
+        undefined,
+        grantingLease,
+      )
       const status = await restarted.status()
       expect(status.job).toMatchObject({ status: 'running', batchSize: 1 })
 
@@ -307,7 +399,7 @@ describe('RotationRunner', () => {
       await runner.start({ batchSize: 5, intervalMs: 10_000 })
       runner.stop()
 
-      const restarted = new RotationRunner(agent as never, service, silentLogger())
+      const restarted = new RotationRunner(agent as never, service, silentLogger(), undefined, grantingLease)
       await restarted.resume()
       await new Promise((resolve) => setTimeout(resolve, 100))
       restarted.stop()
