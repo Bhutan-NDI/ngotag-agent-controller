@@ -81,6 +81,7 @@ import { initRotationRuntime, shutdownRotationRuntime } from './services/did-rot
 import { shutdownWalletPortabilityService } from './services/wallet-portability/WalletPortabilityService'
 import { CachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
+import { adminRequestTimeoutMs } from './utils/adminRequestTimeout'
 import { AuthTypes, getAuthType } from './utils/auth'
 import { generateSecretKey } from './utils/helpers'
 import { TsLogger } from './utils/logger'
@@ -90,6 +91,7 @@ import {
   getX509CertsByClientToken,
   getX509CertsByUrl,
 } from './utils/oid4vc-agent'
+import { getProofRequestExpiryConfig } from './utils/proofRequestExpiry'
 import { tenantSessionConfig } from './utils/tenantSessionConfig'
 
 export type Transports = 'ws' | 'http'
@@ -658,10 +660,19 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
 
   logger.info('*** API Key: set')
 
-  // Start purge schedulers if enabled (NATS and Cron are independent)
   const purgeConfig = buildPurgeConfig()
+  if (purgeConfig) await validatePurgeConfig(purgeConfig)
+
+  // Fail at startup, not on the first request, if DIDCOMM_PROOF_REQUEST_EXPIRY is invalid or above
+  // the purge ceiling. Checked after the purge config so a bad purge TTL gets the validator's message.
+  const proofRequestExpiry = getProofRequestExpiryConfig()
+  logger.info(
+    `Proof request expiry: default ${proofRequestExpiry.defaultSeconds}s, max ${proofRequestExpiry.maxSeconds}s ` +
+      `(${proofRequestExpiry.ceilingSource})`,
+  )
+
+  // Start purge schedulers if enabled (NATS and Cron are independent)
   if (purgeConfig) {
-    await validatePurgeConfig(purgeConfig)
     initPurgeSchedulers(purgeConfig.natsConfig.enabled, purgeConfig.cronConfig.enabled)
 
     const purgeWebhookUrl = purgeConfig.webhookEnabled ? webhookUrl : undefined
@@ -678,6 +689,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   const server = app.listen(adminPort, () => {
     logger.info(`Successfully started server on port ${adminPort}`)
   })
+  server.requestTimeout = adminRequestTimeoutMs()
 
   // Graceful shutdown
   const shutdown = async () => {
