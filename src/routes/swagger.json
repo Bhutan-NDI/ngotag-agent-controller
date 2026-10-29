@@ -2451,6 +2451,30 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"PurgeTenantProfileResult": {
+				"properties": {
+					"tenantId": {
+						"type": "string"
+					},
+					"migrated": {
+						"type": "boolean",
+						"enum": [
+							true
+						],
+						"nullable": false
+					},
+					"profileRemoved": {
+						"type": "boolean"
+					}
+				},
+				"required": [
+					"tenantId",
+					"migrated",
+					"profileRemoved"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"EndpointSchemeSummary": {
 				"properties": {
 					"tenantId": {
@@ -2525,6 +2549,26 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"DeleteExportResult": {
+				"properties": {
+					"jobId": {
+						"type": "string"
+					},
+					"deleted": {
+						"type": "boolean",
+						"enum": [
+							true
+						],
+						"nullable": false
+					}
+				},
+				"required": [
+					"jobId",
+					"deleted"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"WalletPortabilityJobType": {
 				"enum": [
 					"export",
@@ -2583,6 +2627,9 @@
 					},
 					"downloadUrl": {
 						"type": "string"
+					},
+					"artifactDeleted": {
+						"type": "boolean"
 					},
 					"backupProfile": {
 						"type": "string"
@@ -5618,6 +5665,232 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"JobStatus": {
+				"type": "string",
+				"enum": [
+					"idle",
+					"running",
+					"completed"
+				]
+			},
+			"RotationJob": {
+				"properties": {
+					"status": {
+						"$ref": "#/components/schemas/JobStatus"
+					},
+					"batchSize": {
+						"type": "number",
+						"format": "double"
+					},
+					"intervalMs": {
+						"type": "number",
+						"format": "double"
+					},
+					"startedAt": {
+						"type": "string"
+					},
+					"completedAt": {
+						"type": "string"
+					},
+					"cutoff": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"status",
+					"batchSize",
+					"intervalMs"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"Record_RotationBucket.number_": {
+				"properties": {
+					"pending": {
+						"type": "number",
+						"format": "double"
+					},
+					"retrying": {
+						"type": "number",
+						"format": "double"
+					},
+					"failed": {
+						"type": "number",
+						"format": "double"
+					},
+					"waiting": {
+						"type": "number",
+						"format": "double"
+					},
+					"stale": {
+						"type": "number",
+						"format": "double"
+					},
+					"refused": {
+						"type": "number",
+						"format": "double"
+					},
+					"updated": {
+						"type": "number",
+						"format": "double"
+					}
+				},
+				"required": [
+					"pending",
+					"retrying",
+					"failed",
+					"waiting",
+					"stale",
+					"refused",
+					"updated"
+				],
+				"type": "object",
+				"description": "Construct a type with a set of properties K of type T"
+			},
+			"RotationCounts": {
+				"allOf": [
+					{
+						"$ref": "#/components/schemas/Record_RotationBucket.number_"
+					},
+					{
+						"properties": {
+							"total": {
+								"type": "number",
+								"format": "double"
+							}
+						},
+						"required": [
+							"total"
+						],
+						"type": "object"
+					}
+				]
+			},
+			"RotationStatus": {
+				"properties": {
+					"job": {
+						"$ref": "#/components/schemas/RotationJob"
+					},
+					"counts": {
+						"$ref": "#/components/schemas/RotationCounts"
+					}
+				},
+				"required": [
+					"job",
+					"counts"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"RotateOutcome": {
+				"anyOf": [
+					{
+						"properties": {
+							"uncertain": {
+								"type": "boolean"
+							},
+							"newDid": {
+								"type": "string"
+							},
+							"outcome": {
+								"type": "string",
+								"enum": [
+									"sent"
+								],
+								"nullable": false
+							},
+							"connectionId": {
+								"type": "string"
+							}
+						},
+						"required": [
+							"newDid",
+							"outcome",
+							"connectionId"
+						],
+						"type": "object"
+					},
+					{
+						"properties": {
+							"nextAttemptAt": {
+								"type": "string"
+							},
+							"newDid": {
+								"type": "string"
+							},
+							"outcome": {
+								"type": "string",
+								"enum": [
+									"retry",
+									"failed"
+								]
+							},
+							"connectionId": {
+								"type": "string"
+							}
+						},
+						"required": [
+							"newDid",
+							"outcome",
+							"connectionId"
+						],
+						"type": "object"
+					},
+					{
+						"properties": {
+							"reason": {
+								"type": "string"
+							},
+							"outcome": {
+								"type": "string",
+								"enum": [
+									"skipped"
+								],
+								"nullable": false
+							},
+							"connectionId": {
+								"type": "string"
+							}
+						},
+						"required": [
+							"reason",
+							"outcome",
+							"connectionId"
+						],
+						"type": "object"
+					}
+				]
+			},
+			"ExportBucketProbeReason": {
+				"type": "string",
+				"enum": [
+					"DNS",
+					"TLS",
+					"TIMEOUT",
+					"UNREACHABLE",
+					"NO_SUCH_BUCKET"
+				]
+			},
+			"ExportBucketProbe": {
+				"properties": {
+					"configured": {
+						"type": "boolean",
+						"description": "Whether a usable export bucket name is set. Without one this agent cannot pull an export from S3 at all"
+					},
+					"reachable": {
+						"type": "boolean",
+						"description": "Whether this agent can reach the bucket over HTTPS; absent when no bucket is configured"
+					},
+					"reason": {
+						"$ref": "#/components/schemas/ExportBucketProbeReason"
+					}
+				},
+				"required": [
+					"configured"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"CreatedImportSession": {
 				"properties": {
 					"sessionId": {
@@ -5634,6 +5907,79 @@
 					"sessionId",
 					"importPublicKey",
 					"expiresAt"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"RelayMode": {
+				"type": "string",
+				"enum": [
+					"HOLD",
+					"FORWARD"
+				]
+			},
+			"RelayStatus": {
+				"properties": {
+					"tenantId": {
+						"type": "string"
+					},
+					"mode": {
+						"$ref": "#/components/schemas/RelayMode"
+					},
+					"target": {
+						"type": "string"
+					},
+					"updatedAt": {
+						"type": "string"
+					},
+					"holdCount": {
+						"type": "number",
+						"format": "double"
+					},
+					"recipientKeys": {
+						"type": "number",
+						"format": "double"
+					},
+					"forwardedLast30Days": {
+						"type": "number",
+						"format": "double"
+					}
+				},
+				"required": [
+					"tenantId",
+					"mode",
+					"updatedAt",
+					"holdCount",
+					"recipientKeys",
+					"forwardedLast30Days"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"ProbeReason": {
+				"type": "string",
+				"enum": [
+					"UNREACHABLE",
+					"DNS",
+					"TLS",
+					"TIMEOUT"
+				]
+			},
+			"ProbeResult": {
+				"properties": {
+					"reachable": {
+						"type": "boolean"
+					},
+					"status": {
+						"type": "number",
+						"format": "double"
+					},
+					"reason": {
+						"$ref": "#/components/schemas/ProbeReason"
+					}
+				},
+				"required": [
+					"reachable"
 				],
 				"type": "object",
 				"additionalProperties": false
@@ -7852,6 +8198,98 @@
 				]
 			}
 		},
+		"/multi-tenancy/{tenantId}/purge-profile": {
+			"post": {
+				"operationId": "PurgeProfile",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/PurgeTenantProfileResult"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Tenant not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "A wallet portability job is running, or the tenant has open sessions",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Remove the tenant's wallet from this agent after it has moved to a dedicated agent. The TenantRecord (tagged\nmigrated) and routing records stay. Safe to repeat.",
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
 		"/multi-tenancy/{tenantId}/endpoint-schemes": {
 			"get": {
 				"operationId": "GetEndpointSchemes",
@@ -8055,6 +8493,106 @@
 						}
 					}
 				}
+			}
+		},
+		"/multi-tenancy/export/{tenantId}/{jobId}": {
+			"delete": {
+				"operationId": "DeleteExportedWallet",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/DeleteExportResult"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "The export is still running",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Delete a finished export's artifact from S3. Safe to repeat; refused with 409 while the export is still running.",
+				"tags": [
+					"MultiTenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "jobId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
 			}
 		},
 		"/multi-tenancy/export/{tenantId}/status/{jobId}": {
@@ -12311,6 +12849,169 @@
 				]
 			}
 		},
+		"/didcomm/connections/rotate-all": {
+			"post": {
+				"operationId": "RotateAll",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RotationStatus"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "ROTATION_UNAVAILABLE",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Starts rotating every completed connection, most recently active first, in batches (50 a minute by default).\nReturns the job status; a job that is already running is left alone.",
+				"tags": [
+					"Connections"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"intervalSeconds": {
+										"type": "number",
+										"format": "double"
+									},
+									"batchSize": {
+										"type": "number",
+										"format": "double"
+									}
+								},
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/didcomm/connections/rotate-all/status": {
+			"get": {
+				"operationId": "GetRotationStatus",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RotationStatus"
+								}
+							}
+						}
+					}
+				},
+				"description": "Progress of the rotation: how many connections are pending, waiting for an acknowledgement, stale (no answer for\n30 days), refused, updated, retrying or failed.",
+				"tags": [
+					"Connections"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": []
+			}
+		},
+		"/didcomm/connections/{connectionId}/rotate": {
+			"post": {
+				"operationId": "RotateConnection",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RotateOutcome"
+								}
+							}
+						}
+					}
+				},
+				"description": "Rotates one connection now. Also retries a connection whose earlier attempts gave up.",
+				"tags": [
+					"Connections"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "connectionId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"/agent/wallet/export-bucket": {
+			"get": {
+				"operationId": "GetExportBucket",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ExportBucketProbe"
+								}
+							}
+						}
+					}
+				},
+				"description": "Whether this agent can pull an export from its S3 bucket. When it cannot, the platform sends the export itself\nwith POST /agent/wallet/import/upload.",
+				"tags": [
+					"Agent"
+				],
+				"security": [
+					{
+						"jwt": [
+							"dedicated"
+						]
+					}
+				],
+				"parameters": []
+			}
+		},
 		"/agent/wallet/import-session": {
 			"post": {
 				"operationId": "CreateImportSession",
@@ -12544,6 +13245,372 @@
 					{
 						"in": "path",
 						"name": "jobId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"/multi-tenancy/relay/health": {
+			"get": {
+				"operationId": "GetHealth",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"redisReady": {
+											"type": "boolean"
+										},
+										"enabled": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"redisReady",
+										"enabled"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Whether the relay is enabled on this agent and its Redis is reachable (the platform's preflight check).",
+				"tags": [
+					"Multi-Tenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": []
+			}
+		},
+		"/multi-tenancy/relay/{tenantId}": {
+			"put": {
+				"operationId": "PutRelay",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RelayStatus"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Tenant not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "RELAY_DISABLED or RELAY_TRANSITION_NOT_ALLOWED",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Starts or advances a tenant's relay: HOLD buffers its inbound messages, FORWARD (with the organisation's DIDComm\naddress as `target`) passes them on and delivers whatever was held. Never goes back from FORWARD to HOLD.",
+				"tags": [
+					"Multi-Tenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"target": {
+										"type": "string"
+									},
+									"mode": {
+										"type": "string",
+										"enum": [
+											"HOLD",
+											"FORWARD"
+										]
+									}
+								},
+								"required": [
+									"mode"
+								],
+								"type": "object"
+							}
+						}
+					}
+				}
+			},
+			"get": {
+				"operationId": "GetRelay",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RelayStatus"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No relay for this tenant",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"tags": [
+					"Multi-Tenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			},
+			"delete": {
+				"operationId": "DeleteRelay",
+				"responses": {
+					"204": {
+						"description": "No content"
+					},
+					"409": {
+						"description": "RELAY_NOT_REMOVABLE or RELAY_BUFFER_NOT_EMPTY",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Removes a HOLD relay after an aborted move. Refused for a FORWARD relay, and while messages are still held.",
+				"tags": [
+					"Multi-Tenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"/multi-tenancy/relay/{tenantId}/probe": {
+			"post": {
+				"operationId": "Probe",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ProbeResult"
+								}
+							}
+						}
+					}
+				},
+				"description": "Checks the organisation's DIDComm address answers over HTTPS with a valid certificate.",
+				"tags": [
+					"Multi-Tenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"target": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"target"
+								],
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/multi-tenancy/relay/{tenantId}/reinject": {
+			"post": {
+				"operationId": "Reinject",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"failed": {
+											"type": "number",
+											"format": "double"
+										},
+										"injected": {
+											"type": "number",
+											"format": "double"
+										}
+									},
+									"required": [
+										"failed",
+										"injected"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "RELAY_NOT_HOLDING or RELAY_BUSY (another re-inject is running)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Hands the held messages back to this agent to process, for an aborted move.",
+				"tags": [
+					"Multi-Tenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
 						"required": true,
 						"schema": {
 							"type": "string"

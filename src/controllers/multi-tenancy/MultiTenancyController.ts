@@ -1,6 +1,8 @@
 import type { RestMultiTenantAgentModules } from '../../cliAgent'
 import type { EndpointSchemeSummary } from '../../services/endpoint-schemes/endpointSchemes'
+import type { PurgeTenantProfileResult } from '../../services/tenant-purge/TenantProfilePurgeService'
 import type {
+  DeleteExportResult,
   ExportWalletResult,
   ImportWalletResult,
   WalletPortabilityJobRecord,
@@ -30,6 +32,7 @@ import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { ConflictError } from '../../errors/errors'
 import { collectEndpointSchemes } from '../../services/endpoint-schemes/endpointSchemes'
+import { purgeTenantProfile } from '../../services/tenant-purge/TenantProfilePurgeService'
 import { getWalletPortabilityService } from '../../services/wallet-portability/WalletPortabilityService'
 import {
   WalletPortabilityJobConflictError,
@@ -168,6 +171,32 @@ export class MultiTenancyController extends Controller {
   }
 
   /**
+   * Remove the tenant's wallet from this agent after it has moved to a dedicated agent. The TenantRecord (tagged
+   * migrated) and routing records stay. Safe to repeat.
+   */
+  @Response<{ message: string }>(404, 'Tenant not found')
+  @Response<{ message: string }>(409, 'A wallet portability job is running, or the tenant has open sessions')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Post('/:tenantId/purge-profile')
+  public async purgeProfile(
+    @Request() request: Req,
+    @Path('tenantId') tenantId: string,
+  ): Promise<PurgeTenantProfileResult> {
+    const agent = request.agent as Agent<RestMultiTenantAgentModules>
+    try {
+      return await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).runExclusive(
+        tenantId,
+        () => purgeTenantProfile(agent, tenantId),
+      )
+    } catch (error) {
+      if (error instanceof WalletPortabilityJobConflictError) {
+        throw new ConflictError(error.message)
+      }
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  /**
    * Which URL schemes the tenant's own DIDs advertise as service endpoints, with a count and example DIDs per
    * scheme, so a caller can refuse a move for schemes the dedicated agent doesn't serve (ws, wss).
    */
@@ -264,6 +293,31 @@ export class MultiTenancyController extends Controller {
     } catch (error) {
       // Export and import share the tenant's profile namespace and can't safely run
       // concurrently — see WalletPortabilityJobConflictError's docblock.
+      if (error instanceof WalletPortabilityJobConflictError) {
+        throw new ConflictError(error.message)
+      }
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  /**
+   * Delete a finished export's artifact from S3. Safe to repeat; refused with 409 while the export is still running.
+   */
+  @Response<{ message: string }>(409, 'The export is still running')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Delete('/export/:tenantId/:jobId')
+  public async deleteExportedWallet(
+    @Path('tenantId') tenantId: string,
+    @Path('jobId') jobId: string,
+    @Res() notFoundError: TsoaResponse<404, { reason: string }>,
+  ): Promise<DeleteExportResult> {
+    try {
+      const result = await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).deleteExport(
+        tenantId,
+        jobId,
+      )
+      return result ?? notFoundError(404, { reason: `Export job '${jobId}' not found for tenant '${tenantId}'.` })
+    } catch (error) {
       if (error instanceof WalletPortabilityJobConflictError) {
         throw new ConflictError(error.message)
       }
