@@ -5647,6 +5647,79 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"RelayMode": {
+				"type": "string",
+				"enum": [
+					"HOLD",
+					"FORWARD"
+				]
+			},
+			"RelayStatus": {
+				"properties": {
+					"tenantId": {
+						"type": "string"
+					},
+					"mode": {
+						"$ref": "#/components/schemas/RelayMode"
+					},
+					"target": {
+						"type": "string"
+					},
+					"updatedAt": {
+						"type": "string"
+					},
+					"holdCount": {
+						"type": "number",
+						"format": "double"
+					},
+					"recipientKeys": {
+						"type": "number",
+						"format": "double"
+					},
+					"forwardedLast30Days": {
+						"type": "number",
+						"format": "double"
+					}
+				},
+				"required": [
+					"tenantId",
+					"mode",
+					"updatedAt",
+					"holdCount",
+					"recipientKeys",
+					"forwardedLast30Days"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"ProbeReason": {
+				"type": "string",
+				"enum": [
+					"UNREACHABLE",
+					"DNS",
+					"TLS",
+					"TIMEOUT"
+				]
+			},
+			"ProbeResult": {
+				"properties": {
+					"reachable": {
+						"type": "boolean"
+					},
+					"status": {
+						"type": "number",
+						"format": "double"
+					},
+					"reason": {
+						"$ref": "#/components/schemas/ProbeReason"
+					}
+				},
+				"required": [
+					"reachable"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"ExportBucketProbeReason": {
 				"type": "string",
 				"enum": [
@@ -12554,6 +12627,372 @@
 					{
 						"in": "path",
 						"name": "schemaId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"/multi-tenancy/relay/health": {
+			"get": {
+				"operationId": "GetHealth",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"redisReady": {
+											"type": "boolean"
+										},
+										"enabled": {
+											"type": "boolean"
+										}
+									},
+									"required": [
+										"redisReady",
+										"enabled"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Whether the relay is enabled on this agent and its Redis is reachable (the platform's preflight check).",
+				"tags": [
+					"Multi-Tenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": []
+			}
+		},
+		"/multi-tenancy/relay/{tenantId}": {
+			"put": {
+				"operationId": "PutRelay",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RelayStatus"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Tenant not found",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "RELAY_DISABLED or RELAY_TRANSITION_NOT_ALLOWED",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Starts or advances a tenant's relay: HOLD buffers its inbound messages, FORWARD (with the organisation's DIDComm\naddress as `target`) passes them on and delivers whatever was held. Never goes back from FORWARD to HOLD.",
+				"tags": [
+					"Multi-Tenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"target": {
+										"type": "string"
+									},
+									"mode": {
+										"type": "string",
+										"enum": [
+											"HOLD",
+											"FORWARD"
+										]
+									}
+								},
+								"required": [
+									"mode"
+								],
+								"type": "object"
+							}
+						}
+					}
+				}
+			},
+			"get": {
+				"operationId": "GetRelay",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RelayStatus"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "No relay for this tenant",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"tags": [
+					"Multi-Tenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			},
+			"delete": {
+				"operationId": "DeleteRelay",
+				"responses": {
+					"204": {
+						"description": "No content"
+					},
+					"409": {
+						"description": "RELAY_NOT_REMOVABLE or RELAY_BUFFER_NOT_EMPTY",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Removes a HOLD relay after an aborted move. Refused for a FORWARD relay, and while messages are still held.",
+				"tags": [
+					"Multi-Tenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				]
+			}
+		},
+		"/multi-tenancy/relay/{tenantId}/probe": {
+			"post": {
+				"operationId": "Probe",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ProbeResult"
+								}
+							}
+						}
+					}
+				},
+				"description": "Checks the organisation's DIDComm address answers over HTTPS with a valid certificate.",
+				"tags": [
+					"Multi-Tenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"target": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"target"
+								],
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/multi-tenancy/relay/{tenantId}/reinject": {
+			"post": {
+				"operationId": "Reinject",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"failed": {
+											"type": "number",
+											"format": "double"
+										},
+										"injected": {
+											"type": "number",
+											"format": "double"
+										}
+									},
+									"required": [
+										"failed",
+										"injected"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"409": {
+						"description": "RELAY_NOT_HOLDING or RELAY_BUSY (another re-inject is running)",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Hands the held messages back to this agent to process, for an aborted move.",
+				"tags": [
+					"Multi-Tenancy"
+				],
+				"security": [
+					{
+						"jwt": [
+							"Basewallet"
+						]
+					}
+				],
+				"parameters": [
+					{
+						"in": "path",
+						"name": "tenantId",
 						"required": true,
 						"schema": {
 							"type": "string"
