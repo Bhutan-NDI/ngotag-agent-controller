@@ -1,12 +1,31 @@
-.PHONY: deploy-prod
+.PHONY: deploy-qa deploy-stage deploy-prod release-check
 
-PROD_TAG_PREFIX ?= prod-agent-controller
-VERSION ?= $(shell date -u +%Y%m%d%H%M%S)-$(shell git rev-parse --short=8 HEAD)
+DEPLOY_WAIT ?= true
+DEPLOYMENT_CONFIG_REPOSITORY ?=
+CONFIRM ?=
+
+# A DevOps operator starts every NGOTAG ECS release through one of these targets:
+#   deploy-qa     releases the current develop head to QA
+#   deploy-stage  releases the current main head to Stage as a release candidate
+#   deploy-prod   promotes the exact image Stage runs to Prod (asks for confirmation)
+# Each target pins the private manifest commit and the source commit in an
+# immutable trigger tag; .github/workflows/deploy-agent-controller.yml repeats
+# every check before it obtains AWS credentials. See docs/ecs-release-automation.md.
+deploy-qa:
+	@DEPLOY_ENV=qa DEPLOY_WAIT="$(DEPLOY_WAIT)" CONFIRM="$(CONFIRM)" \
+		DEPLOYMENT_CONFIG_REPOSITORY="$(DEPLOYMENT_CONFIG_REPOSITORY)" \
+		sh .github/scripts/trigger-release.sh
+
+deploy-stage:
+	@DEPLOY_ENV=stage DEPLOY_WAIT="$(DEPLOY_WAIT)" CONFIRM="$(CONFIRM)" \
+		DEPLOYMENT_CONFIG_REPOSITORY="$(DEPLOYMENT_CONFIG_REPOSITORY)" \
+		sh .github/scripts/trigger-release.sh
 
 deploy-prod:
-	@test "$$(git rev-parse --abbrev-ref HEAD)" = "main" || (echo "deploy-prod must be run from main" && exit 1)
-	@test -z "$$(git status --porcelain)" || (echo "working tree must be clean before deploy-prod" && exit 1)
-	git fetch origin main --tags
-	git pull --ff-only origin main
-	git tag -a "$(PROD_TAG_PREFIX)-$(VERSION)" -m "Deploy prod $(PROD_TAG_PREFIX)-$(VERSION)"
-	git push origin "$(PROD_TAG_PREFIX)-$(VERSION)"
+	@DEPLOY_ENV=prod DEPLOY_WAIT="$(DEPLOY_WAIT)" CONFIRM="$(CONFIRM)" \
+		DEPLOYMENT_CONFIG_REPOSITORY="$(DEPLOYMENT_CONFIG_REPOSITORY)" \
+		sh .github/scripts/trigger-release.sh
+
+# Validates the release automation; CI runs the same checks.
+release-check:
+	@sh .github/scripts/test-release-automation.sh

@@ -36,6 +36,8 @@ import { toSerializableConfig } from './utils/ServerConfig'
 import { validateAuthConfig } from './utils/auth'
 import { validateApiKey } from './utils/config'
 import { tenantSessionLifecycle } from './utils/tenantSessionLifecycle'
+import { setWebhookUrl } from './utils/webhookProbe'
+import { mountWalletImportUpload } from './walletImportUpload'
 
 dotenv.config()
 
@@ -55,6 +57,7 @@ export const setupServer = async (
   }
   validateAuthConfig()
   container.registerInstance(Agent, agent as Agent)
+  setWebhookUrl(config.webhookUrl)
   fs.writeFileSync('config.json', JSON.stringify(toSerializableConfig(config), null, 2))
 
   const app = config.app ?? express()
@@ -97,6 +100,7 @@ export const setupServer = async (
 
   const securityMiddleware = new SecurityMiddleware()
   app.use(securityMiddleware.use)
+  mountWalletImportUpload(app)
   RegisterRoutes(app)
 
   app.use(createErrorHandler(agent.config.logger))

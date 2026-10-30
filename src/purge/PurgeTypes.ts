@@ -189,7 +189,7 @@ function parseStrictBoolean(value: string | undefined, envKey: string, defaultVa
   throw new Error(`[Purge] ${envKey} must be exactly "true" or "false", got: "${value}"`)
 }
 
-function parsePositiveInt(value: string | undefined, envKey: string, defaultValue: number): number {
+export function parsePositiveInt(value: string | undefined, envKey: string, defaultValue: number): number {
   if (value === undefined || value.trim() === '') return defaultValue
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed <= 0) {

@@ -136,6 +136,11 @@ jest.unstable_mockModule('@openwallet-foundation/askar-shared', () => ({
   Store: { provision: storeProvision, open: storeOpen },
   StoreKeyMethod: jest.fn(),
   KdfMethod: { Raw: 'raw', Argon2IMod: 'argon2i-mod' },
+  // Imported (not called) by sealedStoreKey.ts, which the sealed-export path uses; this spec covers the
+  // passphrase path only. The sealed path runs against the real binding in WalletSealedMigration.spec.ts.
+  Key: {},
+  KeyAlgorithm: {},
+  CryptoBox: {},
 }))
 
 const fetchMock = jest.fn() as jest.Mock
@@ -1455,5 +1460,38 @@ describe('WalletPortabilityService — export → import round trip', () => {
 
     expect(importJob.status).toBe(WalletPortabilityJobStatus.Completed)
     expect(importJob.error).toBeUndefined()
+  })
+})
+
+describe('WalletPortabilityService — runExclusive', () => {
+  it('keeps the tenant slot held past the reservation grace period while the work is still running', async () => {
+    const service = new WalletPortabilityService(makeLogger() as never)
+    let release: () => void = () => undefined
+    const work = service.runExclusive(TENANT_ID, () => new Promise<void>((resolve) => (release = resolve)))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    const now = Date.now()
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(now + 20_000)
+    try {
+      await expect(service.runExclusive(TENANT_ID, async () => 'second')).rejects.toThrow(/already in progress/)
+    } finally {
+      clock.mockRestore()
+    }
+
+    release()
+    await work
+    await expect(service.runExclusive(TENANT_ID, async () => 'third')).resolves.toBe('third')
+  })
+
+  it('frees the slot and returns the result, and frees it when the work throws', async () => {
+    const service = new WalletPortabilityService(makeLogger() as never)
+
+    await expect(service.runExclusive(TENANT_ID, async () => 'done')).resolves.toBe('done')
+    await expect(
+      service.runExclusive(TENANT_ID, async () => {
+        throw new Error('boom')
+      }),
+    ).rejects.toThrow('boom')
+    await expect(service.runExclusive(TENANT_ID, async () => 'again')).resolves.toBe('again')
   })
 })

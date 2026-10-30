@@ -5,6 +5,8 @@ import type {
   SafeW3cJsonLdVerifyCredentialOptions,
   SelfAttestedW3cCredentialResponse,
   VerifyDataOptions,
+  WebhookProbeRequest,
+  WebhookProbeResponse,
 } from '../types'
 import type {
   JsonObject,
@@ -32,8 +34,10 @@ import { injectable } from 'tsyringe'
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { NotFoundError, BadRequestError } from '../../errors'
+import { getAgentRuntimeConfig, getReleaseVersion, getStorageVersion } from '../../utils/agentInfo'
 import { findDefaultDidRecords } from '../../utils/defaultDid'
 import { verifyDidBoundSignature } from '../../utils/didSignatureVerification'
+import { isProbeId, probeWebhook } from '../../utils/webhookProbe'
 
 // 100 years: effectively non-expiring default when the caller doesn't request an expiry (W3cCredential requires some value).
 const SELF_ATTESTED_DEFAULT_EXPIRATION_MS = 100 * 365.25 * 24 * 60 * 60 * 1000
@@ -156,10 +160,26 @@ export class AgentController extends Controller {
         endpoints: request.agent.modules.didcomm.config.endpoints,
         isInitialized: request.agent.isInitialized,
         publicDid: undefined,
+        releaseVersion: getReleaseVersion(),
+        storageVersion: await getStorageVersion(request.agent),
+        config: getAgentRuntimeConfig(request.agent),
       }
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }
+  }
+
+  /**
+   * Sends one test event to the agent's own webhook URL, so a caller can confirm the URL is set and reaches the
+   * platform. Whether it was accepted is for the receiver to confirm; this only says whether anything answered.
+   */
+  @Security('jwt', [SCOPES.DEDICATED_AGENT])
+  @Post('/webhook/probe')
+  public async probeWebhook(@Body() body: WebhookProbeRequest): Promise<WebhookProbeResponse> {
+    if (!isProbeId(body?.probeId)) {
+      throw new BadRequestError('probeId must be a UUID')
+    }
+    return probeWebhook(body.probeId)
   }
 
   /**
@@ -356,11 +376,15 @@ export class AgentController extends Controller {
       // Default DID is tracked as an `isDefault` tag on the DID's own DidRecord (see DidController.writeDid).
       // findByQuery (not findSingleByQuery) tolerates a wallet carrying more than one tagged DID (e.g. legacy
       // migration); findDefaultDidRecords sorts by createdAt so this agrees with DidController.getDids.
+      const requestedDid = selfAttestedCredentialOptions.did
+      if (undefined !== requestedDid && 0 === (await request.agent.dids.getCreatedDids({ did: requestedDid })).length) {
+        throw new NotFoundError(`DID '${requestedDid}' was not created by this agent`)
+      }
       const [defaultDidRecord] = await findDefaultDidRecords(
         request.agent.dependencyManager.resolve(DidRepository),
         request.agent.context,
       )
-      let selfDid = defaultDidRecord?.did
+      let selfDid = requestedDid ?? defaultDidRecord?.did
 
       // Fallback for wallets that never explicitly set a default DID: only fires when exactly one
       // non-peer created DID exists (did:peer is excluded -- DIDComm connections use the same role tag).

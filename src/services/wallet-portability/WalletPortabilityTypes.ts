@@ -27,18 +27,40 @@ export interface WalletPortabilityJobRecord {
   checksum?: string
   // Computed on read, never persisted — see s3Key above.
   downloadUrl?: string
+  // Set once the artifact has been removed from S3 on request; s3Key is cleared at the same time.
+  artifactDeleted?: boolean
   // Populated on Completed (import only): the timestamped profile the tenant's pre-import data
   // was renamed to, in case it ever needs to be inspected/restored. Never deleted automatically.
   backupProfile?: string
+  // Populated on Completed (sealed export only): the store key sealed to the recipient's public key, and
+  // the tenant's storage version read after the tenant was opened. The sealed key is useless without the
+  // recipient's private half, which never leaves the target agent.
+  sealedStoreKey?: string
+  storageVersion?: string
+  // Populated on Completed (root wallet import only): what the merge inserted. dryRun jobs report the same
+  // counts but roll the transaction back.
+  counts?: WalletImportCounts
+  dryRun?: boolean
   // Populated on Failed — a stable, sanitized code (e.g. EXPORT_FAILED, IMPORT_FAILED), never the
   // raw Askar/filesystem/AWS error text, since this field is externally readable via getJobStatus.
   // The real error is logged server-side with the job id at the point of failure.
   error?: string
 }
 
+export interface WalletImportCounts {
+  entries: number
+  keys: number
+  skipped: number
+}
+
 export interface ExportWalletResult {
   jobId: string
   status: WalletPortabilityJobStatus
+}
+
+export interface DeleteExportResult {
+  jobId: string
+  deleted: true
 }
 
 export interface ImportWalletResult {
@@ -67,5 +89,47 @@ export class WalletPortabilityJobConflictError extends Error {
     this.name = 'WalletPortabilityJobConflictError'
     this.tenantId = tenantId
     this.activeJobId = activeJobId
+  }
+}
+
+export class TargetNotPristineError extends Error {
+  /**
+   * @param categories the record categories found beyond what a fresh agent writes, and `keyCount` the keys found.
+   * Kept off the message, which is the API's answer; they are for the agent's own log.
+   */
+  public constructor(
+    public readonly categories: string[] = [],
+    public readonly keyCount: number = 0,
+  ) {
+    super('TARGET_NOT_PRISTINE')
+    this.name = 'TargetNotPristineError'
+  }
+}
+
+export class StorageVersionMismatchError extends Error {
+  public constructor() {
+    super('STORAGE_VERSION_MISMATCH')
+    this.name = 'StorageVersionMismatchError'
+  }
+}
+
+export class ImportSessionNotFoundError extends Error {
+  public constructor() {
+    super('Import session not found or expired.')
+    this.name = 'ImportSessionNotFoundError'
+  }
+}
+
+export class InvalidExportUrlError extends Error {
+  public constructor(reason: string) {
+    super(reason)
+    this.name = 'InvalidExportUrlError'
+  }
+}
+
+export class ArtifactChecksumMismatchError extends Error {
+  public constructor() {
+    super('The uploaded artifact does not match the supplied checksum.')
+    this.name = 'ArtifactChecksumMismatchError'
   }
 }

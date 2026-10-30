@@ -28,7 +28,7 @@ describe('jsonLdCredentialOptions — generated artifacts stay in sync with type
     const properties = Object.keys(swagger.components.schemas.jsonLdCredentialOptions.properties ?? {})
 
     expect(properties.sort()).toEqual(
-      ['@context', 'type', 'credentialSubject', 'proofType', 'expirationDate'].sort(),
+      ['@context', 'type', 'credentialSubject', 'proofType', 'expirationDate', 'did'].sort(),
     )
   })
 })
