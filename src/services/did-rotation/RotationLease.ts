@@ -22,14 +22,19 @@ interface LeaseValue {
  * A lease in the agent's own wallet, so two tasks of one dedicated agent (an ECS deploy runs the old and the new task
  * side by side) cannot both rotate the same connection. Each decision is made inside a transaction that locks the
  * lease row (`forUpdate`); the first insert of a lease that does not exist yet is settled by the unique key. An
- * expired lease is taken over, which is what happens when the task holding it dies.
+ * expired lease is taken over, which is what happens when the task holding it dies. Other jobs that must run on one
+ * task only (the cron purge) keep their leases under their own `category`.
  */
 export class RotationLease {
-  public constructor(private readonly openStore: LeaseStore) {}
+  public constructor(
+    private readonly openStore: LeaseStore,
+    private readonly category: string = LEASE_CATEGORY,
+  ) {}
 
-  public static forAgent(agent: Agent): RotationLease {
-    return new RotationLease(() =>
-      agent.dependencyManager.resolve(AskarStoreManager).getInitializedStoreWithProfile(agent.context),
+  public static forAgent(agent: Agent, category?: string): RotationLease {
+    return new RotationLease(
+      () => agent.dependencyManager.resolve(AskarStoreManager).getInitializedStoreWithProfile(agent.context),
+      category,
     )
   }
 
@@ -38,14 +43,14 @@ export class RotationLease {
     const { store, profile } = await this.openStore()
     const session = await store.transaction(profile).open()
     try {
-      const entry = await session.fetch({ category: LEASE_CATEGORY, name, forUpdate: true, isJson: true })
+      const entry = await session.fetch({ category: this.category, name, forUpdate: true, isJson: true })
       const value = JSON.stringify({ owner, expiresAt: now + ttlMs } satisfies LeaseValue)
       if (entry) {
         const held = entry.value as unknown as LeaseValue
         if (held.owner !== owner && held.expiresAt > now) return false
-        await session.replace({ category: LEASE_CATEGORY, name, value })
+        await session.replace({ category: this.category, name, value })
       } else {
-        await session.insert({ category: LEASE_CATEGORY, name, value })
+        await session.insert({ category: this.category, name, value })
       }
       await session.commit()
       return true
@@ -63,9 +68,9 @@ export class RotationLease {
     const { store, profile } = await this.openStore()
     const session = await store.transaction(profile).open()
     try {
-      const entry = await session.fetch({ category: LEASE_CATEGORY, name, forUpdate: true, isJson: true })
+      const entry = await session.fetch({ category: this.category, name, forUpdate: true, isJson: true })
       if (entry && (entry.value as unknown as LeaseValue).owner === owner) {
-        await session.remove({ category: LEASE_CATEGORY, name })
+        await session.remove({ category: this.category, name })
         await session.commit()
       }
     } finally {

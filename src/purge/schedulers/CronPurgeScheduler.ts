@@ -7,6 +7,7 @@
  * touches the Askar store. Heavy one-off backfills stay with the operator-run `credo-data-purge`
  * tool (Tier A).
  */
+import type { Leasing } from '../../services/did-rotation/RotationLease'
 import type { PurgeTenantResult } from '../PurgeEngine'
 import type { PurgeConfig, PurgeRecordType } from '../PurgeTypes'
 import type { Agent } from '@credo-ts/core'
@@ -15,6 +16,7 @@ import type { ScheduledTask } from 'node-cron'
 import cron from 'node-cron'
 import { randomUUID } from 'node:crypto'
 
+import { RotationLease } from '../../services/did-rotation/RotationLease'
 import { isTenantMigrated } from '../../utils/migratedTenant'
 import { isTenantAdmissionError } from '../../utils/tenantSessionConfig'
 import { purgeTenant } from '../PurgeEngine'
@@ -27,31 +29,30 @@ type DeletionNotifier = (
   alreadyAbsent: boolean,
 ) => void
 
+const PURGE_LEASE_CATEGORY = 'PurgeCronLease'
+export const PURGE_LEASE = 'cron-scan'
+export const PURGE_LEASE_MS = 10 * 60 * 1000
+export const PURGE_LEASE_RENEW_MS = 2 * 60 * 1000
+
+export type PurgeLeaseFactory = (agent: Agent) => Leasing
+
 export class CronPurgeScheduler {
   private job: ScheduledTask | null = null
   private isRunning = false
   /** Rotates which record type each tenant starts with, so a time-budget truncation cannot starve
    *  the types at the back of a fixed order. */
   private runCount = 0
+  private readonly owner = randomUUID()
+
+  public constructor(
+    private readonly leaseFor: PurgeLeaseFactory = (agent) => RotationLease.forAgent(agent, PURGE_LEASE_CATEGORY),
+  ) {}
 
   public async start(agent: Agent, config: PurgeConfig, webhookUrl: string | undefined): Promise<void> {
     const { cronConfig } = config
 
     this.job = cron.schedule(cronConfig.cronSchedule, () => {
-      // Overlapping runs would double the DB load the throttle exists to cap, so a tick that
-      // arrives while the previous run is still going is dropped rather than queued.
-      if (this.isRunning) {
-        agent.config.logger.warn('[Purge] Cron scan still running — skipping this tick')
-        return
-      }
-      this.isRunning = true
-      this.runScan(agent, config, webhookUrl)
-        .catch((err: Error) => {
-          agent.config.logger.error('[Purge] Cron scan error', { error: err?.message })
-        })
-        .finally(() => {
-          this.isRunning = false
-        })
+      void this.tick(agent, config, webhookUrl)
     })
 
     if (cronConfig.dryRun) {
@@ -82,7 +83,54 @@ export class CronPurgeScheduler {
     this.job = null
   }
 
-  private async runScan(agent: Agent, config: PurgeConfig, webhookUrl: string | undefined): Promise<void> {
+  /** One cron tick: scans unless this task is already scanning or another task holds the purge lease. */
+  public async tick(agent: Agent, config: PurgeConfig, webhookUrl: string | undefined): Promise<void> {
+    const logger = agent.config.logger
+    // Overlapping runs would double the DB load the throttle exists to cap, so a tick that
+    // arrives while the previous run is still going is dropped rather than queued.
+    if (this.isRunning) {
+      logger.warn('[Purge] Cron scan still running — skipping this tick')
+      return
+    }
+    this.isRunning = true
+    try {
+      // Every task of the agent fires this tick: a deploy runs the old and the new task side by side, and a service
+      // can run several. Two scans of one wallet delete the same records twice, so only the task holding the wallet
+      // lease scans. A lease that cannot be read skips the tick; the next one retries.
+      const lease = this.leaseFor(agent)
+      if (!(await lease.acquire(PURGE_LEASE, this.owner, PURGE_LEASE_MS))) {
+        logger.info('[Purge] Another task is running the cron scan — skipping this tick')
+        return
+      }
+      let leaseLost = false
+      const heartbeat = setInterval(() => {
+        lease
+          .acquire(PURGE_LEASE, this.owner, PURGE_LEASE_MS)
+          .then((held) => {
+            if (!held) leaseLost = true
+          })
+          .catch((err: Error) => logger.warn('[Purge] Could not renew the cron scan lease', { error: err?.message }))
+      }, PURGE_LEASE_RENEW_MS)
+      heartbeat.unref()
+      try {
+        await this.runScan(agent, config, webhookUrl, () => leaseLost)
+      } finally {
+        clearInterval(heartbeat)
+        await lease.release(PURGE_LEASE, this.owner).catch(() => undefined)
+      }
+    } catch (err) {
+      logger.error('[Purge] Cron scan error', { error: (err as Error)?.message })
+    } finally {
+      this.isRunning = false
+    }
+  }
+
+  private async runScan(
+    agent: Agent,
+    config: PurgeConfig,
+    webhookUrl: string | undefined,
+    leaseLost: () => boolean = () => false,
+  ): Promise<void> {
     const logger = agent.config.logger
     const { cronConfig } = config
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -110,6 +158,10 @@ export class CronPurgeScheduler {
       const tenants = await tenantsModule.getAllTenants()
 
       for (const tenant of tenants) {
+        if (leaseLost()) {
+          logger.warn('[Purge] Another task took over the cron scan lease — stopping this scan', { runId })
+          break
+        }
         if (isTenantMigrated(tenant)) continue
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
