@@ -19,6 +19,11 @@ jobs:
       - name: Checkout credo-controller
         uses: actions/checkout@v4
 
+      # make deploy-<environment> and the deploy workflow wait for this job, so the
+      # release automation is validated with every change.
+      - name: Validate release automation
+        run: make release-check
+
       - name: Setup node v20
         uses: actions/setup-node@v4
         with:
