@@ -1,6 +1,8 @@
 import { DidJwk, DidKey, DidsApi, type JwkDidCreateOptions, type KeyDidCreateOptions, Kms } from '@credo-ts/core'
 import { type OpenId4VciCredentialBindingResolver, OpenId4VciCredentialFormatProfile } from '@credo-ts/openid4vc'
 
+import { recordHolderKey } from '../../openac/holderKeyRegistry'
+
 export function getCredentialBindingResolver({
   requestBatch,
 }: {
@@ -104,6 +106,11 @@ export function getCredentialBindingResolver({
         credentialFormat === OpenId4VciCredentialFormatProfile.SdJwtDc ||
         credentialFormat === OpenId4VciCredentialFormatProfile.MsoMdoc)
     ) {
+      // --- OpenAC PoC: remember which Askar key backs each jwk-bound credential, so OpenAC can sign nonces with it.
+      // Best effort and jwk-binding only (src/controllers/openac/holderKeyRegistry.ts); did-bound flows are untouched.
+      await Promise.all(keys.map((key) => recordHolderKey(agentContext, key)))
+      // --- end OpenAC PoC
+
       return {
         method: 'jwk',
         keys,
