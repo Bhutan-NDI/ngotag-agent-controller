@@ -1,0 +1,41 @@
+diff --git a/node_modules/openac-sdk/assets/package.json b/node_modules/openac-sdk/assets/package.json
+new file mode 100644
+index 0000000..729ac4d
+--- /dev/null
++++ b/node_modules/openac-sdk/assets/package.json
+@@ -0,0 +1 @@
++{"type":"commonjs"}
+diff --git a/node_modules/openac-sdk/dist/index.js b/node_modules/openac-sdk/dist/index.js
+index a4454a0..b9ba5a4 100644
+--- a/node_modules/openac-sdk/dist/index.js
++++ b/node_modules/openac-sdk/dist/index.js
+@@ -2115,7 +2115,13 @@ var Prover = class {
+     const startTime = performance.now();
+     const timing = {};
+     const { precomputed, verifierNonce, devicePrivateKey, keys } = request;
+-    const deviceSignature = signDeviceNonce(verifierNonce, devicePrivateKey);
++    if (request.deviceSignature === void 0 && devicePrivateKey === void 0) {
++      throw new InputError(
++        "INVALID_KEY",
++        "present() requires either deviceSignature or devicePrivateKey"
++      );
++    }
++    const deviceSignature = request.deviceSignature ?? signDeviceNonce(verifierNonce, devicePrivateKey);
+     const parsed = Credential.parse(
+       precomputed.credential.jwt,
+       precomputed.credential.disclosures,
+diff --git a/node_modules/openac-sdk/dist/sizing-DlkFNmXz.d.ts b/node_modules/openac-sdk/dist/sizing-DlkFNmXz.d.ts
+index 3c441bf..16029d7 100644
+--- a/node_modules/openac-sdk/dist/sizing-DlkFNmXz.d.ts
++++ b/node_modules/openac-sdk/dist/sizing-DlkFNmXz.d.ts
+@@ -448,7 +448,9 @@ interface SerializedPrecomputedCredentialJSON {
+ interface PresentRequest {
+     precomputed: PrecomputedCredential;
+     verifierNonce: string;
+-    devicePrivateKey: EcdsaPrivateKey;
++    devicePrivateKey?: EcdsaPrivateKey;
++    /** Ready-made device signature over the verifier nonce: base64url raw r||s, low-S. Used instead of devicePrivateKey when set. */
++    deviceSignature?: string;
+     keys: KeySet;
+     /** Predicates to evaluate against the precomputed credential. */
+     predicates: PredicateExpression;

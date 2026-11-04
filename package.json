@@ -86,6 +86,7 @@
     "nats": "^2.29.3",
     "node-cron": "^4.2.1",
     "node-fetch": "2",
+    "openac-sdk": "5.0.0",
     "patch-package": "^8.0.0",
     "reflect-metadata": "^0.2.2",
     "swagger-ui-express": "^4.4.0",
