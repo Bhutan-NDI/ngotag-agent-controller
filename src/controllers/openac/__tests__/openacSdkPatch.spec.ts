@@ -8,9 +8,9 @@
  * Spartan proving step is stubbed, because it needs the 1k proving keys.
  */
 import { createHash, createPrivateKey, generateKeyPairSync, randomBytes, sign, type KeyObject } from 'crypto'
-import { Prover, WitnessCalculator } from 'openac-sdk'
+import { P256_SCALAR_ORDER, Prover, WitnessCalculator } from 'openac-sdk'
 
-const P256_N = BigInt('0xffffffffffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551')
+const P256_N = BigInt('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551')
 const HALF_N = P256_N >> BigInt(1)
 
 const b64u = (data: Uint8Array | string) => Buffer.from(data).toString('base64url')
@@ -71,6 +71,10 @@ const keys = {
 }
 const predicates = { claim: 'birth_ymd', op: '<=', value: 20081104, format: 'uint' } as const
 
+it('uses the real P-256 group order for the low-S flip', () => {
+  expect(P256_N).toBe(P256_SCALAR_ORDER)
+})
+
 describe('openac-sdk patch: deviceSignature', () => {
   let prover: Prover
   const issuer = newKey().privateKey
@@ -118,9 +122,13 @@ describe('openac-sdk patch: deviceSignature', () => {
     await expect(present({ deviceSignature: b64u(signRaw(holder, nonce(), 'low')) }, nonce())).rejects.toThrow()
   })
 
-  it('rejects a high-S deviceSignature (low-S normalisation is required)', async () => {
+  // Checked with the correct group order: the Prepare/Show witnesses do not reject high-S (an earlier version of this
+  // test used a mistyped order, so its "high-S" signature was malformed and the rejection was for the wrong reason).
+  // The holder route still normalises to low-S, as the brief requires; see deviceSignature.ts.
+  it('accepts a valid high-S deviceSignature at witness level', async () => {
     const n = nonce()
-    await expect(present({ deviceSignature: b64u(signRaw(holder, n, 'high')) }, n)).rejects.toThrow()
+    const proof = await present({ deviceSignature: b64u(signRaw(holder, n, 'high')) }, n)
+    expect(proof.publicValues.expressionResult).toBe(true)
   })
 
   it('throws when neither deviceSignature nor devicePrivateKey is given', async () => {

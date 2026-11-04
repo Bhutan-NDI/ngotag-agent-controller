@@ -46,6 +46,8 @@ import { AgentWalletController } from './../controllers/agent/AgentWalletControl
 // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
 import { RelayController } from './../controllers/multi-tenancy/RelayController';
 // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+import { OpenAcController } from './../controllers/openac/OpenAcController';
+// WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
 import { VerifierController } from './../controllers/openid4vc/verifiers/verifier.Controller';
 import { expressAuthentication } from './../authentication';
 // @ts-ignore - no great way to install types from subpackage
@@ -2547,6 +2549,106 @@ const models: TsoaRoute.Models = {
             "reachable": {"dataType":"boolean","required":true},
             "status": {"dataType":"double"},
             "reason": {"ref":"ProbeReason"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "OpenAcPolicyName": {
+        "dataType": "refAlias",
+        "type": {"dataType":"enum","enums":["over18"],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "OpenAcChallengeResponse": {
+        "dataType": "refObject",
+        "properties": {
+            "nonce": {"dataType":"string","required":true},
+            "expiresAt": {"dataType":"string","required":true},
+            "policy": {"ref":"OpenAcPolicyName","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "OpenAcChallengeRequest": {
+        "dataType": "refObject",
+        "properties": {
+            "policy": {"ref":"OpenAcPolicyName","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "OpenAcPrecomputeResponse": {
+        "dataType": "refObject",
+        "properties": {
+            "ok": {"dataType":"boolean","required":true},
+            "durationMs": {"dataType":"double","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "OpenAcPrecomputeRequest": {
+        "dataType": "refObject",
+        "properties": {
+            "credentialId": {"dataType":"string","required":true},
+            "policy": {"ref":"OpenAcPolicyName","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "OpenAcProof": {
+        "dataType": "refObject",
+        "properties": {
+            "version": {"dataType":"string","required":true},
+            "prepareProof": {"dataType":"string","required":true},
+            "showProof": {"dataType":"string","required":true},
+            "prepareInstance": {"dataType":"string","required":true},
+            "showInstance": {"dataType":"string","required":true},
+            "publicValues": {"dataType":"nestedObjectLiteral","nestedProperties":{"expressionResult":{"dataType":"boolean"}}},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "OpenAcPresentRequest": {
+        "dataType": "refObject",
+        "properties": {
+            "credentialId": {"dataType":"string","required":true},
+            "nonce": {"dataType":"string","required":true},
+            "policy": {"ref":"OpenAcPolicyName","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "OpenAcVerifyResponse": {
+        "dataType": "refObject",
+        "properties": {
+            "accepted": {"dataType":"boolean","required":true},
+            "over18": {"dataType":"boolean","required":true},
+            "reason": {"dataType":"string"},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "OpenAcVerifyRequest": {
+        "dataType": "refObject",
+        "properties": {
+            "nonce": {"dataType":"string","required":true},
+            "proof": {"ref":"OpenAcProof","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "OpenAcTrustedIssuerResponse": {
+        "dataType": "refObject",
+        "properties": {
+            "did": {"dataType":"string","required":true},
+            "trustedIssuers": {"dataType":"double","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "OpenAcTrustedIssuerRequest": {
+        "dataType": "refObject",
+        "properties": {
+            "did": {"dataType":"string","required":true},
         },
         "additionalProperties": false,
     },
@@ -7178,6 +7280,191 @@ export function RegisterRoutes(app: Router) {
 
               await templateService.apiHandler({
                 methodName: 'reinject',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsOpenAcController_challenge: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                body: {"in":"body","name":"body","required":true,"ref":"OpenAcChallengeRequest"},
+        };
+        app.post('/openac/verifier/challenge',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(OpenAcController)),
+            ...(fetchMiddlewares<RequestHandler>(OpenAcController.prototype.challenge)),
+
+            async function OpenAcController_challenge(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsOpenAcController_challenge, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<OpenAcController>(OpenAcController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'challenge',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsOpenAcController_precompute: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                body: {"in":"body","name":"body","required":true,"ref":"OpenAcPrecomputeRequest"},
+        };
+        app.post('/openac/holder/precompute',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(OpenAcController)),
+            ...(fetchMiddlewares<RequestHandler>(OpenAcController.prototype.precompute)),
+
+            async function OpenAcController_precompute(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsOpenAcController_precompute, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<OpenAcController>(OpenAcController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'precompute',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsOpenAcController_present: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                body: {"in":"body","name":"body","required":true,"ref":"OpenAcPresentRequest"},
+        };
+        app.post('/openac/holder/present',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(OpenAcController)),
+            ...(fetchMiddlewares<RequestHandler>(OpenAcController.prototype.present)),
+
+            async function OpenAcController_present(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsOpenAcController_present, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<OpenAcController>(OpenAcController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'present',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsOpenAcController_verify: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                body: {"in":"body","name":"body","required":true,"ref":"OpenAcVerifyRequest"},
+        };
+        app.post('/openac/verifier/verify',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(OpenAcController)),
+            ...(fetchMiddlewares<RequestHandler>(OpenAcController.prototype.verify)),
+
+            async function OpenAcController_verify(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsOpenAcController_verify, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<OpenAcController>(OpenAcController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'verify',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsOpenAcController_registerTrustedIssuer: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                body: {"in":"body","name":"body","required":true,"ref":"OpenAcTrustedIssuerRequest"},
+        };
+        app.post('/openac/verifier/trusted-issuers',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(OpenAcController)),
+            ...(fetchMiddlewares<RequestHandler>(OpenAcController.prototype.registerTrustedIssuer)),
+
+            async function OpenAcController_registerTrustedIssuer(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsOpenAcController_registerTrustedIssuer, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<OpenAcController>(OpenAcController);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'registerTrustedIssuer',
                 controller,
                 response,
                 next,

@@ -6020,6 +6020,210 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"OpenAcPolicyName": {
+				"type": "string",
+				"enum": [
+					"over18"
+				],
+				"nullable": false,
+				"description": "Request and response shapes for the OpenAC PoC routes."
+			},
+			"OpenAcChallengeResponse": {
+				"properties": {
+					"nonce": {
+						"type": "string",
+						"description": "32 random bytes, base64url. Single use."
+					},
+					"expiresAt": {
+						"type": "string",
+						"description": "ISO 8601 time after which the nonce is rejected (2 minutes after issue)."
+					},
+					"policy": {
+						"$ref": "#/components/schemas/OpenAcPolicyName"
+					}
+				},
+				"required": [
+					"nonce",
+					"expiresAt",
+					"policy"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"OpenAcChallengeRequest": {
+				"properties": {
+					"policy": {
+						"$ref": "#/components/schemas/OpenAcPolicyName"
+					}
+				},
+				"required": [
+					"policy"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"OpenAcPrecomputeResponse": {
+				"properties": {
+					"ok": {
+						"type": "boolean"
+					},
+					"durationMs": {
+						"type": "number",
+						"format": "double"
+					}
+				},
+				"required": [
+					"ok",
+					"durationMs"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"OpenAcPrecomputeRequest": {
+				"properties": {
+					"credentialId": {
+						"type": "string",
+						"description": "Id of the SD-JWT VC record in the holder wallet"
+					},
+					"policy": {
+						"$ref": "#/components/schemas/OpenAcPolicyName"
+					}
+				},
+				"required": [
+					"credentialId",
+					"policy"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"OpenAcProof": {
+				"description": "The proof, as `PresentationProof.toJSON()` from openac-sdk. The four proof fields are standard base64.",
+				"properties": {
+					"version": {
+						"type": "string"
+					},
+					"prepareProof": {
+						"type": "string"
+					},
+					"showProof": {
+						"type": "string"
+					},
+					"prepareInstance": {
+						"type": "string"
+					},
+					"showInstance": {
+						"type": "string"
+					},
+					"publicValues": {
+						"properties": {
+							"expressionResult": {
+								"type": "boolean"
+							}
+						},
+						"type": "object",
+						"description": "Computed by the holder. The verifier ignores it and uses its own verification result."
+					}
+				},
+				"required": [
+					"version",
+					"prepareProof",
+					"showProof",
+					"prepareInstance",
+					"showInstance"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"OpenAcPresentRequest": {
+				"properties": {
+					"credentialId": {
+						"type": "string"
+					},
+					"nonce": {
+						"type": "string",
+						"description": "The nonce from the verifier's challenge"
+					},
+					"policy": {
+						"$ref": "#/components/schemas/OpenAcPolicyName"
+					}
+				},
+				"required": [
+					"credentialId",
+					"nonce",
+					"policy"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"OpenAcVerifyResponse": {
+				"properties": {
+					"accepted": {
+						"type": "boolean",
+						"description": "The proof is valid for this nonce and policy, and the credential was issued by a trusted issuer."
+					},
+					"over18": {
+						"type": "boolean",
+						"description": "The policy result. Only meaningful when `accepted` is true."
+					},
+					"reason": {
+						"type": "string",
+						"description": "Why the proof was not accepted."
+					}
+				},
+				"required": [
+					"accepted",
+					"over18"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"OpenAcVerifyRequest": {
+				"properties": {
+					"nonce": {
+						"type": "string"
+					},
+					"proof": {
+						"$ref": "#/components/schemas/OpenAcProof"
+					}
+				},
+				"required": [
+					"nonce",
+					"proof"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"OpenAcTrustedIssuerResponse": {
+				"properties": {
+					"did": {
+						"type": "string"
+					},
+					"trustedIssuers": {
+						"type": "number",
+						"format": "double",
+						"description": "How many issuers this verifier now trusts through this route"
+					}
+				},
+				"required": [
+					"did",
+					"trustedIssuers"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
+			"OpenAcTrustedIssuerRequest": {
+				"properties": {
+					"did": {
+						"type": "string",
+						"description": "A did:key (P-256) whose first verification method is an issuer key this verifier trusts"
+					}
+				},
+				"required": [
+					"did"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"OpenId4VcVerifierRecord": {
 				"$ref": "#/components/schemas/Record_string.unknown_",
 				"description": "For OID4VC you need to expos metadata files. Each issuer needs to host this metadata. This is not the case for DIDComm where we can just have one /didcomm endpoint.\nSo we create a record per openid issuer/verifier that you want, and each tenant can create multiple issuers/verifiers which have different endpoints\nand metadata files"
@@ -13798,6 +14002,206 @@
 						}
 					}
 				]
+			}
+		},
+		"/openac/verifier/challenge": {
+			"post": {
+				"operationId": "Challenge",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/OpenAcChallengeResponse"
+								}
+							}
+						}
+					}
+				},
+				"description": "Verifier: issue a single-use challenge (32-byte nonce, valid 2 minutes) for a policy.",
+				"tags": [
+					"OpenAC"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/OpenAcChallengeRequest"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/openac/holder/precompute": {
+			"post": {
+				"operationId": "Precompute",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/OpenAcPrecomputeResponse"
+								}
+							}
+						}
+					}
+				},
+				"description": "Holder: prepare a credential for proving (the slow step, once per credential). Cached until restart.",
+				"tags": [
+					"OpenAC"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/OpenAcPrecomputeRequest"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/openac/holder/present": {
+			"post": {
+				"operationId": "Present",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/OpenAcProof"
+								}
+							}
+						}
+					}
+				},
+				"description": "Holder: prove the policy for a verifier nonce. The response contains proof data only, no claim values.",
+				"tags": [
+					"OpenAC"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/OpenAcPresentRequest"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/openac/verifier/verify": {
+			"post": {
+				"operationId": "Verify",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/OpenAcVerifyResponse"
+								}
+							}
+						}
+					}
+				},
+				"description": "Verifier: check a proof. Rejects unknown, expired and reused nonces and issuers that are not trusted.",
+				"tags": [
+					"OpenAC"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/OpenAcVerifyRequest"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/openac/verifier/trusted-issuers": {
+			"post": {
+				"operationId": "RegisterTrustedIssuer",
+				"responses": {
+					"200": {
+						"description": "Ok",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/OpenAcTrustedIssuerResponse"
+								}
+							}
+						}
+					}
+				},
+				"description": "Verifier: trust an issuer. The verifier resolves the did itself; proofs never choose the trust list.\nOnly this verifier tenant's own list changes. Without a trusted issuer every proof is rejected.",
+				"tags": [
+					"OpenAC"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/OpenAcTrustedIssuerRequest"
+							}
+						}
+					}
+				}
 			}
 		},
 		"/openid4vc/verifier": {
