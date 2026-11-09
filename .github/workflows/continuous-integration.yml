@@ -24,10 +24,10 @@ jobs:
       - name: Validate release automation
         run: make release-check
 
-      - name: Setup node v20
+      - name: Setup node v22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'yarn'
 
       - name: Install dependencies
