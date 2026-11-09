@@ -22,6 +22,7 @@ import {
   JsonTransformer,
   W3cCredential,
   W3cCredentialRecord,
+  W3cJsonLdCredentialService,
   W3cJsonLdVerifiableCredential,
 } from '@credo-ts/core'
 import { Request as Req } from 'express'
@@ -37,6 +38,7 @@ import { NotFoundError, BadRequestError } from '../../errors'
 import { getAgentRuntimeConfig, getReleaseVersion, getStorageVersion } from '../../utils/agentInfo'
 import { findDefaultDidRecords } from '../../utils/defaultDid'
 import { verifyDidBoundSignature } from '../../utils/didSignatureVerification'
+import { selectAssertionMethod } from '../../utils/verificationMethodSelection'
 import { isProbeId, probeWebhook } from '../../utils/webhookProbe'
 
 // 100 years: effectively non-expiring default when the caller doesn't request an expiry (W3cCredential requires some value).
@@ -409,10 +411,7 @@ export class AgentController extends Controller {
       // credential that fails verification everywhere else -- a loud error here beats a silently-
       // unverifiable credential in a holder's wallet. did:peer lacking an assertionMethod key is a
       // DID-creation gap, not something to work around at signing time.
-      const vmRef = defaultDidDocument?.assertionMethod?.[0]
-      const selfDidVerificationMethod = typeof vmRef === 'string' ? vmRef : vmRef?.id
-
-      if (!selfDidVerificationMethod) {
+      if (!defaultDidDocument?.assertionMethod?.length) {
         throw new Error(
           `Default DID '${selfDid}' has no assertionMethod verification method; it cannot be used to issue credentials`,
         )
@@ -425,6 +424,24 @@ export class AgentController extends Controller {
         proofType: selfAttestedProofType,
         expirationDate: selfAttestedExpirationDate,
       } = selfAttestedCredentialOptions
+
+      // The key must suit the proof type, not merely come first: did:ethr lists `#controller` (an
+      // address, no public key) before `#controllerKey`, the key EcdsaSecp256k1Signature2019 signs
+      // with. Same lookup Credo's own JSON-LD issuance uses (getVerificationMethodTypesByProofType).
+      let acceptedTypes: string[]
+      try {
+        acceptedTypes = request.agent.dependencyManager
+          .resolve(W3cJsonLdCredentialService)
+          .getVerificationMethodTypesByProofType(selfAttestedProofType)
+      } catch {
+        throw new BadRequestError(`proofType '${selfAttestedProofType}' is not supported by this agent`)
+      }
+      const selfDidVerificationMethod = selectAssertionMethod(defaultDidDocument, acceptedTypes)?.id
+      if (!selfDidVerificationMethod) {
+        throw new BadRequestError(
+          `DID '${selfDid}' has no assertionMethod key usable with proofType '${selfAttestedProofType}'`,
+        )
+      }
 
       // Caller-controlled @context can reach Credo's native JSON-LD loader with no egress restriction
       // (SSRF) for any URL outside its small static context cache. Blocks non-https and literal
