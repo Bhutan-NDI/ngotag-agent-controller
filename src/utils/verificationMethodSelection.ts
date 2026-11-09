@@ -1,4 +1,6 @@
-import type { DidDocument, VerificationMethod } from '@credo-ts/core'
+import type { DidDocument, SignatureSuiteRegistry, VerificationMethod } from '@credo-ts/core'
+
+import { getPublicJwkFromVerificationMethod } from '@credo-ts/core'
 
 // Picks the key a DID should sign with. The first entry is not always usable: a did:ethr
 // document lists `#controller` (EcdsaSecp256k1RecoveryMethod2020, only a blockchainAccountId)
@@ -61,6 +63,26 @@ export function selectAssertionMethod(
     matching ??
     entries.find(({ verificationMethod }) => !verificationMethod?.type || hasPublicKeyMaterial(verificationMethod))
   )
+}
+
+/**
+ * Whether the key in a verification method can sign the proof type: the signer's own key-type check
+ * (W3cJsonLdCredentialService.signCredential), run before signing so a misfit is a clear 400 rather
+ * than a generic signing failure. False when the method's key cannot be read.
+ */
+export function keyFitsProofType(
+  registry: Pick<SignatureSuiteRegistry, 'getByProofType' | 'getAllByPublicJwkType'>,
+  verificationMethod: VerificationMethod,
+  proofType: string,
+): boolean {
+  try {
+    const { suiteClass } = registry.getByProofType(proofType)
+    return registry
+      .getAllByPublicJwkType(getPublicJwkFromVerificationMethod(verificationMethod))
+      .some((suite) => suite.suiteClass === suiteClass)
+  } catch {
+    return false
+  }
 }
 
 /** The first entry of a relationship that carries a public key, skipping keyless ones. */

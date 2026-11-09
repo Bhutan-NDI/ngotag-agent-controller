@@ -26,6 +26,7 @@ import {
   JsonTransformer,
   KeyDidRegistrar,
   KeyDidResolver,
+  SignatureSuiteRegistry,
   TypedArrayEncoder,
   W3cCredential,
   W3cCredentialsModule,
@@ -34,10 +35,10 @@ import {
 import { defaultDocumentLoader } from '@credo-ts/core/build/modules/vc/data-integrity/libraries/documentLoader.mjs'
 import { agentDependencies } from '@credo-ts/node'
 import { askar } from '@openwallet-foundation/askar-nodejs'
-import { randomUUID } from 'node:crypto'
+import { generateKeyPairSync, randomUUID } from 'node:crypto'
 
 import { SECP256K1_RECOVERY_2020_V2 } from '../../../utils/staticContexts/secp256k1recovery2020v2'
-import { selectAssertionMethod } from '../../../utils/verificationMethodSelection'
+import { keyFitsProofType, selectAssertionMethod } from '../../../utils/verificationMethodSelection'
 
 // The package's "exports" map points ESM imports at a .d.mts, so load the module file directly, as
 // PolygonDidRegistrar.idempotent.spec.ts does.
@@ -64,13 +65,44 @@ const compressedPublicKey = (jwk: { x?: string; y?: string }): Buffer => {
   return Buffer.concat([Buffer.from([y[y.length - 1] % 2 === 0 ? 0x02 : 0x03]), x])
 }
 
+// The document EthereumLedgerService.resolveDID stores for a public-key did:ethr.
+const ethrDocument = (did: string, publicKey: Buffer) =>
+  JsonTransformer.fromJSON(
+    {
+      '@context': [
+        'https://www.w3.org/ns/did/v1',
+        'https://w3id.org/security/suites/secp256k1recovery-2020/v2',
+        'https://w3id.org/security/suites/secp256k1-2019/v1',
+      ],
+      id: did,
+      verificationMethod: [
+        {
+          id: `${did}#controller`,
+          type: 'EcdsaSecp256k1RecoveryMethod2020',
+          controller: did,
+          blockchainAccountId: 'eip155:11155111:0x0000000000000000000000000000000000000001',
+        },
+        {
+          id: `${did}#controllerKey`,
+          type: 'EcdsaSecp256k1VerificationKey2019',
+          controller: did,
+          publicKeyBase58: TypedArrayEncoder.toBase58(publicKey),
+        },
+      ],
+      authentication: [`${did}#controller`, `${did}#controllerKey`],
+      assertionMethod: [`${did}#controller`, `${did}#controllerKey`],
+    },
+    DidDocument,
+  )
+
 describe('self-attested credential — did:ethr sign-then-verify against @credo-ts/core (not mocked)', () => {
   let agent: InstanceType<typeof Agent>
   let did: string
   let didDocument: InstanceType<typeof DidDocument>
+  let documents: Map<string, InstanceType<typeof DidDocument>>
 
   beforeAll(async () => {
-    const documents = new Map<string, InstanceType<typeof DidDocument>>()
+    documents = new Map<string, InstanceType<typeof DidDocument>>()
     const ethrResolver: DidResolver = {
       supportedMethods: ['ethr'],
       allowsCaching: false,
@@ -121,33 +153,7 @@ describe('self-attested credential — did:ethr sign-then-verify against @credo-
     const { keyId, publicJwk } = await agent.kms.createKey({ type: { kty: 'EC', crv: 'secp256k1' } })
     const publicKey = compressedPublicKey(publicJwk as { x?: string; y?: string })
     did = `did:ethr:sepolia:0x${publicKey.toString('hex')}`
-    didDocument = JsonTransformer.fromJSON(
-      {
-        '@context': [
-          'https://www.w3.org/ns/did/v1',
-          'https://w3id.org/security/suites/secp256k1recovery-2020/v2',
-          'https://w3id.org/security/suites/secp256k1-2019/v1',
-        ],
-        id: did,
-        verificationMethod: [
-          {
-            id: `${did}#controller`,
-            type: 'EcdsaSecp256k1RecoveryMethod2020',
-            controller: did,
-            blockchainAccountId: 'eip155:11155111:0x0000000000000000000000000000000000000001',
-          },
-          {
-            id: `${did}#controllerKey`,
-            type: 'EcdsaSecp256k1VerificationKey2019',
-            controller: did,
-            publicKeyBase58: TypedArrayEncoder.toBase58(publicKey),
-          },
-        ],
-        authentication: [`${did}#controller`, `${did}#controllerKey`],
-        assertionMethod: [`${did}#controller`, `${did}#controllerKey`],
-      },
-      DidDocument,
-    )
+    didDocument = ethrDocument(did, publicKey)
     documents.set(did, didDocument)
     // As EthrDidRegistrar stores it: the key is linked to `#controllerKey`, not `#controller`.
     await agent.dids.import({
@@ -161,15 +167,15 @@ describe('self-attested credential — did:ethr sign-then-verify against @credo-
     await agent.shutdown()
   })
 
-  const credential = () =>
+  const credential = (issuer = did) =>
     new W3cCredential({
       id: `urn:uuid:${randomUUID()}`,
       context: ['https://www.w3.org/2018/credentials/v1'],
       type: ['VerifiableCredential'],
-      issuer: did,
+      issuer,
       issuanceDate: new Date().toISOString(),
       expirationDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-      credentialSubject: { id: did, claims: {} } as never,
+      credentialSubject: { id: issuer, claims: {} } as never,
     })
 
   it('fails with the first assertionMethod entry, as the endpoint did before — the QA error', async () => {
@@ -224,5 +230,59 @@ describe('self-attested credential — did:ethr sign-then-verify against @credo-
         verificationMethod: verificationMethod as string,
       }),
     ).rejects.toThrow(/does not match the suite/)
+  })
+
+  it('signs and verifies when an older record links the key to #controller, as long as the key sits under its legacy id', async () => {
+    // EthrDidRegistrar imports the key with kid = base58 of the compressed public key, which is
+    // Credo's legacy key id. Signing with #controllerKey finds no link for it and falls back to that
+    // id, so a record that links the key to the wrong entry still signs.
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'secp256k1' })
+    const privateJwk = privateKey.export({ format: 'jwk' }) as {
+      kty: 'EC'
+      crv: 'secp256k1'
+      x: string
+      y: string
+      d: string
+    }
+    const publicKey = compressedPublicKey(privateJwk)
+    const legacyKeyId = TypedArrayEncoder.toBase58(publicKey)
+    await agent.kms.importKey({ privateJwk: { ...privateJwk, kid: legacyKeyId } })
+
+    const older = `did:ethr:sepolia:0x${publicKey.toString('hex')}`
+    const olderDocument = ethrDocument(older, publicKey)
+    documents.set(older, olderDocument)
+    await agent.dids.import({
+      did: older,
+      didDocument: olderDocument,
+      keys: [{ didDocumentRelativeKeyId: '#controller', kmsKeyId: legacyKeyId }],
+    })
+
+    const { didDocument: created } = await agent.dids.resolveCreatedDidDocumentWithKeys(older)
+    const acceptedTypes = agent.dependencyManager
+      .resolve(W3cJsonLdCredentialService)
+      .getVerificationMethodTypesByProofType(PROOF_TYPE)
+    const verificationMethod = selectAssertionMethod(created, acceptedTypes)?.id
+    expect(verificationMethod).toBe(`${older}#controllerKey`)
+
+    const signed = await agent.w3cCredentials.signCredential({
+      format: ClaimFormat.LdpVc,
+      credential: credential(older),
+      proofType: PROOF_TYPE,
+      verificationMethod: verificationMethod as string,
+    })
+    const result = await agent.w3cCredentials.verifyCredential({
+      credential: signed as InstanceType<typeof W3cJsonLdVerifiableCredential>,
+    })
+
+    expect(result.isValid).toBe(true)
+  }, 30000)
+
+  it('reads the key type before signing: #controllerKey fits EcdsaSecp256k1Signature2019, not Ed25519Signature2018', async () => {
+    const { didDocument: created } = await agent.dids.resolveCreatedDidDocumentWithKeys(did)
+    const registry = agent.dependencyManager.resolve(SignatureSuiteRegistry)
+    const controllerKey = created.dereferenceVerificationMethod(`${did}#controllerKey`)
+
+    expect(keyFitsProofType(registry, controllerKey, PROOF_TYPE)).toBe(true)
+    expect(keyFitsProofType(registry, controllerKey, 'Ed25519Signature2018')).toBe(false)
   })
 })

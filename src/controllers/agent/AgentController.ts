@@ -20,6 +20,7 @@ import {
   ClaimFormat,
   DidRepository,
   JsonTransformer,
+  SignatureSuiteRegistry,
   W3cCredential,
   W3cCredentialRecord,
   W3cJsonLdCredentialService,
@@ -38,7 +39,7 @@ import { NotFoundError, BadRequestError } from '../../errors'
 import { getAgentRuntimeConfig, getReleaseVersion, getStorageVersion } from '../../utils/agentInfo'
 import { findDefaultDidRecords } from '../../utils/defaultDid'
 import { verifyDidBoundSignature } from '../../utils/didSignatureVerification'
-import { selectAssertionMethod } from '../../utils/verificationMethodSelection'
+import { keyFitsProofType, selectAssertionMethod } from '../../utils/verificationMethodSelection'
 import { isProbeId, probeWebhook } from '../../utils/webhookProbe'
 
 // 100 years: effectively non-expiring default when the caller doesn't request an expiry (W3cCredential requires some value).
@@ -436,7 +437,18 @@ export class AgentController extends Controller {
       } catch {
         throw new BadRequestError(`proofType '${selfAttestedProofType}' is not supported by this agent`)
       }
-      const selfDidVerificationMethod = selectAssertionMethod(defaultDidDocument, acceptedTypes)?.id
+      const selected = selectAssertionMethod(defaultDidDocument, acceptedTypes)
+      // A fallback key of a type the suite does not list is kept only if its key still fits the suite
+      // (e.g. a did:ethr asked for Ed25519Signature2018 does not): the same 400, not a 500 from the signer.
+      const misfit =
+        selected?.verificationMethod?.type &&
+        !acceptedTypes.includes(selected.verificationMethod.type) &&
+        !keyFitsProofType(
+          request.agent.dependencyManager.resolve(SignatureSuiteRegistry),
+          selected.verificationMethod,
+          selfAttestedProofType,
+        )
+      const selfDidVerificationMethod = misfit ? undefined : selected?.id
       if (!selfDidVerificationMethod) {
         throw new BadRequestError(
           `DID '${selfDid}' has no assertionMethod key usable with proofType '${selfAttestedProofType}'`,

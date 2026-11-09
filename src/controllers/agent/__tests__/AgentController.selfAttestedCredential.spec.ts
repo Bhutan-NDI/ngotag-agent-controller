@@ -68,6 +68,7 @@ const {
   W3cJsonLdCredentialService,
   DidDocument,
   JsonTransformer,
+  SignatureSuiteRegistry,
 } = await import('@credo-ts/core')
 
 // The verification method types each registered suite signs with, as Credo's SignatureSuiteRegistry
@@ -84,6 +85,19 @@ const w3cJsonLdCredentialService = {
     }
     return types
   },
+}
+
+// The registry's key-type side: which suites a key's curve can sign, as the polygon/ethr and Ed25519 suites
+// register them. suiteClass stands in as the proof type name.
+const SUITES_BY_CURVE: Record<string, string[]> = {
+  secp256k1: ['EcdsaSecp256k1Signature2019'],
+  Ed25519: ['Ed25519Signature2018'],
+}
+const signatureSuiteRegistry = {
+  getByProofType: jest.fn((proofType: string) => ({ suiteClass: proofType })),
+  getAllByPublicJwkType: jest.fn((publicJwk: { toJson(): { crv?: string } }) =>
+    (SUITES_BY_CURVE[publicJwk.toJson().crv ?? ''] ?? []).map((suiteClass) => ({ suiteClass })),
+  ),
 }
 
 const SELF_DID = 'did:key:self-attesting-tenant'
@@ -133,7 +147,9 @@ function makeAgent({
           ? didRepository
           : token === W3cJsonLdCredentialService
             ? w3cJsonLdCredentialService
-            : undefined,
+            : token === SignatureSuiteRegistry
+              ? signatureSuiteRegistry
+              : undefined,
       ) as jest.Mock,
     },
     _didRepository: didRepository,
@@ -1068,7 +1084,7 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
                     id: `${ETHR_DID}#controllerKey`,
                     type: 'EcdsaSecp256k1VerificationKey2019',
                     controller: ETHR_DID,
-                    publicKeyBase58: 'mw3Lk4Ex7tUkAXT2YNdBfhPWbSJMBwHXV9uUe1hbr3Q6',
+                    publicKeyBase58: 'hHPB36tXFaoeEmVAzpnZCGsgxWJiRKdgyWS45qJodhNT',
                   },
                 ]
               : []),
@@ -1121,6 +1137,29 @@ describe('AgentController.createW3cSelfAttestedCredential', () => {
         statusCode: 400,
         message: `DID '${ETHR_DID}' has no assertionMethod key usable with proofType 'EcdsaSecp256k1Signature2019'`,
       })
+      expect(signCredential).not.toHaveBeenCalled()
+    })
+
+    it('answers 400 before signing when asked for Ed25519Signature2018: the secp256k1 key does not fit that suite', async () => {
+      const signCredential = jest.fn() as jest.Mock
+      const agent = makeAgent({
+        defaultDid: SELF_DID,
+        didDocument: ethrDocument(),
+        allCreatedDids: [{ did: ETHR_DID }],
+        signCredentialImpl: signCredential,
+      })
+
+      await expect(
+        new AgentController().createW3cSelfAttestedCredential(makeRequest(agent), {
+          ...SECP256K1_BODY,
+          proofType: 'Ed25519Signature2018',
+        } as never),
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        message: `DID '${ETHR_DID}' has no assertionMethod key usable with proofType 'Ed25519Signature2018'`,
+      })
+      // Refused on the key's type, read from #controllerKey, not because the key could not be read.
+      expect(signatureSuiteRegistry.getAllByPublicJwkType).toHaveBeenCalled()
       expect(signCredential).not.toHaveBeenCalled()
     })
 
