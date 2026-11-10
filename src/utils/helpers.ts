@@ -7,6 +7,8 @@ import axios from 'axios'
 import { randomBytes } from 'crypto'
 
 import { TRUST_SERVICE_ENV_KEYS, curveToKty, keyAlgorithmToCurve } from './constant'
+import { firstVerificationMethodWithKey } from './verificationMethodSelection'
+
 const TOKEN_EXPIRY_BUFFER_SECONDS = 60
 const tokenCache = new Map<string, { token: string; expiresAt: number }>()
 
@@ -117,17 +119,13 @@ export function getTypeFromCurve(key: Curve | KeyAlgorithm): OkpType | EcType {
   return keyTypeInfo
 }
 
+// The key that signs a status list: the first assertionMethod key, else the first verificationMethod
+// key, skipping entries with no public key (did:ethr's `#controller`, ahead of `#controllerKey`).
 export function getVerificationMethod(didDocument: DidDocument): VerificationMethod | undefined {
-  // Try assertionMethod first
-  const assertionMethod = didDocument.assertionMethod?.[0]
-  if (assertionMethod) {
-    if (typeof assertionMethod === 'string') {
-      return didDocument.dereferenceVerificationMethod(assertionMethod)
-    }
-    return assertionMethod as VerificationMethod
-  }
-  // Fallback to verificationMethod[0]
-  return didDocument.verificationMethod?.[0]
+  return (
+    firstVerificationMethodWithKey(didDocument, 'assertionMethod') ??
+    firstVerificationMethodWithKey(didDocument, 'verificationMethod')
+  )
 }
 
 export function getAlgFromVerificationMethod(vm: VerificationMethod): string {

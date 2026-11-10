@@ -11,6 +11,7 @@ import { Request as Req } from 'express'
 import { injectable } from 'tsyringe'
 
 import { SignerMethod } from '../../../enums'
+import { firstVerificationMethodWithKey } from '../../../utils/verificationMethodSelection'
 import {
   CreateAuthorizationRequest,
   OpenId4VCDCQLVerificationSessionRecord,
@@ -37,10 +38,9 @@ export class VerificationSessionsService {
 
       const didDocument = await agentReq.agent.dids.resolveDidDocument(didToResolve)
 
-      let verifierDidUrl: string | undefined = undefined
-      if (didDocument.verificationMethod?.[0]?.id) {
-        verifierDidUrl = didDocument.verificationMethod[0].id
-      }
+      // The first verificationMethod that carries a public key: did:ethr lists the keyless
+      // `#controller` first, which cannot sign the request.
+      const verifierDidUrl = firstVerificationMethodWithKey(didDocument, 'verificationMethod')?.id
 
       if (!verifierDidUrl) {
         throw new Error('No matching verification method found on verifier DID document')
