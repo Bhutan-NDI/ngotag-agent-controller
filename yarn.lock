@@ -389,17 +389,17 @@
   resolved "https://registry.yarnpkg.com/@bcoe/v8-coverage/-/v8-coverage-0.2.3.tgz#75a2e8b51cb758a7553d6804a5932d7aace75c39"
   integrity sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==
 
-"@bhutan-ndi/ethr-credo-module@2.0.0":
-  version "2.0.0"
-  resolved "https://registry.yarnpkg.com/@bhutan-ndi/ethr-credo-module/-/ethr-credo-module-2.0.0.tgz#d5e7ece03e62e7ccffe1fc8f51dc64ebc17dcd61"
-  integrity sha512-AUE2TeuFaDlRkXr+EdhSxndP1Scf1+kk5Dc7LeZyUsG43UtucU00ZkAScs0GFdAjh9wBYItS/+UxWv7yi5GSOA==
+"@bhutan-ndi/ethr-credo-module@2.1.0-alpha-20261113061846":
+  version "2.1.0-alpha-20261113061846"
+  resolved "https://registry.yarnpkg.com/@bhutan-ndi/ethr-credo-module/-/ethr-credo-module-2.1.0-alpha-20261113061846.tgz#c1be99359e5a2ea5058d13e6d1ec85b354640424"
+  integrity sha512-MWRvZ5p1tupNvqcIVoVKqPpqx41IJw86DT4u5osm9Bme4qVdAjBObw+7RiZW5pl3rdUFIa7ZJG0nFaMaEP+uKg==
   dependencies:
     axios "^1.6.3"
+    canonicalize "^4.0.0"
     did-resolver "^4.1.0"
     ethers "^6.9.0"
     ethr-did "^3.0.38"
     ethr-did-resolver "~11.0.4"
-    keccak256 "^1.0.6"
 
 "@credo-ts/anoncreds@0.6.2":
   version "0.6.2"
@@ -3760,6 +3760,11 @@ canonicalize@^2.0.0:
   version "2.1.0"
   resolved "https://registry.npmjs.org/canonicalize/-/canonicalize-2.1.0.tgz#92a20ecfb94e96591badf4977dc2fb1bfbc31dc5"
   integrity sha512-F705O3xrsUtgt98j7leetNhTWPe+5S72rlL5O4jA1pKqBVQ/dT1O1D6PFxmSXvc0SUOinWS57DKx0I3CHrXJHQ==
+
+canonicalize@^4.0.0:
+  version "4.0.0"
+  resolved "https://registry.yarnpkg.com/canonicalize/-/canonicalize-4.0.0.tgz#b13b8e26b9043a56cb751c27bee8e0c2203bb9cc"
+  integrity sha512-FEdXzwWs+N3rZqEqpqleiY9M1A6IAf9oo1zHFABnLW9FcJ/jzsu+G/Ks3Hq3FglmPKe80GeGBw8ZXLEnwPB0vQ==
 
 chalk@^4.0.0, chalk@^4.1.2:
   version "4.1.2"

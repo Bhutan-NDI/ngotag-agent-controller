@@ -2450,6 +2450,25 @@ const models: TsoaRoute.Models = {
         "additionalProperties": false,
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "SchemaVerificationStatus": {
+        "dataType": "refAlias",
+        "type": {"dataType":"union","subSchemas":[{"dataType":"enum","enums":["verified"]},{"dataType":"enum","enums":["legacy"]},{"dataType":"enum","enums":["failed"]}],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "SchemaVerificationResult": {
+        "dataType": "refObject",
+        "properties": {
+            "status": {"ref":"SchemaVerificationStatus","required":true},
+            "reason": {"dataType":"string"},
+            "schemaUrl": {"dataType":"string","required":true},
+            "checksumAlgorithm": {"dataType":"string"},
+            "expectedChecksum": {"dataType":"string"},
+            "computedChecksum": {"dataType":"string"},
+            "writerChecked": {"dataType":"boolean","required":true},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "JobStatus": {
         "dataType": "refAlias",
         "type": {"dataType":"union","subSchemas":[{"dataType":"enum","enums":["idle"]},{"dataType":"enum","enums":["running"]},{"dataType":"enum","enums":["completed"]}],"validators":{}},
@@ -2470,7 +2489,7 @@ const models: TsoaRoute.Models = {
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "Record_RotationBucket.number_": {
         "dataType": "refAlias",
-        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"pending":{"dataType":"double","required":true},"retrying":{"dataType":"double","required":true},"failed":{"dataType":"double","required":true},"waiting":{"dataType":"double","required":true},"stale":{"dataType":"double","required":true},"refused":{"dataType":"double","required":true},"updated":{"dataType":"double","required":true}},"validators":{}},
+        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"failed":{"dataType":"double","required":true},"pending":{"dataType":"double","required":true},"retrying":{"dataType":"double","required":true},"waiting":{"dataType":"double","required":true},"stale":{"dataType":"double","required":true},"refused":{"dataType":"double","required":true},"updated":{"dataType":"double","required":true}},"validators":{}},
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "RotationCounts": {
@@ -6627,6 +6646,45 @@ export function RegisterRoutes(app: Router) {
 
               await templateService.apiHandler({
                 methodName: 'migrateSchema',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: undefined,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsEthereum_verifySchema: Record<string, TsoaRoute.ParameterSchema> = {
+                request: {"in":"request","name":"request","required":true,"dataType":"object"},
+                verifySchemaRequest: {"in":"body","name":"verifySchemaRequest","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"schemaUrl":{"dataType":"string"},"schemaId":{"dataType":"string","required":true},"did":{"dataType":"string","required":true}}},
+                internalServerError: {"in":"res","name":"500","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"message":{"dataType":"string","required":true}}},
+                badRequestError: {"in":"res","name":"400","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"reason":{"dataType":"string","required":true}}},
+        };
+        app.post('/ethereum/verify-schema',
+            authenticateMiddleware([{"jwt":["tenant","dedicated"]}]),
+            ...(fetchMiddlewares<RequestHandler>(Ethereum)),
+            ...(fetchMiddlewares<RequestHandler>(Ethereum.prototype.verifySchema)),
+
+            async function Ethereum_verifySchema(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsEthereum_verifySchema, request, response });
+
+                const container: IocContainer = typeof iocContainer === 'function' ? (iocContainer as IocContainerFactory)(request) : iocContainer;
+
+                const controller: any = await container.get<Ethereum>(Ethereum);
+                if (typeof controller['setStatus'] === 'function') {
+                controller.setStatus(undefined);
+                }
+
+              await templateService.apiHandler({
+                methodName: 'verifySchema',
                 controller,
                 response,
                 next,
