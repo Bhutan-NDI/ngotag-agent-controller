@@ -5701,6 +5701,47 @@
 				"type": "object",
 				"additionalProperties": false
 			},
+			"SchemaVerificationStatus": {
+				"type": "string",
+				"enum": [
+					"verified",
+					"legacy",
+					"failed"
+				]
+			},
+			"SchemaVerificationResult": {
+				"properties": {
+					"status": {
+						"$ref": "#/components/schemas/SchemaVerificationStatus"
+					},
+					"reason": {
+						"type": "string"
+					},
+					"schemaUrl": {
+						"type": "string"
+					},
+					"checksumAlgorithm": {
+						"type": "string"
+					},
+					"expectedChecksum": {
+						"type": "string"
+					},
+					"computedChecksum": {
+						"type": "string"
+					},
+					"writerChecked": {
+						"type": "boolean",
+						"description": "Whether the record's writer (DID key vs. contract admin or a rotated-out key) was checked."
+					}
+				},
+				"required": [
+					"status",
+					"schemaUrl",
+					"writerChecked"
+				],
+				"type": "object",
+				"additionalProperties": false
+			},
 			"JobStatus": {
 				"type": "string",
 				"enum": [
@@ -5742,15 +5783,15 @@
 			},
 			"Record_RotationBucket.number_": {
 				"properties": {
+					"failed": {
+						"type": "number",
+						"format": "double"
+					},
 					"pending": {
 						"type": "number",
 						"format": "double"
 					},
 					"retrying": {
-						"type": "number",
-						"format": "double"
-					},
-					"failed": {
 						"type": "number",
 						"format": "double"
 					},
@@ -5772,9 +5813,9 @@
 					}
 				},
 				"required": [
+					"failed",
 					"pending",
 					"retrying",
-					"failed",
 					"waiting",
 					"stale",
 					"refused",
@@ -12843,6 +12884,98 @@
 						"application/json": {
 							"schema": {
 								"properties": {
+									"schemaId": {
+										"type": "string"
+									},
+									"did": {
+										"type": "string"
+									}
+								},
+								"required": [
+									"schemaId",
+									"did"
+								],
+								"type": "object"
+							}
+						}
+					}
+				}
+			}
+		},
+		"/ethereum/verify-schema": {
+			"post": {
+				"operationId": "VerifySchema",
+				"responses": {
+					"200": {
+						"description": "Verification result; status is `verified`, `legacy` (record predates checksums) or `failed`",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/SchemaVerificationResult"
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"reason": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"reason"
+									],
+									"type": "object"
+								}
+							}
+						}
+					},
+					"500": {
+						"description": "",
+						"content": {
+							"application/json": {
+								"schema": {
+									"properties": {
+										"message": {
+											"type": "string"
+										}
+									},
+									"required": [
+										"message"
+									],
+									"type": "object"
+								}
+							}
+						}
+					}
+				},
+				"description": "Verify an ethereum based W3C schema against its on-chain record",
+				"tags": [
+					"Ethereum"
+				],
+				"security": [
+					{
+						"jwt": [
+							"tenant",
+							"dedicated"
+						]
+					}
+				],
+				"parameters": [],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"properties": {
+									"schemaUrl": {
+										"type": "string",
+										"description": "URL the credential references; defaults to the schema file server URL for the schema ID"
+									},
 									"schemaId": {
 										"type": "string"
 									},
