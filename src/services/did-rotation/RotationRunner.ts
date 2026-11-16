@@ -8,7 +8,7 @@ import { DidCommConnectionService, DidCommDidExchangeState } from '@credo-ts/did
 import { randomUUID } from 'crypto'
 
 import { type Leasing, RUNNER_LEASE, RotationLease } from './RotationLease'
-import { bucketFor } from './rotationMetadata'
+import { bucketFor, staleAfterMs } from './rotationMetadata'
 
 export const DEFAULT_BATCH_SIZE = 50
 export const DEFAULT_INTERVAL_MS = 60_000
@@ -35,6 +35,8 @@ export type RotationCounts = Record<RotationBucket, number> & { total: number }
 export interface RotationStatus {
   job: RotationJob
   counts: RotationCounts
+  // How long a rotation can go unanswered before it is counted as stale.
+  staleAfterSeconds: number
 }
 
 export interface StartOptions {
@@ -178,11 +180,12 @@ export class RotationRunner {
 
     const counts = emptyCounts()
     const job = await this.loadJob()
+    const staleAfter = staleAfterMs()
     for (const connection of await this.allCompleted()) {
       counts.total += 1
-      counts[this.bucketOf(connection, job)] += 1
+      counts[this.bucketOf(connection, job, staleAfter)] += 1
     }
-    const value = { job, counts }
+    const value = { job, counts, staleAfterSeconds: staleAfter / 1000 }
     this.cachedStatus = { at: Date.now(), value }
     return value
   }
@@ -234,8 +237,12 @@ export class RotationRunner {
   }
 
   // A connection made on this agent after the job began needs no rotation, so it counts as updated.
-  private bucketOf(connection: DidCommConnectionRecord, job: RotationJob): RotationBucket {
-    return this.isNative(connection, job) ? 'updated' : bucketFor(connection, this.now())
+  private bucketOf(
+    connection: DidCommConnectionRecord,
+    job: RotationJob,
+    staleAfter: number = staleAfterMs(),
+  ): RotationBucket {
+    return this.isNative(connection, job) ? 'updated' : bucketFor(connection, this.now(), staleAfter)
   }
 
   private validPositive(value: number | undefined, fallback: number): number {

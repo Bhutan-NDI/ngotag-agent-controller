@@ -5809,11 +5809,16 @@
 					},
 					"counts": {
 						"$ref": "#/components/schemas/RotationCounts"
+					},
+					"staleAfterSeconds": {
+						"type": "number",
+						"format": "double"
 					}
 				},
 				"required": [
 					"job",
-					"counts"
+					"counts",
+					"staleAfterSeconds"
 				],
 				"type": "object",
 				"additionalProperties": false
