@@ -446,5 +446,28 @@ describe('RotationRunner', () => {
       })
       expect(job.status).toBe('idle')
     })
+
+    it('reports the stale limit in seconds, and counts against it', async () => {
+      const sentAt = new Date(Date.now() - 2 * 3_600_000).toISOString()
+      const { runner } = build([
+        connection('s', { marker: true, rotation: { state: 'sent', newDid: 'n', attempts: 1, sentAt } }),
+      ])
+      const previous = process.env.MIGRATION_ROTATION_STALE_AFTER_SECONDS
+      try {
+        expect((await runner.status()).staleAfterSeconds).toBe(30 * 86_400)
+
+        process.env.MIGRATION_ROTATION_STALE_AFTER_SECONDS = '3600'
+        const { runner: configured } = build([
+          connection('s', { marker: true, rotation: { state: 'sent', newDid: 'n', attempts: 1, sentAt } }),
+        ])
+        const status = await configured.status()
+
+        expect(status.staleAfterSeconds).toBe(3600)
+        expect(status.counts).toMatchObject({ stale: 1, waiting: 0 })
+      } finally {
+        if (undefined === previous) delete process.env.MIGRATION_ROTATION_STALE_AFTER_SECONDS
+        else process.env.MIGRATION_ROTATION_STALE_AFTER_SECONDS = previous
+      }
+    })
   })
 })
