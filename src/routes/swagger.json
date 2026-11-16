@@ -5684,15 +5684,15 @@
 				},
 				"type": "object"
 			},
-			"DidCommProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_": {
+			"DidCommProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-HolderBoundDifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_": {
 				"properties": {},
 				"type": "object",
 				"description": "Get the input or output for the getCredentialsForRequest and selectCredentialsForRequest method with specific format data"
 			},
-			"GetCredentialsForProofRequestReturn__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_": {
+			"GetCredentialsForProofRequestReturn__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-HolderBoundDifPresentationExchangeProofFormatService_41_-Array__41_-Array_": {
 				"properties": {
 					"proofFormats": {
-						"$ref": "#/components/schemas/DidCommProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_"
+						"$ref": "#/components/schemas/DidCommProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-HolderBoundDifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_"
 					}
 				},
 				"required": [
@@ -12593,7 +12593,7 @@
 						"content": {
 							"application/json": {
 								"schema": {
-									"$ref": "#/components/schemas/GetCredentialsForProofRequestReturn__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_"
+									"$ref": "#/components/schemas/GetCredentialsForProofRequestReturn__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-HolderBoundDifPresentationExchangeProofFormatService_41_-Array__41_-Array_"
 								}
 							}
 						}
