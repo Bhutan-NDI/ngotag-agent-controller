@@ -389,10 +389,10 @@
   resolved "https://registry.yarnpkg.com/@bcoe/v8-coverage/-/v8-coverage-0.2.3.tgz#75a2e8b51cb758a7553d6804a5932d7aace75c39"
   integrity sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==
 
-"@bhutan-ndi/ethr-credo-module@2.1.0-alpha-20261113061846":
-  version "2.1.0-alpha-20261113061846"
-  resolved "https://registry.yarnpkg.com/@bhutan-ndi/ethr-credo-module/-/ethr-credo-module-2.1.0-alpha-20261113061846.tgz#c1be99359e5a2ea5058d13e6d1ec85b354640424"
-  integrity sha512-MWRvZ5p1tupNvqcIVoVKqPpqx41IJw86DT4u5osm9Bme4qVdAjBObw+7RiZW5pl3rdUFIa7ZJG0nFaMaEP+uKg==
+"@bhutan-ndi/ethr-credo-module@2.1.0":
+  version "2.1.0"
+  resolved "https://registry.yarnpkg.com/@bhutan-ndi/ethr-credo-module/-/ethr-credo-module-2.1.0.tgz#cb802ab06243be98c07145952ad86396de77efd4"
+  integrity sha512-FDM1lwz+25lbaDT6hZHNHNwgEM0bWU28GTjJFWHqJ1Rz/9Z/PW2YQBWwWDHhDPdfv0dxO/WzmMeSgoXq/SJOHQ==
   dependencies:
     axios "^1.6.3"
     canonicalize "^4.0.0"
