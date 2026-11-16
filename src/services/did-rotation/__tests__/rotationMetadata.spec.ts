@@ -2,11 +2,12 @@ import { DidCommConnectionRecord, DidCommDidExchangeRole, DidCommDidExchangeStat
 
 import {
   CREDO_DID_ROTATE_KEY,
+  DEFAULT_STALE_AFTER_MS,
   MIGRATION_ROTATION_KEY,
-  STALE_AFTER_MS,
   bucketFor,
   isNeverLeftError,
   retryDelayMs,
+  staleAfterMs,
 } from '../rotationMetadata'
 
 const sendError = (...reasons: string[]) =>
@@ -77,6 +78,20 @@ describe('retryDelayMs', () => {
   })
 })
 
+describe('staleAfterMs', () => {
+  it('is 30 days when the setting is absent', () => {
+    expect(staleAfterMs({})).toBe(30 * 24 * 60 * 60 * 1000)
+  })
+
+  it('reads the setting in seconds', () => {
+    expect(staleAfterMs({ MIGRATION_ROTATION_STALE_AFTER_SECONDS: '3600' })).toBe(3_600_000)
+  })
+
+  it.each(['', '0', '-5', '1.5', 'abc', ' '])('keeps the default for %j', (value) => {
+    expect(staleAfterMs({ MIGRATION_ROTATION_STALE_AFTER_SECONDS: value })).toBe(DEFAULT_STALE_AFTER_MS)
+  })
+})
+
 describe('bucketFor', () => {
   const now = new Date('2026-11-20T00:00:00Z')
   const sentAt = (ms: number) => new Date(now.getTime() - ms).toISOString()
@@ -94,13 +109,13 @@ describe('bucketFor', () => {
     ],
     [
       'a rotation with no answer for 30 days',
-      { state: 'sent', newDid: 'n', attempts: 1, sentAt: sentAt(STALE_AFTER_MS) },
+      { state: 'sent', newDid: 'n', attempts: 1, sentAt: sentAt(DEFAULT_STALE_AFTER_MS) },
       true,
       'stale',
     ],
     [
       'a rotation just under 30 days old',
-      { state: 'sent', newDid: 'n', attempts: 1, sentAt: sentAt(STALE_AFTER_MS - 1) },
+      { state: 'sent', newDid: 'n', attempts: 1, sentAt: sentAt(DEFAULT_STALE_AFTER_MS - 1) },
       true,
       'waiting',
     ],
@@ -112,6 +127,27 @@ describe('bucketFor', () => {
     ],
   ])('puts %s in the right bucket', (_name, rotation, marker, bucket) => {
     expect(bucketFor(connection(rotation, marker), now)).toBe(bucket)
+  })
+
+  it('uses the stale threshold it is given', () => {
+    const unanswered = connection({ state: 'sent', newDid: 'n', attempts: 1, sentAt: sentAt(3_600_000) }, true)
+
+    expect(bucketFor(unanswered, now, 3_600_000)).toBe('stale')
+    expect(bucketFor(unanswered, now, 3_600_001)).toBe('waiting')
+  })
+
+  it('reads the threshold from MIGRATION_ROTATION_STALE_AFTER_SECONDS when none is given', () => {
+    const unanswered = connection({ state: 'sent', newDid: 'n', attempts: 1, sentAt: sentAt(3_600_000) }, true)
+    const previous = process.env.MIGRATION_ROTATION_STALE_AFTER_SECONDS
+    try {
+      process.env.MIGRATION_ROTATION_STALE_AFTER_SECONDS = '3600'
+      expect(bucketFor(unanswered, now)).toBe('stale')
+      delete process.env.MIGRATION_ROTATION_STALE_AFTER_SECONDS
+      expect(bucketFor(unanswered, now)).toBe('waiting')
+    } finally {
+      if (undefined === previous) delete process.env.MIGRATION_ROTATION_STALE_AFTER_SECONDS
+      else process.env.MIGRATION_ROTATION_STALE_AFTER_SECONDS = previous
+    }
   })
 
   it('counts a connection already on the new DID as updated, even though the commit did not land', () => {

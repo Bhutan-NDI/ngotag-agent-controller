@@ -29,7 +29,14 @@ export interface PendingCredoRotation {
 
 // After this long without an ack the connection is reported stale. It keeps working through forwarding, and the
 // rotation still commits if the holder ever uses the new DID.
-export const STALE_AFTER_MS = 30 * 24 * 60 * 60 * 1000
+export const DEFAULT_STALE_AFTER_MS = 30 * 24 * 60 * 60 * 1000
+
+/** MIGRATION_ROTATION_STALE_AFTER_SECONDS in milliseconds; unset, zero or not a whole number keeps the default. */
+export const staleAfterMs = (env: NodeJS.ProcessEnv = process.env): number => {
+  const seconds = Number(env.MIGRATION_ROTATION_STALE_AFTER_SECONDS)
+  return Number.isInteger(seconds) && 0 < seconds ? seconds * 1000 : DEFAULT_STALE_AFTER_MS
+}
+
 export const MAX_SEND_ATTEMPTS = 5
 const RETRY_BACKOFF_BASE_MS = 60_000
 const RETRY_BACKOFF_MAX_MS = 60 * 60 * 1000
@@ -67,7 +74,11 @@ export const isNeverLeftError = (error: unknown): boolean => {
 
 export type RotationBucket = 'pending' | 'retrying' | 'failed' | 'waiting' | 'stale' | 'refused' | 'updated'
 
-export const bucketFor = (connection: DidCommConnectionRecord, now: Date): RotationBucket => {
+export const bucketFor = (
+  connection: DidCommConnectionRecord,
+  now: Date,
+  staleAfter: number = staleAfterMs(),
+): RotationBucket => {
   const rotation = getRotation(connection)
   if (!rotation) return 'pending'
   switch (rotation.state) {
@@ -83,7 +94,7 @@ export const bucketFor = (connection: DidCommConnectionRecord, now: Date): Rotat
       // Credo drops its marker when the holder answers the rotation with a problem report.
       if (!getPendingCredoRotation(connection)) return 'refused'
       const age = now.getTime() - new Date(rotation.sentAt ?? now).getTime()
-      return age >= STALE_AFTER_MS ? 'stale' : 'waiting'
+      return age >= staleAfter ? 'stale' : 'waiting'
     }
   }
 }
