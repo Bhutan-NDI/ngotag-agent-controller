@@ -42,8 +42,8 @@ export class ConnectionRotationController extends Controller {
   }
 
   /**
-   * Progress of the rotation: how many connections are pending, waiting for an acknowledgement, stale (no answer for
-   * 30 days), refused, updated, retrying or failed.
+   * Progress of the rotation: how many connections are pending, waiting for an acknowledgement, stale (no answer within
+   * MIGRATION_ROTATION_STALE_AFTER_SECONDS, default 30 days), refused, updated, retrying or failed.
    */
   @Get('/didcomm/connections/rotate-all/status')
   public async getRotationStatus(): Promise<RotationStatus> {

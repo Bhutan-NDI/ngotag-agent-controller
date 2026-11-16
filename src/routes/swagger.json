@@ -13024,7 +13024,7 @@
 						}
 					}
 				},
-				"description": "Progress of the rotation: how many connections are pending, waiting for an acknowledgement, stale (no answer for\n30 days), refused, updated, retrying or failed.",
+				"description": "Progress of the rotation: how many connections are pending, waiting for an acknowledgement, stale (no answer within\nMIGRATION_ROTATION_STALE_AFTER_SECONDS, default 30 days), refused, updated, retrying or failed.",
 				"tags": [
 					"Connections"
 				],
