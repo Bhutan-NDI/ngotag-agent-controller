@@ -40,7 +40,6 @@ import {
   DidCommHttpOutboundTransport,
   DidCommWsOutboundTransport,
   DidCommJsonLdCredentialFormatService,
-  DidCommDifPresentationExchangeProofFormatService,
   DidCommAutoAcceptCredential,
   DidCommAutoAcceptProof,
   DidCommProofV2Protocol,
@@ -89,6 +88,7 @@ import { RedisCache } from './utils/RedisCache'
 import { adminRequestTimeoutMs } from './utils/adminRequestTimeout'
 import { AuthTypes, getAuthType } from './utils/auth'
 import { generateSecretKey } from './utils/helpers'
+import { HolderBoundDifPresentationExchangeProofFormatService } from './utils/holderBinding'
 import { TsLogger } from './utils/logger'
 import { withNetworkErrorCodes } from './utils/networkErrorCodes'
 import {
@@ -224,7 +224,7 @@ const getModules = (
   const jsonLdCredentialFormatService = new DidCommJsonLdCredentialFormatService()
   const anonCredsCredentialFormatService = new AnonCredsDidCommCredentialFormatService()
   const anonCredsProofFormatService = new AnonCredsDidCommProofFormatService()
-  const presentationExchangeProofFormatService = new DidCommDifPresentationExchangeProofFormatService()
+  const presentationExchangeProofFormatService = new HolderBoundDifPresentationExchangeProofFormatService()
 
   return {
     askar: new AskarModule({
