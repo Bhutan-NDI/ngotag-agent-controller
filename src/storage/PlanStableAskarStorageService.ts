@@ -15,12 +15,16 @@ import { planTagQuery } from './tagQueryPlan'
  * - `offset` or `orderBy`: a page of a union cannot be cut without Askar's internal row order.
  * - more distinct matches than `limit`: the stock query might return a different subset.
  * Without `orderBy` Askar applies no ORDER BY, so the order of an unpaged result was never defined.
+ * A union returns its records in branch order (each branch in Askar's order): a caller that takes
+ * the first record, like PeerDidResolver on `findAllByDid`, gets the first branch's match.
  *
  * Each union branch is its own statement, run one after another, so the union is not one snapshot:
  * a record that changes between branch statements from matching only a later branch to matching only
  * an earlier one is missed by that call. The tag changes Credo makes (a DID rotation moving a DID
  * into `previousDids`, for one) go the other way, from earlier branches to later ones, and the
  * union then finds the record. Repository callers already read across statements.
+ *
+ * Each branch is also its own scan, with its own pool checkout: `findByDids` makes three.
  */
 @injectable()
 export class PlanStableAskarStorageService<T extends BaseRecord> extends AskarStorageService<T> {

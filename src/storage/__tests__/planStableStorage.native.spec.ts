@@ -4,7 +4,16 @@ import '@openwallet-foundation/askar-nodejs'
 import type { DependencyManager } from '@credo-ts/core'
 
 import { AskarStorageService } from '@credo-ts/askar'
-import { CacheModuleConfig, GenericRecord, InjectionSymbols, RecordDuplicateError, Repository } from '@credo-ts/core'
+import {
+  CacheModuleConfig,
+  DidDocumentRole,
+  DidRecord,
+  DidRepository,
+  GenericRecord,
+  InjectionSymbols,
+  RecordDuplicateError,
+  Repository,
+} from '@credo-ts/core'
 import {
   DidCommConnectionRecord,
   DidCommConnectionRepository,
@@ -274,6 +283,26 @@ describe('PlanStableAskarStorageService with native Askar', () => {
     expect(
       await connections.findByDids(context(), { ourDid: 'did:peer:1zpast', theirDid: 'did:peer:1zold' }),
     ).toBeNull()
+  })
+
+  it('returns a union in branch order, so findAllByDid lists an alternativeDids match first', async () => {
+    // PeerDidResolver takes the first record of findAllByDid, whose OR is
+    // [{ alternativeDids: [did] }, { did }]. Saved in the opposite order to show branch order wins.
+    const dids = new DidRepository(planned as any, { emit() {} } as any)
+    const stockDids = new DidRepository(stock as any, { emit() {} } as any)
+    const did = 'did:peer:4zorder'
+    const byDid = new DidRecord({ id: 'by-did', did, role: DidDocumentRole.Created })
+    const byAlternative = new DidRecord({
+      id: 'by-alternative',
+      did: 'did:peer:4zlong',
+      role: DidDocumentRole.Created,
+      tags: { alternativeDids: [did] },
+    })
+    await stock.save(context(), byDid)
+    await stock.save(context(), byAlternative)
+    const found = await dids.findAllByDid(context(), did)
+    expect(found.map((record) => record.id)).toEqual(['by-alternative', 'by-did'])
+    expect(ids(found)).toEqual(ids(await stockDids.findAllByDid(context(), did)))
   })
 })
 

@@ -25,6 +25,10 @@ export const MAX_OR_BRANCHES = 8
 /**
  * Tags whose value is shared by many records of a wallet: enumerations (roles, states, protocol
  * identifiers). They lead a lookup only when nothing better is available.
+ *
+ * A tag in neither this list nor GROUPING_TAGS ranks as a unique identifier. Add any new enum-like
+ * tag (a `status`, say) here, or an AND could be made to lead with it. That costs speed, never
+ * results: the matched records are the same in any order.
  */
 export const LOW_SELECTIVITY_TAGS: ReadonlySet<string> = new Set([
   'role',

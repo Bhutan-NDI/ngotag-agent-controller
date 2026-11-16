@@ -57,10 +57,17 @@ query runs instead:
 - **`offset` or `orderBy`** on an OR query: a page of a union cannot be cut without Askar's internal
   row order.
 - **More distinct matches than `limit`:** the stock query might pick a different subset. For
-  `findSingleByQuery` (limit 2) that is only the duplicate-record error path.
+  `findSingleByQuery` that is only the duplicate-record error path: the controller patches Credo to
+  query it with limit 2 (`patches/@credo-ts+core+0.6.2+003+bound-single-record-query.patch`; stock
+  Credo 0.6.2 passes no limit). Without a limit the union reads every branch and still reports
+  duplicates.
 - **Shapes outside the planner:** more than 8 branches, or an alternative with no condition.
 
 Without `orderBy`, Askar applies no `ORDER BY`, so the order of an unpaged result was never defined.
+A union returns its records in branch order, and each branch in Askar's order. This matters only to a
+caller that takes the first of several matches: `PeerDidResolver` takes the first record of
+`findAllByDid` (`$or: [{ alternativeDids: [did] }, { did }]`), so if two records ever matched the same
+DID, the one matching by `alternativeDids` now comes first. A native test pins this order.
 
 **One semantic difference.** Each branch is its own statement. A record that changes, between two
 branch statements, from matching only a later branch to matching only an earlier one is missed by
@@ -79,7 +86,14 @@ The planner itself costs about 0.4–3.5 µs per query on a laptop CPU.
 - Any other value fails startup.
 
 The setting applies to the root agent and every tenant. Rollback means setting it to `off` and
-replacing the tasks; there is no schema or data change.
+replacing the tasks; there is no schema or data change. The value is read at startup, so a change
+takes effect only on new tasks.
+
+**Production picks this up by default.** Unset means `on`, so every environment, production
+included, plans queries from the first release that contains this change. The gate for production
+is the normal release: it runs only after QA and Stage have run the same build. To hold production
+back while QA and Stage observe it, set `WALLET_QUERY_PLANNING=off` in production's environment
+before that release.
 
 The statement cache setting is independent. Planned queries are fast with the cache on or off.
 
@@ -154,9 +168,16 @@ These are synthetic single-lookup timings on a laptop. They are not production r
 a database capacity figure. The tag distribution is shaped like a busy verifier tenant. Other
 tenants (holders with many credentials, issuers) have other hot queries.
 
+The benchmark also ran on a single local connection, so it does not cover network round trips or
+pool contention. A union runs its branches one after another, each as its own scan with its own pool
+checkout: `findByDids`, on every inbound message, becomes three statements. Where the stock single
+query was already fast (small tenants), this can add latency.
+
 The production effect should be measured after a staged rollout:
 
 - wallet scan statement load and buffers per call;
+- per-lookup latency of the union paths (`findByDids`, OOB key lookup, DID resolution) on small
+  tenants as well as large ones, not only buffers;
 - connection pool occupancy;
 - inbound DIDComm and API latency tails;
 - database CPU.
