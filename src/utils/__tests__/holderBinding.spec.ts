@@ -25,7 +25,12 @@ import { jest } from '@jest/globals'
 import { askar } from '@openwallet-foundation/askar-nodejs'
 import { randomUUID } from 'node:crypto'
 
-import { findHolderBindingMismatch, HolderBoundDifPresentationExchangeProofFormatService } from '../holderBinding'
+import {
+  findHolderBindingMismatch,
+  getHolderBindingMode,
+  HolderBindingMode,
+  HolderBoundDifPresentationExchangeProofFormatService,
+} from '../holderBinding'
 
 describe('holder binding for JSON-LD presentations', () => {
   let agent: InstanceType<typeof Agent>
@@ -152,6 +157,12 @@ describe('holder binding for JSON-LD presentations', () => {
     await expect(verify(service, forged)).resolves.toBe(false)
   })
 
+  it("rejects a forged presentation carrying the holder's old proof in enforce mode", async () => {
+    process.env.HOLDER_BINDING_CHECK = 'enforce'
+    const withOldProof = { ...forged, proof: [forged.proof, honest.proof] }
+    await expect(verify(new HolderBoundDifPresentationExchangeProofFormatService(), withOldProof)).resolves.toBe(false)
+  })
+
   it('accepts and logs the mismatch in warn mode', async () => {
     process.env.HOLDER_BINDING_CHECK = 'warn'
     const warn = jest.spyOn(agent.context.config.logger, 'warn')
@@ -186,7 +197,26 @@ describe('findHolderBindingMismatch', () => {
     expect(findHolderBindingMismatch(presentation)).toBeUndefined()
   })
 
+  it('rejects a presentation with more than one proof', () => {
+    const presentation = {
+      ...signedBy('did:key:a', { id: 'did:key:a' }),
+      proof: [{ verificationMethod: 'did:key:b#key-1' }, { verificationMethod: 'did:key:a#key-1' }],
+    }
+    expect(findHolderBindingMismatch(presentation)).toMatch(/exactly one proof/)
+  })
+
   it('skips JWT presentations', () => {
     expect(findHolderBindingMismatch('eyJhbGciOi.payload.signature')).toBeUndefined()
+  })
+})
+
+describe('getHolderBindingMode', () => {
+  afterEach(() => delete process.env.HOLDER_BINDING_CHECK)
+
+  it('treats an invalid value as warn and logs it', () => {
+    process.env.HOLDER_BINDING_CHECK = 'enforced'
+    const logger = { warn: jest.fn() }
+    expect(getHolderBindingMode(logger as never)).toBe(HolderBindingMode.WARN)
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('enforced'))
   })
 })

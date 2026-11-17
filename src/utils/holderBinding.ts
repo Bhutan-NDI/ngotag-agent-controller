@@ -1,4 +1,4 @@
-import type { AgentContext } from '@credo-ts/core'
+import type { AgentContext, Logger } from '@credo-ts/core'
 import type { DidCommProofFormatProcessPresentationOptions } from '@credo-ts/didcomm'
 
 import { DidCommDifPresentationExchangeProofFormatService } from '@credo-ts/didcomm'
@@ -11,12 +11,18 @@ export enum HolderBindingMode {
 
 const ANONCREDS_DATA_INTEGRITY_CRYPTOSUITE = 'anoncreds-2023'
 
-/** HOLDER_BINDING_CHECK: off | warn (default) | enforce. */
-export function getHolderBindingMode(): HolderBindingMode {
+let invalidModeWarned = false
+
+/** HOLDER_BINDING_CHECK: off | warn (default) | enforce. An invalid value is logged once and treated as warn. */
+export function getHolderBindingMode(logger?: Logger): HolderBindingMode {
   const value = process.env.HOLDER_BINDING_CHECK?.trim().toLowerCase()
-  return Object.values(HolderBindingMode).includes(value as HolderBindingMode)
-    ? (value as HolderBindingMode)
-    : HolderBindingMode.WARN
+  if (!value) return HolderBindingMode.WARN
+  if (Object.values(HolderBindingMode).includes(value as HolderBindingMode)) return value as HolderBindingMode
+  if (!invalidModeWarned) {
+    invalidModeWarned = true
+    logger?.warn(`[holder-binding] invalid HOLDER_BINDING_CHECK "${value}"; expected off, warn or enforce. Using warn.`)
+  }
+  return HolderBindingMode.WARN
 }
 
 const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : value === undefined ? [] : [value])
@@ -32,24 +38,24 @@ const isAnonCredsDataIntegrity = (credential: Record<string, unknown>) =>
 
 /**
  * Returns why a JSON-LD presentation is not bound to its credentials' subjects, or undefined if it is: every
- * credential subject must be a DID that signed the presentation. JWT presentations are not checked.
+ * credential subject must be the DID of the presentation's only proof. JWT presentations are not checked.
  */
 export function findHolderBindingMismatch(presentation: unknown): string | undefined {
   if (!isRecord(presentation)) return undefined
 
-  const signers = new Set(
-    asArray(presentation.proof)
-      .map((proof) => (isRecord(proof) && typeof proof.verificationMethod === 'string' ? proof.verificationMethod : ''))
-      .map((verificationMethod) => verificationMethod.split('#')[0])
-      .filter(Boolean),
-  )
+  // jsonld-signatures accepts a presentation when any one of its proofs verifies, so only a single proof names the signer.
+  const proofs = asArray(presentation.proof)
+  const proof = proofs.length === 1 ? proofs[0] : undefined
+  const signer =
+    isRecord(proof) && typeof proof.verificationMethod === 'string' ? proof.verificationMethod.split('#')[0] : undefined
 
   for (const [index, credential] of asArray(presentation.verifiableCredential).entries()) {
     if (!isRecord(credential)) return `credential ${index} is not a JSON-LD credential`
     if (isAnonCredsDataIntegrity(credential)) continue
+    if (!signer) return 'presentation does not have exactly one proof'
     for (const subject of asArray(credential.credentialSubject)) {
       if (!isRecord(subject) || typeof subject.id !== 'string') return `credential ${index} has no subject DID`
-      if (!signers.has(subject.id)) return `credential ${index} was not issued to the DID that signed the presentation`
+      if (subject.id !== signer) return `credential ${index} was not issued to the DID that signed the presentation`
     }
   }
   return undefined
@@ -63,7 +69,7 @@ export class HolderBoundDifPresentationExchangeProofFormatService extends DidCom
   ): Promise<boolean> {
     if (!(await super.processPresentation(agentContext, options))) return false
 
-    const mode = getHolderBindingMode()
+    const mode = getHolderBindingMode(agentContext.config.logger)
     if (mode === HolderBindingMode.OFF) return true
 
     const mismatch = findHolderBindingMismatch(options.attachment.getDataAsJson())
