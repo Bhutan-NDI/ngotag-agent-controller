@@ -187,3 +187,53 @@ describe('tenant admission backpressure', () => {
     expect(captured.headers).toEqual({})
   })
 })
+
+describe('failures on the request span', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let handler: any
+  const recordException = jest.fn()
+
+  beforeEach(async () => {
+    const { trace } = await import('@opentelemetry/api')
+    recordException.mockClear()
+    jest.spyOn(trace, 'getActiveSpan').mockReturnValue({ recordException } as never)
+    handler = createErrorHandler(makeLogger([]) as never)
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  it('records a 5xx on the active span as name, message and stack only', async () => {
+    const leaky = Object.assign(new Error('upstream failed'), {
+      config: { headers: { Authorization: 'Bearer SECRET' } },
+    })
+    const converted = new InternalServerError('boom')
+    converted.cause = leaky
+    const { res } = makeRes()
+    await handler(converted, req, res, jest.fn())
+
+    expect(recordException).toHaveBeenCalledTimes(1)
+    const recorded = recordException.mock.calls[0][0] as Record<string, unknown>
+    expect(Object.keys(recorded).sort()).toEqual(['message', 'name', 'stack'])
+    expect(JSON.stringify(recorded)).not.toContain('SECRET')
+  })
+
+  it('leaves 4xx outcomes off the span: a 404 is a normal result, not an exception', async () => {
+    const { res } = makeRes()
+    await handler(new NotFoundError('Tenant not found'), req, res, jest.fn())
+
+    expect(recordException).not.toHaveBeenCalled()
+  })
+
+  it('still responds when there is no active span', async () => {
+    const { trace } = await import('@opentelemetry/api')
+    jest.spyOn(trace, 'getActiveSpan').mockReturnValue(undefined)
+    const { res, captured } = makeRes()
+
+    await handler(new InternalServerError('boom'), req, res, jest.fn())
+
+    expect(captured.status).toBe(500)
+    expect(recordException).not.toHaveBeenCalled()
+  })
+})
