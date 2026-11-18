@@ -26,6 +26,7 @@ import { SignerMethod } from '../enums/enum'
 import { validateAuthConfig } from './auth'
 import { checkX509Certificates, processIsoImages } from './helpers'
 import { TsLogger } from './logger'
+import { firstVerificationMethodWithKey } from './verificationMethodSelection'
 
 const logger = new TsLogger(LogLevel.info)
 
@@ -60,10 +61,9 @@ export function getMixedCredentialRequestToCredentialMapper(): OpenId4VciCredent
       if (credential.signerOptions.did) {
         const didsApi = agentContext.dependencyManager.resolve(DidsApi)
         const didDocument = await didsApi.resolveDidDocument(credential.signerOptions.did)
-        // Set the first verificationMethod as backup, in case we won't find a match
-        if (didDocument.verificationMethod?.[0].id) {
-          issuerDidVerificationMethod = didDocument.verificationMethod?.[0].id
-        }
+        // The first verificationMethod that carries a public key: did:ethr lists the keyless
+        // `#controller` first, which cannot sign.
+        issuerDidVerificationMethod = firstVerificationMethodWithKey(didDocument, 'verificationMethod')?.id
 
         if (!issuerDidVerificationMethod) {
           throw new Error('DID must be provided when using Did as signer method')

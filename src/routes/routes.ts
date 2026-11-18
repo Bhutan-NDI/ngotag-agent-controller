@@ -2483,6 +2483,7 @@ const models: TsoaRoute.Models = {
         "properties": {
             "job": {"ref":"RotationJob","required":true},
             "counts": {"ref":"RotationCounts","required":true},
+            "staleAfterSeconds": {"dataType":"double","required":true},
         },
         "additionalProperties": false,
     },

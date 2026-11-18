@@ -84,6 +84,7 @@ import {
   warnIfRelayEntriesExist,
 } from './services/migration-relay/relayRuntime'
 import { shutdownWalletPortabilityService } from './services/wallet-portability/WalletPortabilityService'
+import { PlanStableAskarStorageModule, walletQueryPlanning } from './storage/PlanStableAskarStorageModule'
 import { CachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
 import { adminRequestTimeoutMs } from './utils/adminRequestTimeout'
@@ -226,6 +227,9 @@ const getModules = (
   const anonCredsProofFormatService = new AnonCredsDidCommProofFormatService()
   const presentationExchangeProofFormatService = new DidCommDifPresentationExchangeProofFormatService()
 
+  const queryPlanning = walletQueryPlanning(process.env)
+  logger.info(`Wallet query planning: ${queryPlanning ? 'on' : 'off'}`)
+
   return {
     askar: new AskarModule({
       askar,
@@ -233,7 +237,10 @@ const getModules = (
         ...storeOptions,
       },
       multiWalletDatabaseScheme: walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet,
+      // The wallet StorageService is registered by askarStorage below.
+      enableStorage: false,
     }),
+    askarStorage: new PlanStableAskarStorageModule(queryPlanning),
 
     indyVdr: new IndyVdrModule({
       indyVdr,
