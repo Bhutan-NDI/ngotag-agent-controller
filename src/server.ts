@@ -1,5 +1,3 @@
-// eslint-disable-next-line import/order
-import { otelSDK } from './tracer'
 import 'reflect-metadata'
 import type { RestAgentModules, RestMultiTenantAgentModules } from './cliAgent'
 import type { ApiError } from './errors'
@@ -32,6 +30,7 @@ import { openId4VcIssuanceSessionEvents } from './events/openId4VcIssuanceSessio
 import { openId4VcVerificationSessionEvents } from './events/openId4VcVerificationSessionEvents'
 import { RegisterRoutes } from './routes/routes'
 import { SecurityMiddleware } from './securityMiddleware'
+import { startTelemetry } from './tracer'
 import { toSerializableConfig } from './utils/ServerConfig'
 import { validateAuthConfig } from './utils/auth'
 import { validateApiKey } from './utils/config'
@@ -49,8 +48,10 @@ export const setupServer = async (
   // Before any side effect: a caught-and-retried boot would otherwise duplicate registrations.
   const validatedApiKey = validateApiKey(apiKey)
 
+  // The CLI has already started it (in cli.ts, before express and http load); this covers callers of
+  // startServer() as a library, and is a no-op the second time.
   if (process.env.OTEL_ENABLED === 'true') {
-    await otelSDK.start()
+    await startTelemetry()
     agent.config.logger.info('OpenTelemetry SDK started')
   } else {
     agent.config.logger.info('OpenTelemetry SDK disabled (set OTEL_ENABLED=true to enable)')

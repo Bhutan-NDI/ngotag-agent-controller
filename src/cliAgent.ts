@@ -84,6 +84,7 @@ import {
 } from './services/migration-relay/relayRuntime'
 import { shutdownWalletPortabilityService } from './services/wallet-portability/WalletPortabilityService'
 import { PlanStableAskarStorageModule, walletQueryPlanning } from './storage/PlanStableAskarStorageModule'
+import { shutdownTelemetry } from './tracer'
 import { CachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
 import { adminRequestTimeoutMs } from './utils/adminRequestTimeout'
@@ -735,6 +736,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     await shutdownRelayRuntime()
     await shutdownRotationRuntime()
     await agent.shutdown()
+    await shutdownTelemetry()
     process.exit(0)
   }
 
