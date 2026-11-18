@@ -19,6 +19,7 @@ import ErrorHandlingService from '../../../errorHandlingService'
 import { InternalServerError, NotFoundError } from '../../../errors'
 import { addAdditionalInvitationDids, validateAdditionalInvitationDids } from '../../../utils/additionalInvitationDids'
 import { recordPageOptions, fetchRecordPage } from '../../../utils/recordPagination'
+import { withSpan } from '../../../utils/telemetry'
 import { ConnectionRecordExample, outOfBandInvitationExample, outOfBandRecordExample, RecordId } from '../../examples'
 import { AcceptInvitationConfig, ReceiveInvitationByUrlProps, ReceiveInvitationProps } from '../../types'
 
@@ -118,7 +119,9 @@ export class OutOfBandController extends Controller {
       if (config?.invitationDid) {
         invitationDid = config?.invitationDid
       } else {
-        const didRouting = await request.agent.modules.didcomm.mediationRecipient.getRouting({})
+        const didRouting = await withSpan('didcomm.routing.get', () =>
+          request.agent.modules.didcomm.mediationRecipient.getRouting({}),
+        )
         const { didDocument, keys } = createPeerDidDocumentFromServices(
           [
             {
@@ -130,14 +133,16 @@ export class OutOfBandController extends Controller {
           ],
           true,
         )
-        const did = await request.agent.dids.create<PeerDidNumAlgo2CreateOptions>({
-          didDocument,
-          method: 'peer',
-          options: {
-            numAlgo: PeerDidNumAlgo.MultipleInceptionKeyWithoutDoc,
-            keys,
-          },
-        })
+        const did = await withSpan('did.create_peer', () =>
+          request.agent.dids.create<PeerDidNumAlgo2CreateOptions>({
+            didDocument,
+            method: 'peer',
+            options: {
+              numAlgo: PeerDidNumAlgo.MultipleInceptionKeyWithoutDoc,
+              keys,
+            },
+          }),
+        )
 
         invitationDid = did.didState.did
 
@@ -146,10 +151,12 @@ export class OutOfBandController extends Controller {
         }
       }
 
-      const outOfBandRecord = await request.agent.modules.didcomm.oob.createInvitation({
-        ...invitationConfig,
-        invitationDid,
-      })
+      const outOfBandRecord = await withSpan('didcomm.oob.create_invitation', () =>
+        request.agent.modules.didcomm.oob.createInvitation({
+          ...invitationConfig,
+          invitationDid,
+        }),
+      )
       await addAdditionalInvitationDids(request.agent, outOfBandRecord, extraInvitationDids)
       return {
         invitationUrl: outOfBandRecord.outOfBandInvitation.toUrl({

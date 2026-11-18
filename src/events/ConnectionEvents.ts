@@ -4,6 +4,8 @@ import type { DidCommConnectionDidRotatedEvent, DidCommConnectionStateChangedEve
 
 import { DidCommConnectionEventTypes } from '@credo-ts/didcomm'
 
+import { connectionStateChanges } from '../utils/telemetry'
+
 import { sendWebSocketEvent } from './WebSocketEvents'
 import { sendWebhookEvent } from './WebhookEvent'
 
@@ -33,6 +35,7 @@ export const connectionEvents = async (agent: Agent, config: ServerConfig) => {
   agent.events.on(
     DidCommConnectionEventTypes.DidCommConnectionStateChanged,
     async (event: DidCommConnectionStateChangedEvent) => {
+      connectionStateChanges.add(1, { state: event.payload.connectionRecord.state })
       publish(event, { ...event.payload.connectionRecord.toJSON(), ...event.metadata }, '/connections')
     },
   )

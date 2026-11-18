@@ -19,6 +19,7 @@ import { PurgeRecordType } from '../../../purge/PurgeTypes'
 import { SchedulePurge } from '../../../purge/decorators/SchedulePurge'
 import { AgentType } from '../../../types'
 import { addAdditionalInvitationDids, validateAdditionalInvitationDids } from '../../../utils/additionalInvitationDids'
+import { withSpan } from '../../../utils/telemetry'
 import { CredentialExchangeRecordExample, RecordId } from '../../examples'
 import {
   AcceptCredentialRequestOptions,
@@ -252,7 +253,9 @@ export class CredentialController extends Controller {
   @SchedulePurge(PurgeRecordType.DIDCOMM_CREDENTIAL, (r) => (r as any)?.id)
   public async createOffer(@Request() request: Req, @Body() createOfferOptions: CreateOfferOptions) {
     try {
-      const offer = await request.agent.modules.didcomm.credentials.offerCredential(createOfferOptions)
+      const offer = await withSpan('didcomm.credential.offer', () =>
+        request.agent.modules.didcomm.credentials.offerCredential(createOfferOptions),
+      )
       return offer
     } catch (error) {
       throw ErrorHandlingService.handle(error)
@@ -276,7 +279,9 @@ export class CredentialController extends Controller {
       if (outOfBandOption?.invitationDid) {
         invitationDid = outOfBandOption?.invitationDid
       } else {
-        routing = await request.agent.modules.didcomm.mediationRecipient.getRouting({})
+        routing = await withSpan('didcomm.routing.get', () =>
+          request.agent.modules.didcomm.mediationRecipient.getRouting({}),
+        )
         const { didDocument, keys } = createPeerDidDocumentFromServices(
           [
             {
@@ -299,16 +304,18 @@ export class CredentialController extends Controller {
         invitationDid = did.didState.did
       }
 
-      const offerOob = await request.agent.modules.didcomm.credentials.createOffer({
-        protocolVersion: outOfBandOption.protocolVersion as CredentialProtocolVersionType<[]>,
-        credentialFormats: outOfBandOption.credentialFormats,
-        autoAcceptCredential: outOfBandOption.autoAcceptCredential,
-        comment: outOfBandOption.comment,
-        // parentThreadId is threaded into the offer message + exchange record by the
-        // @credo-ts/didcomm patch (patches/@credo-ts+didcomm+0.6.2.patch), covering both this
-        // OOB path and the connection-based offerCredential path with a single mechanism.
-        parentThreadId: outOfBandOption.parentThreadId,
-      })
+      const offerOob = await withSpan('didcomm.credential.create_offer', () =>
+        request.agent.modules.didcomm.credentials.createOffer({
+          protocolVersion: outOfBandOption.protocolVersion as CredentialProtocolVersionType<[]>,
+          credentialFormats: outOfBandOption.credentialFormats,
+          autoAcceptCredential: outOfBandOption.autoAcceptCredential,
+          comment: outOfBandOption.comment,
+          // parentThreadId is threaded into the offer message + exchange record by the
+          // @credo-ts/didcomm patch (patches/@credo-ts+didcomm+0.6.2.patch), covering both this
+          // OOB path and the connection-based offerCredential path with a single mechanism.
+          parentThreadId: outOfBandOption.parentThreadId,
+        }),
+      )
 
       const credentialMessage = offerOob.message
 
@@ -323,14 +330,16 @@ export class CredentialController extends Controller {
         credentialMessage.setThread({ threadId: offerOob.credentialExchangeRecord.threadId })
       }
 
-      const outOfBandRecord = await request.agent.modules.didcomm.oob.createInvitation({
-        label: outOfBandOption.label,
-        messages: [credentialMessage],
-        autoAcceptConnection: true,
-        imageUrl: outOfBandOption?.imageUrl,
-        goalCode: outOfBandOption?.goalCode,
-        invitationDid,
-      })
+      const outOfBandRecord = await withSpan('didcomm.oob.create_invitation', () =>
+        request.agent.modules.didcomm.oob.createInvitation({
+          label: outOfBandOption.label,
+          messages: [credentialMessage],
+          autoAcceptConnection: true,
+          imageUrl: outOfBandOption?.imageUrl,
+          goalCode: outOfBandOption?.goalCode,
+          invitationDid,
+        }),
+      )
       await addAdditionalInvitationDids(request.agent, outOfBandRecord, extraInvitationDids)
       return {
         invitationUrl: outOfBandRecord.outOfBandInvitation.toUrl({
@@ -364,7 +373,9 @@ export class CredentialController extends Controller {
   public async acceptOffer(@Request() request: Req, @Body() acceptCredentialOfferOptions: CredentialOfferOptions) {
     try {
       await this.ensureLinkSecretExists(request.agent)
-      const acceptOffer = await request.agent.modules.didcomm.credentials.acceptOffer(acceptCredentialOfferOptions)
+      const acceptOffer = await withSpan('didcomm.credential.accept_offer', () =>
+        request.agent.modules.didcomm.credentials.acceptOffer(acceptCredentialOfferOptions),
+      )
       return acceptOffer
     } catch (error) {
       throw ErrorHandlingService.handle(error)
@@ -386,7 +397,9 @@ export class CredentialController extends Controller {
     @Body() acceptCredentialRequestOptions: AcceptCredentialRequestOptions,
   ) {
     try {
-      const credential = await request.agent.modules.didcomm.credentials.acceptRequest(acceptCredentialRequestOptions)
+      const credential = await withSpan('didcomm.credential.accept_request', () =>
+        request.agent.modules.didcomm.credentials.acceptRequest(acceptCredentialRequestOptions),
+      )
       return credential
     } catch (error) {
       throw ErrorHandlingService.handle(error)
@@ -404,7 +417,9 @@ export class CredentialController extends Controller {
   @Post('/accept-credential')
   public async acceptCredential(@Request() request: Req, @Body() acceptCredential: AcceptCredential) {
     try {
-      const credential = await request.agent.modules.didcomm.credentials.acceptCredential(acceptCredential)
+      const credential = await withSpan('didcomm.credential.accept_credential', () =>
+        request.agent.modules.didcomm.credentials.acceptCredential(acceptCredential),
+      )
       return credential
     } catch (error) {
       throw ErrorHandlingService.handle(error)
