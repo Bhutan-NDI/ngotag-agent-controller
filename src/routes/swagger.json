@@ -12958,7 +12958,7 @@
 						}
 					}
 				},
-				"description": "Verify an ethereum based W3C schema against its on-chain record",
+				"description": "Verify an ethereum based W3C schema against its on-chain record.\nThe DID must have been created in the caller's wallet, and the schema URL must be on the schema file server.\nThe schema is loaded like it is for signing, so a cached copy (DOCUMENT_LOADER_CACHE_TTL_SECONDS, 7 days by default) is checked.",
 				"tags": [
 					"Ethereum"
 				],

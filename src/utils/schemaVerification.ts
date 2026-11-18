@@ -31,6 +31,19 @@ export function addressFromEthrDid(did: string): string {
   throw new Error(`Unsupported did:ethr identifier: ${did}`)
 }
 
+/** True if the URL is on one of the allowed hosts, so callers cannot point the loader elsewhere. */
+export function isAllowedSchemaUrl(schemaUrl: string, allowedBaseUrls: Array<string | undefined>): boolean {
+  const originOf = (url: string | undefined) => {
+    try {
+      return url ? new URL(url).origin : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const origin = originOf(schemaUrl)
+  return !!origin && origin !== 'null' && allowedBaseUrls.some((base) => originOf(base) === origin)
+}
+
 /**
  * Loads the schema through the agent's JSON-LD document loader, so the object checked is the
  * (possibly cached) one used when signing credentials that reference it.
@@ -47,11 +60,14 @@ export async function loadSchemaDocument(agentContext: AgentContext, schemaUrl: 
 export function checkSchemaRecord(did: string, schemaId: string, recordJson: string, schema: object): RecordCheck {
   const failed = (reason: string): RecordCheck => ({ status: 'failed', reason })
 
-  let record: Record<string, unknown>
+  let record: Record<string, unknown> | null
   try {
     record = JSON.parse(recordJson)
   } catch {
     return failed('On-chain record is not valid JSON')
+  }
+  if (typeof record !== 'object' || record === null || Array.isArray(record)) {
+    return failed('On-chain record is not a JSON object')
   }
 
   if (record.resourceURI !== `${did}/resources/${schemaId}`) {

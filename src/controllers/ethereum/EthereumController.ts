@@ -11,6 +11,7 @@ import { SCOPES } from '../../enums'
 import {
   addressFromEthrDid,
   checkSchemaRecord,
+  isAllowedSchemaUrl,
   loadSchemaDocument,
   type SchemaVerificationResult,
 } from '../../utils/schemaVerification'
@@ -148,7 +149,9 @@ export class Ethereum extends Controller {
   }
 
   /**
-   * Verify an ethereum based W3C schema against its on-chain record
+   * Verify an ethereum based W3C schema against its on-chain record.
+   * The DID must have been created in the caller's wallet, and the schema URL must be on the schema file server.
+   * The schema is loaded like it is for signing, so a cached copy (DOCUMENT_LOADER_CACHE_TTL_SECONDS, 7 days by default) is checked.
    *
    * @returns Verification result; status is `verified`, `legacy` (record predates checksums) or `failed`
    */
@@ -177,13 +180,18 @@ export class Ethereum extends Controller {
     }
 
     try {
-      let schemaUrl = verifySchemaRequest.schemaUrl
-      if (!schemaUrl) {
-        const configJson = JSON.parse(fs.readFileSync('config.json', 'utf-8'))
-        if (!configJson.schemaFileServerURL) {
-          throw new Error('Please provide valid schema file server URL')
-        }
-        schemaUrl = configJson.schemaFileServerURL + schemaId
+      const configJson = JSON.parse(fs.readFileSync('config.json', 'utf-8'))
+      if (!configJson.schemaFileServerURL) {
+        throw new Error('Please provide valid schema file server URL')
+      }
+      const schemaUrl = verifySchemaRequest.schemaUrl ?? configJson.schemaFileServerURL + schemaId
+      const allowedBaseUrls = [
+        configJson.schemaFileServerURL,
+        process.env.DEPRECATED_DOMAIN,
+        process.env.CURRENT_DOMAIN,
+      ]
+      if (!isAllowedSchemaUrl(schemaUrl, allowedBaseUrls)) {
+        return badRequestError(400, { reason: 'schemaUrl must be on the schema file server.' })
       }
 
       const [recordJson, schema] = await Promise.all([
@@ -204,6 +212,9 @@ export class Ethereum extends Controller {
       }
       return { ...checkSchemaRecord(did, schemaId, recordJson, schema), schemaUrl, writerChecked: false }
     } catch (error) {
+      if (error instanceof Error && error.message.includes('DidRecord not found')) {
+        return badRequestError(400, { reason: `${did} was not created in this agent's wallet.` })
+      }
       return internalServerError(500, { message: `something went wrong: ${error}` })
     }
   }
