@@ -22,6 +22,7 @@ import {
   Agent,
   ClaimFormat,
   DidDocument,
+  DidsApi,
   DidsModule,
   JsonTransformer,
   KeyDidRegistrar,
@@ -31,6 +32,7 @@ import {
   W3cCredential,
   W3cCredentialsModule,
   W3cJsonLdCredentialService,
+  vcLibraries,
 } from '@credo-ts/core'
 import { defaultDocumentLoader } from '@credo-ts/core/build/modules/vc/data-integrity/libraries/documentLoader.mjs'
 import { agentDependencies } from '@credo-ts/node'
@@ -50,12 +52,24 @@ const PROOF_TYPE = 'EcdsaSecp256k1Signature2019'
 
 // What CachedDocumentLoader adds over Credo's loader for did:ethr: the secp256k1recovery-2020
 // context, served from the same static copy (CachedDocumentLoader itself uses require(), which
-// Jest's ESM mode cannot load).
+// Jest's ESM mode cannot load). DID documents are framed here too, as Credo's loader would fetch
+// their nested contexts live.
 const RECOVERY_CONTEXT = 'https://w3id.org/security/suites/secp256k1recovery-2020/v2'
 const documentLoader = (agentContext: AgentContext): DocumentLoader => {
   const inner = defaultDocumentLoader(agentContext)
-  return async (url: string) =>
-    RECOVERY_CONTEXT === url ? { contextUrl: null, documentUrl: url, document: SECP256K1_RECOVERY_2020_V2 } : inner(url)
+  const loader: DocumentLoader = async (url: string) => {
+    if (RECOVERY_CONTEXT === url) return { contextUrl: null, documentUrl: url, document: SECP256K1_RECOVERY_2020_V2 }
+    if (!url.startsWith('did:')) return inner(url)
+    const { didDocument } = await agentContext.dependencyManager.resolve(DidsApi).resolve(url)
+    if (!didDocument) throw new Error(`Unable to resolve DID: ${url}`)
+    const document = await vcLibraries.jsonld.frame(
+      didDocument.toJSON(),
+      { '@context': didDocument.context, '@embed': '@never', id: url },
+      { documentLoader: loader },
+    )
+    return { contextUrl: null, documentUrl: url, document }
+  }
+  return loader
 }
 
 // Compressed secp256k1 public key (0x02/0x03 + x) from a JWK, as did:ethr's identifier carries it.
