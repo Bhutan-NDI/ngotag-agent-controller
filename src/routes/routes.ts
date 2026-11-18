@@ -2437,15 +2437,15 @@ const models: TsoaRoute.Models = {
         "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"presentation":{"ref":"ProofFormatDataMessagePayload__40_LegacyIndyDidCommProofFormat-or-AnonCredsDidCommProofFormat-or-DidCommDifPresentationExchangeProofFormat_41_-Array.presentation_"},"request":{"ref":"ProofFormatDataMessagePayload__40_LegacyIndyDidCommProofFormat-or-AnonCredsDidCommProofFormat-or-DidCommDifPresentationExchangeProofFormat_41_-Array.request_"},"proposal":{"ref":"ProofFormatDataMessagePayload__40_LegacyIndyDidCommProofFormat-or-AnonCredsDidCommProofFormat-or-DidCommDifPresentationExchangeProofFormat_41_-Array.proposal_"}},"validators":{}},
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "DidCommProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_": {
+    "DidCommProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-HolderBoundDifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_": {
         "dataType": "refAlias",
         "type": {"dataType":"nestedObjectLiteral","nestedProperties":{},"validators":{}},
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    "GetCredentialsForProofRequestReturn__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_": {
+    "GetCredentialsForProofRequestReturn__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-HolderBoundDifPresentationExchangeProofFormatService_41_-Array__41_-Array_": {
         "dataType": "refObject",
         "properties": {
-            "proofFormats": {"ref":"DidCommProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-DidCommDifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_","required":true},
+            "proofFormats": {"ref":"DidCommProofFormatCredentialForRequestPayload_ProofFormatsFromProtocols__40_DidCommProofV1Protocol-or-DidCommProofV2Protocol__40_LegacyIndyDidCommProofFormatService-or-AnonCredsDidCommProofFormatService-or-HolderBoundDifPresentationExchangeProofFormatService_41_-Array__41_-Array_.getCredentialsForRequest.output_","required":true},
         },
         "additionalProperties": false,
     },
