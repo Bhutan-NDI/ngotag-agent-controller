@@ -1,6 +1,7 @@
 import type { ILogObject } from 'tslog'
 
 import { LogLevel, BaseLogger } from '@credo-ts/core'
+import { SeverityNumber } from '@opentelemetry/api-logs'
 import { promises as fsPromises } from 'fs'
 import { Logger } from 'tslog'
 
@@ -10,6 +11,29 @@ import { otelLogger } from '../tracer'
 const logFilePath = process.env.LOG_FILE_PATH
 // Bounds the sink so an opt-in debug flag can't fill the disk: one rotation, `${path}.1`, kept as backup.
 const maxLogFileBytes = Number(process.env.LOG_FILE_MAX_BYTES) || 10 * 1024 * 1024
+
+// Loki and Grafana read the level from the OTLP severity number, not from severityText.
+const otelSeverity = {
+  [LogLevel.test]: SeverityNumber.TRACE,
+  [LogLevel.trace]: SeverityNumber.TRACE,
+  [LogLevel.debug]: SeverityNumber.DEBUG,
+  [LogLevel.info]: SeverityNumber.INFO,
+  [LogLevel.warn]: SeverityNumber.WARN,
+  [LogLevel.error]: SeverityNumber.ERROR,
+  [LogLevel.fatal]: SeverityNumber.FATAL,
+} as const
+
+// Opt-in: a floor for what is exported over OTLP only (test|trace|debug|info|warn|error|fatal), so
+// debug logging can stay on the console without all of it landing in Loki. Unset exports whatever
+// the logger itself lets through.
+function parseOtelMinLevel(raw: string | undefined): LogLevel {
+  if (!raw) return LogLevel.test
+  const level = LogLevel[raw.trim().toLowerCase() as keyof typeof LogLevel]
+  if (typeof level === 'number' && level < LogLevel.off) return level
+  process.stderr.write(`[logger] ignoring invalid OTEL_LOGS_MIN_LEVEL "${raw}"\n`)
+  return LogLevel.test
+}
+const otelMinLevel = parseOtelMinLevel(process.env.OTEL_LOGS_MIN_LEVEL)
 
 // Serializes writes so rotation (stat -> rename -> append) can't race across overlapping log calls.
 let writeQueue: Promise<void> = Promise.resolve()
@@ -221,8 +245,12 @@ export class TsLogger extends BaseLogger {
     // egress for the identical object, so it must not be given the raw one.
     const errorDetails = primaryError ? toSafeErrorShape(primaryError) : undefined
     const safeAttributes = rest ?? {}
+    if (level < otelMinLevel) {
+      return
+    }
     otelLogger.emit({
       body: logMessage,
+      severityNumber: otelSeverity[level],
       severityText: LogLevel[level].toUpperCase(),
       attributes: {
         ...safeAttributes,
