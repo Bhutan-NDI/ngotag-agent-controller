@@ -99,6 +99,7 @@ import {
   getX509CertsByUrl,
 } from './utils/oid4vc-agent'
 import { getProofRequestExpiryConfig } from './utils/proofRequestExpiry'
+import { armShutdownDeadline, shutdownTimeoutMs } from './utils/shutdownDeadline'
 import { tenantSessionConfig } from './utils/tenantSessionConfig'
 
 export type Transports = 'ws' | 'http'
@@ -724,8 +725,18 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   server.requestTimeout = adminRequestTimeoutMs()
 
   // Graceful shutdown
+  let shuttingDown = false
   const shutdown = async () => {
+    // A second signal must not run the steps again while the first is still in them.
+    if (shuttingDown) return
+    shuttingDown = true
     agent.config.logger.info('[Shutdown] Stopping services...')
+    // One bound over the whole thing, under ECS's 30s stop timeout. What is still running is abandoned,
+    // telemetry gets a last short flush, and the non-zero exit says it was not clean.
+    armShutdownDeadline(shutdownTimeoutMs(), () => {
+      agent.config.logger.error('[Shutdown] Did not finish in time; exiting')
+      void shutdownTelemetry(2000).finally(() => process.exit(1))
+    })
     server.close()
     await stopPurgeSchedulers()
     const cache = agent.dependencyManager.resolve(CacheModuleConfig).cache
