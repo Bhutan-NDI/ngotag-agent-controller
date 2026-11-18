@@ -7,6 +7,8 @@ import { jest } from '@jest/globals'
 import { tracerMock, type EmittedRecord } from './loggerTestUtils'
 
 const emitted: (EmittedRecord & { severityNumber?: number; severityText?: string })[] = []
+// The export floor defaults to info; this spec looks at every level.
+process.env.OTEL_LOGS_MIN_LEVEL = 'trace'
 
 jest.unstable_mockModule('../../tracer', () => tracerMock(emitted))
 
@@ -27,6 +29,7 @@ describe('TsLogger OTLP export', () => {
   afterAll(() => {
     process.stdout.write = stdout
     process.stderr.write = stderr
+    delete process.env.OTEL_LOGS_MIN_LEVEL
     if (previousFormat === undefined) delete process.env.LOG_FORMAT
     else process.env.LOG_FORMAT = previousFormat
   })

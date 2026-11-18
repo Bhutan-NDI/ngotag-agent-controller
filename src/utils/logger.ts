@@ -23,17 +23,43 @@ const otelSeverity = {
   [LogLevel.fatal]: SeverityNumber.FATAL,
 } as const
 
-// Opt-in: a floor for what is exported over OTLP only (test|trace|debug|info|warn|error|fatal), so
-// debug logging can stay on the console without all of it landing in Loki. Unset exports whatever
-// the logger itself lets through.
+// The floor for what is exported over OTLP only (test|trace|debug|info|warn|error|fatal); the console is
+// unaffected. Defaults to info: the controllers run at debug, and every debug line sent to Loki would
+// swamp it and cost serialisation here. OTEL_LOGS_MIN_LEVEL lowers (or raises) it.
 function parseOtelMinLevel(raw: string | undefined): LogLevel {
-  if (!raw) return LogLevel.test
+  if (!raw) return LogLevel.info
   const level = LogLevel[raw.trim().toLowerCase() as keyof typeof LogLevel]
   if (typeof level === 'number' && level < LogLevel.off) return level
   process.stderr.write(`[logger] ignoring invalid OTEL_LOGS_MIN_LEVEL "${raw}"\n`)
-  return LogLevel.test
+  return LogLevel.info
 }
 const otelMinLevel = parseOtelMinLevel(process.env.OTEL_LOGS_MIN_LEVEL)
+
+type PlainObject = Record<string, unknown>
+const isPlainObject = (value: unknown): value is PlainObject => null !== value && 'object' === typeof value
+
+// A DIDComm v1 message ('@type'), or a v2 one ('type' under a didcomm.org URL, with a 'body').
+const isDidcommMessage = (value: PlainObject): boolean =>
+  'string' === typeof value['@type'] ||
+  ('string' === typeof value.type && value.type.startsWith('https://didcomm.org/') && 'body' in value)
+
+/**
+ * A decrypted DIDComm message is the plaintext of someone's credential or proof exchange. Credo logs every
+ * inbound one at info with the whole message as the log data, and the sanitiser keeps its values (the
+ * console needs them to debug). Over OTLP they would sit in Loki for the retention period, so only the type
+ * and id of a message leave the process, wherever in the payload it sits.
+ */
+export function withoutDidcommBodies(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutDidcommBodies)
+  if (!isPlainObject(value)) return value
+  if (isDidcommMessage(value)) {
+    const id = value['@id'] ?? value.id
+    return { '@type': value['@type'] ?? value.type, ...(id === undefined ? {} : { '@id': id }) }
+  }
+  const out: PlainObject = {}
+  for (const key of Object.keys(value)) out[key] = withoutDidcommBodies(value[key])
+  return out
+}
 
 // Serializes writes so rotation (stat -> rename -> append) can't race across overlapping log calls.
 let writeQueue: Promise<void> = Promise.resolve()
@@ -234,6 +260,10 @@ export class TsLogger extends BaseLogger {
     } else {
       this.logger[tsLogLevel](message)
     }
+    // Below the OTLP floor nothing more is built for it.
+    if (level < otelMinLevel) {
+      return
+    }
     let logMessage = ''
     if (typeof message === 'string') {
       logMessage = message
@@ -241,13 +271,10 @@ export class TsLogger extends BaseLogger {
       logMessage = message.message
     }
 
-    // The same sanitised values the console transport received -- OpenTelemetry is a second
-    // egress for the identical object, so it must not be given the raw one.
+    // The sanitised values the console transport received (OpenTelemetry is a second egress for the same
+    // object, so it must not be given the raw one), minus the bodies of DIDComm messages.
     const errorDetails = primaryError ? toSafeErrorShape(primaryError) : undefined
-    const safeAttributes = rest ?? {}
-    if (level < otelMinLevel) {
-      return
-    }
+    const safeAttributes = withoutDidcommBodies(rest ?? {}) as PlainObject
     otelLogger.emit({
       body: logMessage,
       severityNumber: otelSeverity[level],
