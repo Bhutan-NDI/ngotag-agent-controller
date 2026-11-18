@@ -58,7 +58,7 @@ describe('withSpan', () => {
   it('ends the span even when the step throws something that is not an Error', async () => {
     await expect(
       withSpan('x', async () => {
-        throw 'just a string' // eslint-disable-line @typescript-eslint/only-throw-error
+        throw 'just a string'
       }),
     ).rejects.toBe('just a string')
 
