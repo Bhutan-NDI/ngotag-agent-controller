@@ -3125,10 +3125,10 @@
 					"imageUrl": {
 						"type": "string"
 					},
-					"autoAcceptInvitation": {
+					"autoAcceptConnection": {
 						"type": "boolean"
 					},
-					"autoAcceptConnection": {
+					"autoAcceptInvitation": {
 						"type": "boolean"
 					},
 					"reuseConnection": {
@@ -3163,10 +3163,10 @@
 					"imageUrl": {
 						"type": "string"
 					},
-					"autoAcceptInvitation": {
+					"autoAcceptConnection": {
 						"type": "boolean"
 					},
-					"autoAcceptConnection": {
+					"autoAcceptInvitation": {
 						"type": "boolean"
 					},
 					"reuseConnection": {
@@ -3201,10 +3201,10 @@
 					"imageUrl": {
 						"type": "string"
 					},
-					"autoAcceptInvitation": {
+					"autoAcceptConnection": {
 						"type": "boolean"
 					},
-					"autoAcceptConnection": {
+					"autoAcceptInvitation": {
 						"type": "boolean"
 					},
 					"reuseConnection": {
