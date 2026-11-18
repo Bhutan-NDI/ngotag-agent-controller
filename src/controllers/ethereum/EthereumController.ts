@@ -8,6 +8,13 @@ import { Route, Tags, Security, Controller, Post, TsoaResponse, Res, Body, Get, 
 import { injectable } from 'tsyringe'
 
 import { SCOPES } from '../../enums'
+import {
+  addressFromEthrDid,
+  checkSchemaRecord,
+  isAllowedSchemaUrl,
+  loadSchemaDocument,
+  type SchemaVerificationResult,
+} from '../../utils/schemaVerification'
 
 @Tags('Ethereum')
 @Route('/ethereum')
@@ -137,6 +144,77 @@ export class Ethereum extends Controller {
       }
       return schemaPayload
     } catch (error) {
+      return internalServerError(500, { message: `something went wrong: ${error}` })
+    }
+  }
+
+  /**
+   * Verify an ethereum based W3C schema against its on-chain record.
+   * The DID must have been created in the caller's wallet, and the schema URL must be on the schema file server.
+   * The schema is loaded like it is for signing, so a cached copy (DOCUMENT_LOADER_CACHE_TTL_SECONDS, 7 days by default) is checked.
+   *
+   * @returns Verification result; status is `verified`, `legacy` (record predates checksums) or `failed`
+   */
+  @Security('jwt', [SCOPES.TENANT_AGENT, SCOPES.DEDICATED_AGENT])
+  @Post('verify-schema')
+  public async verifySchema(
+    @Request() request: Req,
+    @Body()
+    verifySchemaRequest: {
+      did: string
+      schemaId: string
+      /** URL the credential references; defaults to the schema file server URL for the schema ID */
+      schemaUrl?: string
+    },
+    @Res() internalServerError: TsoaResponse<500, { message: string }>,
+    @Res() badRequestError: TsoaResponse<400, { reason: string }>,
+  ): Promise<SchemaVerificationResult> {
+    const { did, schemaId } = verifySchemaRequest
+    if (!did || !schemaId) {
+      return badRequestError(400, { reason: 'did and schemaId are required.' })
+    }
+    try {
+      addressFromEthrDid(did)
+    } catch (error) {
+      return badRequestError(400, { reason: `${(error as Error).message}` })
+    }
+
+    try {
+      const configJson = JSON.parse(fs.readFileSync('config.json', 'utf-8'))
+      if (!configJson.schemaFileServerURL) {
+        throw new Error('Please provide valid schema file server URL')
+      }
+      const schemaUrl = verifySchemaRequest.schemaUrl ?? configJson.schemaFileServerURL + schemaId
+      const allowedBaseUrls = [
+        configJson.schemaFileServerURL,
+        process.env.DEPRECATED_DOMAIN,
+        process.env.CURRENT_DOMAIN,
+      ]
+      if (!isAllowedSchemaUrl(schemaUrl, allowedBaseUrls)) {
+        return badRequestError(400, { reason: 'schemaUrl must be on the schema file server.' })
+      }
+
+      const [recordJson, schema] = await Promise.all([
+        request.agent.modules.ethereum.getSchemaById(did, schemaId).catch((error: Error) => {
+          if (error.message.includes('Schema not found on ledger')) return null
+          throw error
+        }),
+        loadSchemaDocument(request.agent.context, schemaUrl),
+      ])
+
+      if (!recordJson) {
+        return {
+          status: 'failed',
+          reason: 'No on-chain record for this DID and schema ID',
+          schemaUrl,
+          writerChecked: false,
+        }
+      }
+      return { ...checkSchemaRecord(did, schemaId, recordJson, schema), schemaUrl, writerChecked: false }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('DidRecord not found')) {
+        return badRequestError(400, { reason: `${did} was not created in this agent's wallet.` })
+      }
       return internalServerError(500, { message: `something went wrong: ${error}` })
     }
   }
