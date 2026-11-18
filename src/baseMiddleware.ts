@@ -6,6 +6,21 @@ import { rateLimit } from 'express-rate-limit'
 const baseMiddlewareMounted = new WeakSet<Express>()
 
 /**
+ * How many reverse proxies in front of the controller Express trusts to report the client address
+ * in X-Forwarded-For. The rate limiter keys on that address: without it every client behind the
+ * load balancer shares one bucket keyed by the load balancer's own IP.
+ *
+ * Defaults to 1 (one load balancer or ingress, as in every current deployment). Set 0 when clients
+ * connect directly; a value above the real hop count lets clients pick their own limiter key.
+ */
+export function trustedProxyHops(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.TRUST_PROXY_HOPS
+  if (raw === undefined || raw === '') return 1
+  if (/^\d+$/.test(raw)) return Number(raw)
+  throw new Error('TRUST_PROXY_HOPS must be a non-negative integer')
+}
+
+/**
  * Health check, rate limiter and body parsers, in that order.
  *
  * Must run before any router that parses its own bodies is registered: Credo's OID4VC routers
@@ -16,6 +31,8 @@ const baseMiddlewareMounted = new WeakSet<Express>()
 export const mountBaseMiddleware = (app: Express) => {
   if (baseMiddlewareMounted.has(app)) return
   baseMiddlewareMounted.add(app)
+
+  app.set('trust proxy', trustedProxyHops())
 
   // Deliberately unauthenticated and unthrottled: used only by the load balancer to determine
   // whether the initialized HTTP server is available. Ahead of the limiter so a flood elsewhere
