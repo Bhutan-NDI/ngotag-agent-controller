@@ -5,6 +5,7 @@ import type { DidCommCredentialStateChangedEvent } from '@credo-ts/didcomm'
 
 import { DidCommCredentialEventTypes, DidCommCredentialState } from '@credo-ts/didcomm'
 
+import { credentialStateChanges } from '../utils/telemetry'
 import { isTenantAdmissionError } from '../utils/tenantSessionConfig'
 
 import { sendWebSocketEvent } from './WebSocketEvents'
@@ -15,6 +16,7 @@ export const credentialEvents = async (agent: Agent, config: ServerConfig) => {
     DidCommCredentialEventTypes.DidCommCredentialStateChanged,
     async (event: DidCommCredentialStateChangedEvent) => {
       const record = event.payload.credentialExchangeRecord
+      credentialStateChanges.add(1, { state: record.state })
       const tenantId =
         !event.metadata.contextCorrelationId || event.metadata.contextCorrelationId === 'default'
           ? event.metadata.contextCorrelationId

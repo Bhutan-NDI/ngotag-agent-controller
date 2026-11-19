@@ -1369,7 +1369,7 @@ const models: TsoaRoute.Models = {
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "Pick_ReceiveOutOfBandInvitationConfig.Exclude_keyofReceiveOutOfBandInvitationConfig.routing__": {
         "dataType": "refAlias",
-        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"alias":{"dataType":"string"},"label":{"dataType":"string","required":true},"imageUrl":{"dataType":"string"},"autoAcceptInvitation":{"dataType":"boolean"},"autoAcceptConnection":{"dataType":"boolean"},"reuseConnection":{"dataType":"boolean"},"acceptInvitationTimeoutMs":{"dataType":"double"},"ourDid":{"dataType":"string"}},"validators":{}},
+        "type": {"dataType":"nestedObjectLiteral","nestedProperties":{"alias":{"dataType":"string"},"label":{"dataType":"string","required":true},"imageUrl":{"dataType":"string"},"autoAcceptConnection":{"dataType":"boolean"},"autoAcceptInvitation":{"dataType":"boolean"},"reuseConnection":{"dataType":"boolean"},"acceptInvitationTimeoutMs":{"dataType":"double"},"ourDid":{"dataType":"string"}},"validators":{}},
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "Omit_ReceiveOutOfBandInvitationConfig.routing_": {
@@ -1383,8 +1383,8 @@ const models: TsoaRoute.Models = {
             "alias": {"dataType":"string"},
             "label": {"dataType":"string","required":true},
             "imageUrl": {"dataType":"string"},
-            "autoAcceptInvitation": {"dataType":"boolean"},
             "autoAcceptConnection": {"dataType":"boolean"},
+            "autoAcceptInvitation": {"dataType":"boolean"},
             "reuseConnection": {"dataType":"boolean"},
             "acceptInvitationTimeoutMs": {"dataType":"double"},
             "ourDid": {"dataType":"string"},
@@ -1399,8 +1399,8 @@ const models: TsoaRoute.Models = {
             "alias": {"dataType":"string"},
             "label": {"dataType":"string","required":true},
             "imageUrl": {"dataType":"string"},
-            "autoAcceptInvitation": {"dataType":"boolean"},
             "autoAcceptConnection": {"dataType":"boolean"},
+            "autoAcceptInvitation": {"dataType":"boolean"},
             "reuseConnection": {"dataType":"boolean"},
             "acceptInvitationTimeoutMs": {"dataType":"double"},
             "ourDid": {"dataType":"string"},

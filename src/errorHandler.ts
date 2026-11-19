@@ -7,6 +7,7 @@ import { ValidateError } from 'tsoa'
 
 import { ErrorMessages } from './enums'
 import { BaseError } from './errors/errors'
+import { recordFailure, tenantAdmissionRejections } from './utils/telemetry'
 import { isTenantAdmissionError } from './utils/tenantSessionConfig'
 
 /**
@@ -18,6 +19,7 @@ export const createErrorHandler = (logger: Logger): ErrorRequestHandler =>
   (async (err: unknown, req: ExRequest, res: ExResponse, _next: NextFunction): Promise<ExResponse | void> => {
     if (err instanceof Error && 'cause' in err && isTenantAdmissionError(err.cause)) {
       res.setHeader('Retry-After', '1')
+      tenantAdmissionRejections.add(1)
     }
     if (err instanceof ValidateError) {
       // `fields` names DTO members and enumerates their permitted values, so it stays in the log.
@@ -32,6 +34,7 @@ export const createErrorHandler = (logger: Logger): ErrorRequestHandler =>
       logger[level](`${req.method} ${req.path} -> ${err.statusCode}: ${err.message}`, {
         error: err.cause ?? err,
       })
+      if (500 <= err.statusCode) recordFailure(err.cause ?? err)
       return res.status(err.statusCode).json({
         message: 500 <= err.statusCode ? 'Internal Server Error' : err.message,
       })
@@ -48,6 +51,7 @@ export const createErrorHandler = (logger: Logger): ErrorRequestHandler =>
       const statusCode = error.statusCode || error.status || 500
       const level = 500 <= statusCode ? 'error' : 'warn'
       logger[level](`${req.method} ${req.path} -> ${statusCode}: ${error.message}`, { error })
+      if (500 <= statusCode) recordFailure(error)
       // Parser, library and runtime text only -- the status' reason phrase is all that is safe.
       return res.status(statusCode).json({
         message: STATUS_CODES[statusCode] ?? 'Internal Server Error',

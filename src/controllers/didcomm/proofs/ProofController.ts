@@ -25,6 +25,7 @@ import {
   resolveProofRequestExpiresTime,
 } from '../../../utils/proofRequestExpiry'
 import { recordPageOptions, fetchRecordPage } from '../../../utils/recordPagination'
+import { withSpan } from '../../../utils/telemetry'
 import { ProofRecordExample, RecordId } from '../../examples'
 import {
   AcceptProofProposal,
@@ -165,7 +166,9 @@ export class ProofController extends Controller {
         willConfirm: requestProofOptions.willConfirm,
       }
       const expiresTime = resolveProofRequestExpiresTime(requestProofOptions.expiresInSeconds)
-      const proof = await requestProofWithExpiry(request.agent, requestProofPayload, expiresTime)
+      const proof = await withSpan('didcomm.proof.request', () =>
+        requestProofWithExpiry(request.agent, requestProofPayload, expiresTime),
+      )
 
       return proof
     } catch (error) {
@@ -195,7 +198,9 @@ export class ProofController extends Controller {
       if (createRequestOptions?.invitationDid) {
         invitationDid = createRequestOptions?.invitationDid
       } else {
-        routing = await request.agent.modules.didcomm.mediationRecipient.getRouting({})
+        routing = await withSpan('didcomm.routing.get', () =>
+          request.agent.modules.didcomm.mediationRecipient.getRouting({}),
+        )
         const { didDocument, keys } = createPeerDidDocumentFromServices(
           [
             {
@@ -218,25 +223,29 @@ export class ProofController extends Controller {
         invitationDid = did.didState.did
       }
 
-      const proof = await request.agent.modules.didcomm.proofs.createRequest({
-        protocolVersion: createRequestOptions.protocolVersion as ProofsProtocolVersionType<[]>,
-        proofFormats: createRequestOptions.proofFormats,
-        goalCode: createRequestOptions.goalCode,
-        willConfirm: createRequestOptions.willConfirm,
-        parentThreadId: createRequestOptions.parentThreadId,
-        autoAcceptProof: createRequestOptions.autoAcceptProof,
-        comment: createRequestOptions.comment,
-      })
+      const proof = await withSpan('didcomm.proof.create_request', () =>
+        request.agent.modules.didcomm.proofs.createRequest({
+          protocolVersion: createRequestOptions.protocolVersion as ProofsProtocolVersionType<[]>,
+          proofFormats: createRequestOptions.proofFormats,
+          goalCode: createRequestOptions.goalCode,
+          willConfirm: createRequestOptions.willConfirm,
+          parentThreadId: createRequestOptions.parentThreadId,
+          autoAcceptProof: createRequestOptions.autoAcceptProof,
+          comment: createRequestOptions.comment,
+        }),
+      )
       const proofMessage = proof.message
       await applyProofRequestExpiry(request.agent.context, proofMessage, proof.proofRecord, expiresTime)
-      const outOfBandRecord = await request.agent.modules.didcomm.oob.createInvitation({
-        label: createRequestOptions.label,
-        messages: [proofMessage],
-        autoAcceptConnection: true,
-        imageUrl: createRequestOptions?.imageUrl,
-        goalCode: createRequestOptions?.goalCode,
-        invitationDid,
-      })
+      const outOfBandRecord = await withSpan('didcomm.oob.create_invitation', () =>
+        request.agent.modules.didcomm.oob.createInvitation({
+          label: createRequestOptions.label,
+          messages: [proofMessage],
+          autoAcceptConnection: true,
+          imageUrl: createRequestOptions?.imageUrl,
+          goalCode: createRequestOptions?.goalCode,
+          invitationDid,
+        }),
+      )
       await addAdditionalInvitationDids(request.agent, outOfBandRecord, extraInvitationDids)
 
       return {
@@ -279,9 +288,14 @@ export class ProofController extends Controller {
     },
   ) {
     try {
-      const requestedCredentials = await request.agent.modules.didcomm.proofs.selectCredentialsForRequest({
-        proofExchangeRecordId: proofRecordId,
-      })
+      const requestedCredentials = await withSpan(
+        'didcomm.proof.select_credentials',
+        () =>
+          request.agent.modules.didcomm.proofs.selectCredentialsForRequest({
+            proofExchangeRecordId: proofRecordId,
+          }),
+        { 'didcomm.proof.record_id': proofRecordId },
+      )
 
       const acceptProofRequest: AcceptProofRequestOptions = {
         proofExchangeRecordId: proofRecordId,
@@ -289,7 +303,11 @@ export class ProofController extends Controller {
         proofFormats: requestedCredentials.proofFormats,
       }
 
-      const proof = await request.agent.modules.didcomm.proofs.acceptRequest(acceptProofRequest)
+      const proof = await withSpan(
+        'didcomm.proof.accept_request',
+        () => request.agent.modules.didcomm.proofs.acceptRequest(acceptProofRequest),
+        { 'didcomm.proof.record_id': proofRecordId },
+      )
 
       return proof.toJSON()
     } catch (error) {
@@ -394,11 +412,16 @@ export class ProofController extends Controller {
         )
       }
 
-      const proof = await request.agent.modules.didcomm.proofs.acceptRequest({
-        proofExchangeRecordId: proofRecordId,
-        comment: body.comment,
-        proofFormats: { presentationExchange: { credentials: chosenCredentials } },
-      })
+      const proof = await withSpan(
+        'didcomm.proof.accept_request',
+        () =>
+          request.agent.modules.didcomm.proofs.acceptRequest({
+            proofExchangeRecordId: proofRecordId,
+            comment: body.comment,
+            proofFormats: { presentationExchange: { credentials: chosenCredentials } },
+          }),
+        { 'didcomm.proof.record_id': proofRecordId },
+      )
 
       return proof.toJSON()
     } catch (error) {
@@ -428,9 +451,15 @@ export class ProofController extends Controller {
   @Example<DidCommProofExchangeRecordProps>(ProofRecordExample)
   public async acceptPresentation(@Request() request: Req, @Path('proofRecordId') proofRecordId: string) {
     try {
-      const proof = await request.agent.modules.didcomm.proofs.acceptPresentation({
-        proofExchangeRecordId: proofRecordId,
-      })
+      // Where a presentation is verified.
+      const proof = await withSpan(
+        'didcomm.proof.accept_presentation',
+        () =>
+          request.agent.modules.didcomm.proofs.acceptPresentation({
+            proofExchangeRecordId: proofRecordId,
+          }),
+        { 'didcomm.proof.record_id': proofRecordId },
+      )
       return proof
     } catch (error) {
       throw ErrorHandlingService.handle(error)
