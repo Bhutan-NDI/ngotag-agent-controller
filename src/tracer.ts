@@ -47,12 +47,25 @@ export const isUntracedRequest = (url: string | undefined) => {
   return path === '/health' || path === '/docs' || path.startsWith('/docs/')
 }
 
+/**
+ * The OTEL_SEMCONV_STABILITY_OPT_IN value to run with: whatever the operator set, plus `http`, and never
+ * `http/dup`. The old HTTP semantic conventions label http.server.duration with net.host.name (the client's
+ * Host header, so every scanner's random Host is a new series) and with the raw http.method; the stable ones
+ * drop both and name the URL attributes url.full / url.query, which the hooks below redact. `http/dup`
+ * emits the old and new together, bringing back the cardinality and http.url / http.target with the whole
+ * query string, so it is not honoured. Other categories (e.g. `database`) are left alone.
+ */
+export const semconvOptIn = (raw: string | undefined) => {
+  const tokens = (raw ?? '')
+    .split(',')
+    .map((token) => token.trim())
+    .filter((token) => token && token !== 'http/dup' && token !== 'http')
+  return ['http', ...tokens].join(',')
+}
+
 if (otelEnabled) {
-  // Must be set before the instrumentations are built. The old HTTP semantic conventions label
-  // http.server.duration with net.host.name (the client's Host header, so every scanner's random Host is
-  // a new series) and with the raw http.method. The stable conventions drop both, and name the URL
-  // attributes url.full / url.query. An operator can still set it explicitly.
-  process.env.OTEL_SEMCONV_STABILITY_OPT_IN ??= 'http'
+  // Must be set before the instrumentations are built.
+  process.env.OTEL_SEMCONV_STABILITY_OPT_IN = semconvOptIn(process.env.OTEL_SEMCONV_STABILITY_OPT_IN)
 }
 
 /**

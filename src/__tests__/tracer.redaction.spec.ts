@@ -13,6 +13,7 @@ const {
   incomingUrlAttributes,
   redactedQuery,
   createInstrumentations,
+  semconvOptIn,
 } = await import('../tracer')
 
 describe('outgoing URLs', () => {
@@ -69,5 +70,22 @@ describe('incoming query strings', () => {
 describe('createInstrumentations', () => {
   it('builds nothing when OpenTelemetry is off, so http, express and fetch are not patched', () => {
     expect(createInstrumentations(false)).toEqual([])
+  })
+})
+
+describe('HTTP semantic conventions opt-in', () => {
+  it('defaults to the stable conventions', () => {
+    expect(semconvOptIn(undefined)).toBe('http')
+    expect(semconvOptIn('')).toBe('http')
+  })
+
+  it('refuses http/dup, which would bring back http.url, http.target and net.host.name', () => {
+    expect(semconvOptIn('http/dup')).toBe('http')
+    expect(semconvOptIn('database/dup, http/dup')).toBe('http,database/dup')
+  })
+
+  it('keeps other categories the operator opted into, without repeating http', () => {
+    expect(semconvOptIn('http,database')).toBe('http,database')
+    expect(semconvOptIn(' database ')).toBe('http,database')
   })
 })

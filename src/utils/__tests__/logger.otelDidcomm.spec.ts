@@ -13,6 +13,8 @@ jest.unstable_mockModule('../../tracer', () => tracerMock(emitted))
 
 const { TsLogger, withoutDidcommBodies } = await import('../logger')
 const { LogLevel } = await import('@credo-ts/core')
+const { DidCommIssueCredentialV2Message, DidCommCredentialFormatSpec, DidCommAttachment } =
+  await import('@credo-ts/didcomm')
 
 const offer = () => ({
   '@type': 'https://didcomm.org/issue-credential/2.0/offer-credential',
@@ -82,5 +84,55 @@ describe('DIDComm message bodies in exported logs', () => {
     new TsLogger(LogLevel.info, 'didcomm-test').info('connection updated', data)
 
     expect(emitted[0].attributes).toEqual(data)
+  })
+
+  it('reduces a Credo message instance, as logged when a message is undeliverable', () => {
+    // DidCommMessageSender: logger.error('Message is undeliverable to connection ...', { message, errors, connection })
+    const message = new DidCommIssueCredentialV2Message({
+      credentialAttachments: [new DidCommAttachment({ id: 'att-1', data: { base64: 'SECRET-BASE64-ATTACHMENT' } })],
+      formats: [new DidCommCredentialFormatSpec({ attachmentId: 'att-1', format: 'anoncreds/credential@v1.0' })],
+      comment: 'SECRET-COMMENT',
+    })
+    new TsLogger(LogLevel.error, 'didcomm-test').error('Message is undeliverable to connection c-1', {
+      message,
+      errors: [new Error('no transport')],
+      connection: { id: 'c-1', state: 'completed' },
+    })
+
+    expect(emitted).toHaveLength(1)
+    expect(emitted[0].attributes.message).toEqual({
+      '@type': 'https://didcomm.org/issue-credential/2.0/issue-credential',
+      '@id': message.id,
+    })
+    expect(emitted[0].attributes.connection).toEqual({ id: 'c-1', state: 'completed' })
+    expect(JSON.stringify(emitted)).not.toMatch(/SECRET/)
+  })
+
+  it('reduces a message logged as JSON text, as on a parse failure', () => {
+    // DidCommMessageReceiver: logger.error('Error validating message ...', { errors, message: JSON.stringify(message) })
+    new TsLogger(LogLevel.error, 'didcomm-test').error('Error validating message', {
+      errors: new Error('bad'),
+      message: JSON.stringify(offer()),
+    })
+
+    expect(emitted[0].attributes.message).toEqual({
+      '@type': 'https://didcomm.org/issue-credential/2.0/offer-credential',
+      '@id': 'msg-1',
+    })
+    expect(JSON.stringify(emitted)).not.toMatch(/SECRET/)
+  })
+
+  it('drops DIDComm-looking JSON text it cannot parse rather than exporting it whole', () => {
+    const truncated = JSON.stringify(offer()).slice(0, -10)
+
+    expect(withoutDidcommBodies({ message: truncated })).toEqual({
+      message: '[omitted: unparseable DIDComm-like JSON]',
+    })
+  })
+
+  it('leaves JSON text that is not a DIDComm message alone', () => {
+    const text = JSON.stringify({ connectionId: 'conn-1', state: 'completed' })
+
+    expect(withoutDidcommBodies({ text })).toEqual({ text })
   })
 })

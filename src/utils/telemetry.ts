@@ -1,6 +1,7 @@
 import type { Attributes } from '@opentelemetry/api'
 
-import { SpanStatusCode, metrics, trace } from '@opentelemetry/api'
+import { SpanStatusCode, context, metrics, trace } from '@opentelemetry/api'
+import { getRPCMetadata } from '@opentelemetry/core'
 
 // Both resolve to no-ops until OpenTelemetry is started (and always when OTEL_ENABLED is off), so
 // everything here can be called unconditionally.
@@ -37,9 +38,15 @@ export const withSpan = <T>(name: string, fn: () => Promise<T>, attributes?: Att
     }
   })
 
-/** Tags the request's own (HTTP server) span, e.g. with the tenant it was authenticated as. */
+/**
+ * Tags the request's own (HTTP server) span, e.g. with the tenant it was authenticated as. The active span
+ * is not that: the tsoa middleware that calls this is an Express route handler, which has a span of its own,
+ * and a tag there is invisible to a query on the server span. The HTTP instrumentation keeps the server span
+ * in the request's RPC metadata; the active span is only the fallback (no metadata outside an HTTP request).
+ */
 export const tagRequestSpan = (key: string, value: string) => {
-  trace.getActiveSpan()?.setAttribute(key, value)
+  const span = getRPCMetadata(context.active())?.span ?? trace.getActiveSpan()
+  span?.setAttribute(key, value)
 }
 
 // Metrics. Labels are small closed sets (a protocol state, an outcome) -- never a tenant, connection

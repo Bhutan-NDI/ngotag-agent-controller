@@ -3,9 +3,13 @@
  * throws, and what reaches the span on failure is name, message and stack only -- HTTP libraries hang
  * bearer tokens and bodies off their errors, and spans leave the process like logs do.
  */
-import { trace } from '@opentelemetry/api'
+import { context, trace } from '@opentelemetry/api'
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
+import { RPCType, setRPCMetadata } from '@opentelemetry/core'
 import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 
+// Without a context manager context.with() carries nothing, as in a process that never started the SDK.
+context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable())
 const exporter = new InMemorySpanExporter()
 trace.setGlobalTracerProvider(new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] }))
 
@@ -68,6 +72,33 @@ describe('withSpan', () => {
 })
 
 describe('tagRequestSpan', () => {
+  beforeEach(() => exporter.reset())
+
+  it('tags the HTTP server span, not the route-handler span that is active when it is called', () => {
+    const tracer = trace.getTracer('test')
+    const server = tracer.startSpan('GET /x')
+    const serverContext = setRPCMetadata(trace.setSpan(context.active(), server), { type: RPCType.HTTP, span: server })
+    // What Express does: the handler runs in a child span of the server span.
+    const handler = tracer.startSpan('request handler - /x', {}, serverContext)
+
+    context.with(trace.setSpan(serverContext, handler), () => tagRequestSpan('credo.tenant.id', 't-1'))
+    handler.end()
+    server.end()
+
+    const spans = Object.fromEntries(exporter.getFinishedSpans().map((span) => [span.name, span]))
+    expect(spans['GET /x'].attributes['credo.tenant.id']).toBe('t-1')
+    expect(spans['request handler - /x'].attributes['credo.tenant.id']).toBeUndefined()
+  })
+
+  it('falls back to the active span when there is no HTTP request metadata', () => {
+    const span = trace.getTracer('test').startSpan('job')
+
+    context.with(trace.setSpan(context.active(), span), () => tagRequestSpan('credo.tenant.id', 't-2'))
+    span.end()
+
+    expect(exporter.getFinishedSpans()[0].attributes['credo.tenant.id']).toBe('t-2')
+  })
+
   it('does nothing, and does not throw, when there is no active span', () => {
     expect(() => tagRequestSpan('credo.tenant.id', 't-1')).not.toThrow()
   })

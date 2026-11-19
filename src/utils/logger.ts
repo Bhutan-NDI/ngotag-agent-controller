@@ -38,19 +38,35 @@ const otelMinLevel = parseOtelMinLevel(process.env.OTEL_LOGS_MIN_LEVEL)
 type PlainObject = Record<string, unknown>
 const isPlainObject = (value: unknown): value is PlainObject => null !== value && 'object' === typeof value
 
-// A DIDComm v1 message ('@type'), or a v2 one ('type' under a didcomm.org URL, with a 'body').
+// Message type URIs: the current didcomm.org prefix, and the legacy did:sov one.
+const DIDCOMM_TYPE_URI = /^(https:\/\/didcomm\.org\/|did:sov:[^;]+;spec\/)/
+
+// A DIDComm v1 message ('@type'), a v2 one ('type' under a didcomm.org URL), or a Credo message instance:
+// its class keeps the same fields as 'type' and 'id', with the rest of the message beside them.
 const isDidcommMessage = (value: PlainObject): boolean =>
-  'string' === typeof value['@type'] ||
-  ('string' === typeof value.type && value.type.startsWith('https://didcomm.org/') && 'body' in value)
+  'string' === typeof value['@type'] || ('string' === typeof value.type && DIDCOMM_TYPE_URI.test(value.type))
+
+// Credo also logs a message as JSON text (a parse failure passes JSON.stringify(message)).
+const looksLikeDidcommJson = (value: string): boolean => value.startsWith('{') && value.includes('"@type"')
 
 /**
  * A decrypted DIDComm message is the plaintext of someone's credential or proof exchange. Credo logs every
- * inbound one at info with the whole message as the log data, and the sanitiser keeps its values (the
- * console needs them to debug). Over OTLP they would sit in Loki for the retention period, so only the type
- * and id of a message leave the process, wherever in the payload it sits.
+ * inbound one at info with the whole message as the log data, and at error when it cannot parse or deliver
+ * one, as a plain object, a message instance or JSON text. The sanitiser keeps their values (the console
+ * needs them to debug). Over OTLP they would sit in Loki for the retention period, so only the type and id
+ * of a message leave the process, wherever in the payload it sits.
  */
 export function withoutDidcommBodies(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(withoutDidcommBodies)
+  if ('string' === typeof value && looksLikeDidcommJson(value)) {
+    try {
+      const parsed: unknown = JSON.parse(value)
+      return isPlainObject(parsed) && isDidcommMessage(parsed) ? withoutDidcommBodies(parsed) : value
+    } catch {
+      // Truncated or not JSON after all: nothing recognisable to reduce, and it must not leave whole either.
+      return '[omitted: unparseable DIDComm-like JSON]'
+    }
+  }
   if (!isPlainObject(value)) return value
   if (isDidcommMessage(value)) {
     const id = value['@id'] ?? value.id
