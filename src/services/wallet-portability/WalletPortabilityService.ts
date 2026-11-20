@@ -1,11 +1,18 @@
-import type { ExportWalletResult, ImportWalletResult, WalletPortabilityJobRecord } from './WalletPortabilityTypes'
+import type { CreatedImportSession } from './ImportSessionStore'
+import type {
+  DeleteExportResult,
+  ExportWalletResult,
+  ImportWalletResult,
+  WalletPortabilityJobRecord,
+} from './WalletPortabilityTypes'
 import type { RestMultiTenantAgentModules } from '../../cliAgent'
 import type { TsLogger } from '../../utils/logger'
 import type { Agent } from '@credo-ts/core'
+import type { Key } from '@openwallet-foundation/askar-shared'
 import type { Readable } from 'stream'
 
 import { AskarStoreManager } from '@credo-ts/askar'
-import { TypedArrayEncoder } from '@credo-ts/core'
+import { StorageUpdateService, TypedArrayEncoder } from '@credo-ts/core'
 import { KdfMethod, Store, StoreKeyMethod } from '@openwallet-foundation/askar-shared'
 import * as AWS from 'aws-sdk'
 import { createHash } from 'crypto'
@@ -19,12 +26,20 @@ import { createGunzip, createGzip } from 'zlib'
 
 import { isTenantAdmissionError } from '../../utils/tenantSessionConfig'
 
+import { ImportSessionStore } from './ImportSessionStore'
+import { assertPristine, mergeIntoRootProfile } from './RootWalletMerge'
 import { HEARTBEAT_INTERVAL_MS, WalletPortabilityJobStore } from './WalletPortabilityJobStore'
 import {
+  ArtifactChecksumMismatchError,
+  ImportSessionNotFoundError,
+  InvalidExportUrlError,
+  StorageVersionMismatchError,
+  TargetNotPristineError,
   WalletPortabilityJobConflictError,
   WalletPortabilityJobStatus,
   WalletPortabilityJobType,
 } from './WalletPortabilityTypes'
+import { openSealedStoreKey, parseRecipientKey, sealStoreKey } from './sealedStoreKey'
 
 // Short-lived per the plan's requirement — an exported wallet is sensitive, the URL should not
 // stay valid longer than a normal download takes.
@@ -34,6 +49,26 @@ const PRE_SIGNED_URL_EXPIRY_SECONDS = 15 * 60
 // bucket names, or stack traces) is logged server-side with the job id instead.
 const EXPORT_FAILED_ERROR_CODE = 'EXPORT_FAILED'
 const IMPORT_FAILED_ERROR_CODE = 'IMPORT_FAILED'
+
+// Job-store scope for a root wallet import: the dedicated agent has no tenant, and only one such import may run
+// at a time.
+export const ROOT_IMPORT_SCOPE_ID = '__root-wallet__'
+
+export interface RootWalletImportOptions {
+  sessionId: string
+  checksum: string
+  sealedStoreKey: string
+  storageVersion: string
+  dryRun: boolean
+}
+
+export interface RootWalletImportParams extends RootWalletImportOptions {
+  exportUrl: string
+}
+
+// Where the sealed artifact comes from: pulled from a pre-signed URL, or already received from the platform and
+// sitting in a work directory this job now owns.
+type RootImportSource = { exportUrl: string } | { workDir: string; downloadedPath: string }
 
 // Ceiling for a real wallet export, enforced against actual bytes read rather than a trusted
 // Content-Length header.
@@ -45,6 +80,13 @@ const MAX_DECOMPRESSED_BYTES = MAX_DOWNLOAD_BYTES
 // node-fetch@2 has no default timeout, and this `timeout` option only covers time-to-first-byte
 // (cleared once headers arrive) — a stalled body isn't caught by this alone; see
 // downloadAndChecksum's inactivity timer for that case.
+// node-fetch puts the whole request URL, signature included, in its error messages.
+// Which kinds of record stood in the way, never their content.
+const describeNotPristine = (error: TargetNotPristineError): string =>
+  `record categories [${error.categories.join(', ')}], ${error.keyCount} key(s)`
+
+const withoutUrls = (error: unknown): string => String(error).replace(/https?:\/\/\S+/gi, '[url]')
+
 const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000
 
 // Gzip magic number — used to detect a mobile-compat (uncompressed) artifact on import without
@@ -74,6 +116,7 @@ interface S3Client {
     promise(): Promise<unknown>
   }
   getSignedUrl(operation: 'getObject', params: { Bucket: string; Key: string; Expires: number }): string
+  deleteObject(params: { Bucket: string; Key: string }): { promise(): Promise<unknown> }
 }
 
 /**
@@ -88,6 +131,7 @@ export class WalletPortabilityService {
   private readonly logger: TsLogger
   private readonly jobStore: WalletPortabilityJobStore
   private readonly s3: S3Client
+  private readonly importSessions = new ImportSessionStore()
 
   public constructor(logger: TsLogger) {
     this.logger = logger
@@ -114,6 +158,31 @@ export class WalletPortabilityService {
   }
 
   /**
+   * Removes a finished export's artifact from S3 so the platform never needs bucket access. Returns undefined when
+   * the job is unknown, belongs to another tenant, or is not an export. The object key comes from the stored job
+   * record, never from the caller. Safe to repeat.
+   */
+  public async deleteExport(tenantId: string, jobId: string): Promise<DeleteExportResult | undefined> {
+    const job = await this.jobStore.get(jobId)
+    if (!job || job.tenantId !== tenantId || job.type !== WalletPortabilityJobType.Export) return undefined
+    if (job.status === WalletPortabilityJobStatus.Pending || job.status === WalletPortabilityJobStatus.InProgress) {
+      throw new WalletPortabilityJobConflictError(tenantId, jobId)
+    }
+
+    if (job.s3Key) {
+      await this.s3.deleteObject({ Bucket: this.getExportBucket(), Key: job.s3Key }).promise()
+      await this.jobStore.save({
+        ...job,
+        s3Key: undefined,
+        artifactDeleted: true,
+        updatedAt: new Date().toISOString(),
+      })
+      this.logger.info(`[WalletPortabilityService] export ${jobId} for tenant '${tenantId}' deleted from S3`)
+    }
+    return { jobId, deleted: true }
+  }
+
+  /**
    * @param passKey Caller-supplied passphrase for the exported artifact — matches the legacy
    *   `POST /export/:tenantId { passKey, walletID }` contract. The controller enforces a minimum
    *   length (MIN_PASSKEY_LENGTH in MultiTenancyController) before this is ever reached; below
@@ -123,14 +192,23 @@ export class WalletPortabilityService {
    *   artifact later; it is never generated or persisted server-side, and never logged.
    * @param walletID Profile to package the artifact under, for mobile's `agent.wallet.import()`
    *   to match; falls back to the tenant's real profile if omitted.
+   * @param recipientPublicKey Base64 X25519 public key of the agent that will import the artifact. When
+   *   set, the artifact is encrypted with a random store key sealed to this key (returned as
+   *   `sealedStoreKey` on the job) instead of a caller passphrase, and `passKey` is not used. Native
+   *   path only, so it cannot be combined with `walletID`.
    */
   public async exportWallet(
     agent: Agent<RestMultiTenantAgentModules>,
     tenantId: string,
-    passKey: string,
+    passKey: string | undefined,
     walletID?: string,
+    recipientPublicKey?: string,
   ): Promise<ExportWalletResult> {
     const jobId = uuid()
+
+    if (recipientPublicKey) {
+      parseRecipientKey(recipientPublicKey).handle.free()
+    }
 
     // Export and import both rename the tenant's Askar profile for their copy — two concurrent
     // jobs on the same tenant can wedge it with no working profile, or drop a result. Reserve the
@@ -159,7 +237,7 @@ export class WalletPortabilityService {
     // Fire-and-forget async job. Best-effort mark Failed here too, in case setJobStatus(InProgress)
     // itself throws before runExport's own try can catch it — otherwise the job is stranded at
     // Pending forever.
-    this.runExport(agent, tenantId, jobId, passKey, heartbeat, walletID).catch((error) => {
+    this.runExport(agent, tenantId, jobId, passKey, heartbeat, walletID, recipientPublicKey).catch((error) => {
       this.logger.error(`[WalletPortabilityService] export job ${jobId} failed to start: ${error}`)
       this.setJobStatus(
         jobId,
@@ -184,12 +262,16 @@ export class WalletPortabilityService {
     agent: Agent<RestMultiTenantAgentModules>,
     tenantId: string,
     jobId: string,
-    passKey: string,
+    passKey: string | undefined,
     heartbeat: NodeJS.Timeout,
     walletID?: string,
+    recipientPublicKey?: string,
   ): Promise<void> {
     let tempStore: Store | undefined
     let tempDbPath: string | undefined
+    let recipientKey: Key | undefined
+    let sealedStoreKey: string | undefined
+    let storageVersion: string | undefined
     // Hoisted so cleanup can remove the whole temp directory — Askar's sqlite backend leaves
     // -shm/-wal sidecars next to the .db file, which removing only the explicit .db/.db.gz paths
     // would leave behind.
@@ -202,6 +284,11 @@ export class WalletPortabilityService {
 
       workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-export-'))
       tempDbPath = path.join(workDir, `${jobId}.db`)
+
+      // Raw KDF with a random key when sealing: the key never leaves this process in the clear, only
+      // its sealed form is returned.
+      recipientKey = recipientPublicKey ? parseRecipientKey(recipientPublicKey) : undefined
+      const storeKey = recipientKey ? Store.generateRawKey() : (passKey as string)
 
       // Do the copy fully inside withTenantAgent so the tenant session releases on exit — never
       // hold a tenant-scoped handle outside the callback.
@@ -222,13 +309,18 @@ export class WalletPortabilityService {
           // Argon2IMod, not Raw: Askar's raw KDF only accepts a base58-encoded 32-byte key and
           // would reject a normal passphrase outright; Argon2i derives a real key from the
           // caller's passKey.
-          keyMethod: new StoreKeyMethod(KdfMethod.Argon2IMod),
-          passKey,
+          keyMethod: new StoreKeyMethod(recipientKey ? KdfMethod.Raw : KdfMethod.Argon2IMod),
+          passKey: storeKey,
           recreate: true,
           profile: packagedProfile,
         })
 
         await baseStore.copyProfile({ toStore: tempStore, fromProfile: profile, toProfile: packagedProfile })
+
+        // Read after the tenant is opened above: opening auto-upgrades its storage and updates the record.
+        if (recipientKey) {
+          storageVersion = (await agent.modules.tenants.getTenantById(tenantId)).storageVersion
+        }
 
         // walletID also selects the mobile-compat artifact: flatten holder-credential records to
         // the shape Credo 0.5.18 can read (nested credentialInstances -> flat field).
@@ -260,6 +352,10 @@ export class WalletPortabilityService {
       await tempStore?.close()
       tempStore = undefined
 
+      if (recipientKey) {
+        sealedStoreKey = sealStoreKey(storeKey, recipientKey)
+      }
+
       let uploadPath: string
       let checksum: string
       let s3Key: string
@@ -289,6 +385,8 @@ export class WalletPortabilityService {
         updatedAt: new Date().toISOString(),
         s3Key,
         checksum,
+        sealedStoreKey,
+        storageVersion,
       })
     } catch (error) {
       if (isTenantAdmissionError(error)) {
@@ -308,6 +406,7 @@ export class WalletPortabilityService {
     } finally {
       // Stop the heartbeat first — no point touching updatedAt once cleanup has started.
       clearInterval(heartbeat)
+      recipientKey?.handle.free()
       // Remove the whole workDir (not just the individual paths) so plaintext wallet data and
       // Askar's -shm/-wal sidecars never linger on disk.
       if (tempStore) {
@@ -520,6 +619,10 @@ export class WalletPortabilityService {
       // pointer, orphaning the artifact in the bucket.
       s3Key: existing?.s3Key,
       checksum: existing?.checksum,
+      sealedStoreKey: existing?.sealedStoreKey,
+      storageVersion: existing?.storageVersion,
+      counts: existing?.counts,
+      dryRun: existing?.dryRun,
       // Preserves a backupProfile written on an earlier InProgress/Completed save for this job if
       // this particular call doesn't pass one explicitly (export callers never do).
       backupProfile: backupProfile ?? existing?.backupProfile,
@@ -597,7 +700,7 @@ export class WalletPortabilityService {
     // itself throws — otherwise the job stays Pending and the tenant's slot never releases,
     // wedging every future export/import until the 24h TTL clears.
     this.runImport(agent, tenantId, jobId, exportUrl, passKey, checksum, heartbeat).catch((error) => {
-      this.logger.error(`[WalletPortabilityService] import job ${jobId} failed to start: ${error}`)
+      this.logger.error(`[WalletPortabilityService] import job ${jobId} failed to start: ${withoutUrls(error)}`)
       this.setJobStatus(
         jobId,
         tenantId,
@@ -764,7 +867,7 @@ export class WalletPortabilityService {
           { jobId },
         )
       }
-      this.logger.error(`[WalletPortabilityService] import job ${jobId} failed: ${error}`)
+      this.logger.error(`[WalletPortabilityService] import job ${jobId} failed: ${withoutUrls(error)}`)
 
       // Best-effort rollback: if we got as far as renaming the tenant's real profile aside but
       // never completed, put it back rather than leaving the tenant with no working wallet.
@@ -854,14 +957,28 @@ export class WalletPortabilityService {
     return false
   }
 
+  private assertTrustedExportUrl(url: string): void {
+    if (!process.env.AWS_WALLET_EXPORT_BUCKET) {
+      throw new InvalidExportUrlError('AWS_WALLET_EXPORT_BUCKET is not configured on this agent')
+    }
+    let parsedUrl: URL
+    try {
+      parsedUrl = new URL(url)
+    } catch {
+      throw new InvalidExportUrlError('The export URL is not a valid URL')
+    }
+    if (parsedUrl.protocol !== 'https:' || !this.isTrustedExportHost(parsedUrl.hostname, parsedUrl.pathname)) {
+      throw new InvalidExportUrlError(
+        `Refusing to download export artifact from untrusted host '${parsedUrl.hostname}'`,
+      )
+    }
+  }
+
   private async downloadAndChecksum(url: string, destPath: string): Promise<string> {
     // https-only, no redirects followed, and a hard byte cap below so a large/endless response
     // can't fill the host's disk. Host (+ path, for the path-style form) is restricted to this
     // deployment's own export bucket — see isTrustedExportHost.
-    const parsedUrl = new URL(url)
-    if (parsedUrl.protocol !== 'https:' || !this.isTrustedExportHost(parsedUrl.hostname, parsedUrl.pathname)) {
-      throw new Error(`Refusing to download export artifact from untrusted host '${parsedUrl.hostname}'`)
-    }
+    this.assertTrustedExportUrl(url)
 
     const response = await fetch(url, { redirect: 'error', timeout: DOWNLOAD_TIMEOUT_MS })
     if (!response.ok || !response.body) {
@@ -880,6 +997,12 @@ export class WalletPortabilityService {
     // below) — @types/node-fetch just types it as the DOM ReadableStream interface, which doesn't
     // declare `.destroy()`. Cast to the real runtime type.
     const body = response.body as unknown as Readable
+    return this.streamToFileWithChecksum(body, destPath)
+  }
+
+  // Shared by the S3 pull and the push upload: caps the bytes written, bounds inactivity, and hashes what was
+  // actually written to disk.
+  private async streamToFileWithChecksum(body: Readable, destPath: string): Promise<string> {
     const hash = createHash('sha256')
     const dest = createWriteStream(destPath)
     let bytesRead = 0
@@ -948,8 +1071,289 @@ export class WalletPortabilityService {
     await pipeline(source, gunzip, dest)
   }
 
+  /** Runs `work` while holding the tenant's active-job slot, so it cannot overlap an export or import. */
+  public async runExclusive<T>(tenantId: string, work: () => Promise<T>): Promise<T> {
+    const jobId = uuid()
+    const conflictingJobId = await this.jobStore.tryReserveActiveJob(tenantId, jobId)
+    if (conflictingJobId) {
+      throw new WalletPortabilityJobConflictError(tenantId, conflictingJobId)
+    }
+    // A record that is kept fresh is what stops the slot being reclaimed as dead once the grace period has passed.
+    const heartbeat = this.startHeartbeat(jobId, tenantId)
+    let succeeded = false
+    try {
+      const now = new Date().toISOString()
+      await this.jobStore.save({
+        jobId,
+        tenantId,
+        type: WalletPortabilityJobType.Import,
+        status: WalletPortabilityJobStatus.InProgress,
+        createdAt: now,
+        updatedAt: now,
+      })
+      const result = await work()
+      succeeded = true
+      return result
+    } finally {
+      clearInterval(heartbeat)
+      await this.setJobStatus(
+        jobId,
+        tenantId,
+        WalletPortabilityJobType.Import,
+        succeeded ? WalletPortabilityJobStatus.Completed : WalletPortabilityJobStatus.Failed,
+      ).catch(() => undefined)
+      await this.jobStore.releaseActiveJob(tenantId, jobId).catch(() => undefined)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Root wallet import (dedicated agent)
+  // ---------------------------------------------------------------------------
+
+  private getRootStore(agent: Agent) {
+    return agent.context.dependencyManager.resolve(AskarStoreManager).getInitializedStoreWithProfile(agent.context)
+  }
+
+  private async assertRootPristine(agent: Agent): Promise<void> {
+    const { store, profile } = await this.getRootStore(agent)
+    const session = await store.session(profile).open()
+    try {
+      await assertPristine(session)
+    } catch (error) {
+      if (error instanceof TargetNotPristineError) {
+        this.logger.warn(`[WalletPortabilityService] the root wallet is not pristine: ${describeNotPristine(error)}`)
+      }
+      throw error
+    } finally {
+      await session.close()
+    }
+  }
+
+  /**
+   * Starts an import session on a dedicated agent: checks the root wallet is pristine and mints an X25519 key
+   * pair whose private half stays in this process's memory. The caller seals the export's store key to the
+   * returned public key.
+   */
+  public async createImportSession(agent: Agent): Promise<CreatedImportSession> {
+    await this.assertRootPristine(agent)
+    return this.importSessions.create()
+  }
+
+  /**
+   * Merges a sealed export into this dedicated agent's pristine root wallet. Async job: poll getJobStatus.
+   * `dryRun` runs everything including the merge, then rolls the merge back. The import session is consumed
+   * either way.
+   */
+  public async importRootWallet(agent: Agent, params: RootWalletImportParams): Promise<ImportWalletResult> {
+    // Before the import session is consumed, so a bad URL or a missing bucket setting leaves it usable.
+    this.assertTrustedExportUrl(params.exportUrl)
+    const { jobId, heartbeat } = await this.reserveRootImport(agent, params)
+    return this.launchRootImport(agent, jobId, params, heartbeat, { exportUrl: params.exportUrl })
+  }
+
+  /**
+   * Same as importRootWallet, for a target that cannot reach S3: the platform pushes the sealed artifact as the
+   * request body. The artifact is received and its checksum verified before the job starts.
+   */
+  public async importRootWalletFromUpload(
+    agent: Agent,
+    body: Readable,
+    options: RootWalletImportOptions,
+  ): Promise<ImportWalletResult> {
+    const { jobId, heartbeat } = await this.reserveRootImport(agent, options)
+
+    let workDir: string | undefined
+    try {
+      workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-root-import-'))
+      const downloadedPath = path.join(workDir, `${jobId}.download`)
+      const actualChecksum = await this.streamToFileWithChecksum(body, downloadedPath)
+      if (actualChecksum !== options.checksum) {
+        throw new ArtifactChecksumMismatchError()
+      }
+      return await this.launchRootImport(agent, jobId, options, heartbeat, { workDir, downloadedPath })
+    } catch (error) {
+      clearInterval(heartbeat)
+      if (workDir) {
+        await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined)
+      }
+      await this.setJobStatus(
+        jobId,
+        ROOT_IMPORT_SCOPE_ID,
+        WalletPortabilityJobType.Import,
+        WalletPortabilityJobStatus.Failed,
+        IMPORT_FAILED_ERROR_CODE,
+      ).catch(() => undefined)
+      await this.jobStore.releaseActiveJob(ROOT_IMPORT_SCOPE_ID, jobId).catch(() => undefined)
+      throw error
+    }
+  }
+
+  private async reserveRootImport(
+    agent: Agent,
+    options: RootWalletImportOptions,
+  ): Promise<{ jobId: string; heartbeat: NodeJS.Timeout }> {
+    if (!this.importSessions.get(options.sessionId)) {
+      throw new ImportSessionNotFoundError()
+    }
+
+    const currentStorageVersion = await agent.dependencyManager
+      .resolve(StorageUpdateService)
+      .getCurrentStorageVersion(agent.context)
+    if (currentStorageVersion !== options.storageVersion) {
+      throw new StorageVersionMismatchError()
+    }
+    await this.assertRootPristine(agent)
+
+    const jobId = uuid()
+    const conflictingJobId = await this.jobStore.tryReserveActiveJob(ROOT_IMPORT_SCOPE_ID, jobId)
+    if (conflictingJobId) {
+      throw new WalletPortabilityJobConflictError(ROOT_IMPORT_SCOPE_ID, conflictingJobId)
+    }
+
+    // Saved before anything streams in, so the reservation has a record the heartbeat can keep alive for as long as
+    // the upload takes; without one, another import could take the slot after the reservation's grace period.
+    const now = new Date().toISOString()
+    await this.jobStore.save({
+      jobId,
+      tenantId: ROOT_IMPORT_SCOPE_ID,
+      type: WalletPortabilityJobType.Import,
+      status: WalletPortabilityJobStatus.Pending,
+      createdAt: now,
+      updatedAt: now,
+      dryRun: options.dryRun,
+    })
+
+    this.importSessions.markInUse(options.sessionId)
+    return { jobId, heartbeat: this.startHeartbeat(jobId, ROOT_IMPORT_SCOPE_ID) }
+  }
+
+  private async launchRootImport(
+    agent: Agent,
+    jobId: string,
+    options: RootWalletImportOptions,
+    heartbeat: NodeJS.Timeout,
+    source: RootImportSource,
+  ): Promise<ImportWalletResult> {
+    this.runRootImport(agent, jobId, options, heartbeat, source).catch((error) => {
+      this.logger.error(`[WalletPortabilityService] root import job ${jobId} failed to start: ${withoutUrls(error)}`)
+      this.setJobStatus(
+        jobId,
+        ROOT_IMPORT_SCOPE_ID,
+        WalletPortabilityJobType.Import,
+        WalletPortabilityJobStatus.Failed,
+        IMPORT_FAILED_ERROR_CODE,
+      ).catch((statusError) => {
+        this.logger.error(
+          `[WalletPortabilityService] root import job ${jobId} also failed to record its Failed status: ${statusError}`,
+        )
+      })
+      this.importSessions.destroy(options.sessionId)
+      this.jobStore.releaseActiveJob(ROOT_IMPORT_SCOPE_ID, jobId).catch(() => undefined)
+    })
+
+    return { jobId, status: WalletPortabilityJobStatus.Pending }
+  }
+
+  private async runRootImport(
+    agent: Agent,
+    jobId: string,
+    options: RootWalletImportOptions,
+    heartbeat: NodeJS.Timeout,
+    source: RootImportSource,
+  ): Promise<void> {
+    let importedStore: Store | undefined
+    let workDir: string | undefined = 'workDir' in source ? source.workDir : undefined
+
+    try {
+      await this.setJobStatus(
+        jobId,
+        ROOT_IMPORT_SCOPE_ID,
+        WalletPortabilityJobType.Import,
+        WalletPortabilityJobStatus.InProgress,
+      )
+
+      let downloadedPath: string
+      if ('exportUrl' in source) {
+        workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wallet-root-import-'))
+        downloadedPath = path.join(workDir, `${jobId}.download`)
+        const actualChecksum = await this.downloadAndChecksum(source.exportUrl, downloadedPath)
+        if (actualChecksum !== options.checksum) {
+          throw new Error(`Checksum mismatch: expected ${options.checksum}, got ${actualChecksum}`)
+        }
+      } else {
+        downloadedPath = source.downloadedPath
+      }
+      const importedDbPath = path.join(workDir as string, `${jobId}.db`)
+
+      if (await this.isGzip(downloadedPath)) {
+        await this.gunzip(downloadedPath, importedDbPath)
+      } else {
+        await fs.rename(downloadedPath, importedDbPath)
+      }
+
+      const recipientKey = this.importSessions.get(options.sessionId)
+      if (!recipientKey) {
+        throw new ImportSessionNotFoundError()
+      }
+
+      importedStore = await Store.open({
+        uri: `sqlite://${importedDbPath}`,
+        keyMethod: new StoreKeyMethod(KdfMethod.Raw),
+        passKey: openSealedStoreKey(options.sealedStoreKey, recipientKey),
+      })
+
+      const profilesInArtifact = await importedStore.listProfiles()
+      if (profilesInArtifact.length !== 1) {
+        throw new Error(`Imported artifact must contain exactly one profile (found: ${profilesInArtifact.length})`)
+      }
+
+      const { store, profile } = await this.getRootStore(agent)
+      const counts = await mergeIntoRootProfile({
+        source: importedStore,
+        sourceProfile: profilesInArtifact[0],
+        target: store,
+        targetProfile: profile,
+        dryRun: options.dryRun,
+      })
+
+      const existing = await this.jobStore.get(jobId)
+      await this.jobStore.save({
+        jobId,
+        tenantId: ROOT_IMPORT_SCOPE_ID,
+        type: WalletPortabilityJobType.Import,
+        status: WalletPortabilityJobStatus.Completed,
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        counts,
+        dryRun: options.dryRun,
+      })
+    } catch (error) {
+      this.logger.error(
+        `[WalletPortabilityService] root import job ${jobId} failed: ${withoutUrls(error)}${error instanceof TargetNotPristineError ? ` (${describeNotPristine(error)})` : ''}`,
+      )
+      await this.setJobStatus(
+        jobId,
+        ROOT_IMPORT_SCOPE_ID,
+        WalletPortabilityJobType.Import,
+        WalletPortabilityJobStatus.Failed,
+        error instanceof TargetNotPristineError ? error.message : IMPORT_FAILED_ERROR_CODE,
+      )
+    } finally {
+      clearInterval(heartbeat)
+      if (importedStore) {
+        await importedStore.close().catch(() => undefined)
+      }
+      if (workDir) {
+        await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined)
+      }
+      this.importSessions.destroy(options.sessionId)
+      await this.jobStore.releaseActiveJob(ROOT_IMPORT_SCOPE_ID, jobId).catch(() => undefined)
+    }
+  }
+
   /** Graceful shutdown — closes the job store's Redis connection, if any. See shutdownWalletPortabilityService. */
   public async disconnect(): Promise<void> {
+    this.importSessions.clear()
     await this.jobStore.disconnect()
   }
 }

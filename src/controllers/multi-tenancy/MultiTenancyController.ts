@@ -1,5 +1,8 @@
 import type { RestMultiTenantAgentModules } from '../../cliAgent'
+import type { EndpointSchemeSummary } from '../../services/endpoint-schemes/endpointSchemes'
+import type { PurgeTenantProfileResult } from '../../services/tenant-purge/TenantProfilePurgeService'
 import type {
+  DeleteExportResult,
   ExportWalletResult,
   ImportWalletResult,
   WalletPortabilityJobRecord,
@@ -28,11 +31,15 @@ import {
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { ConflictError } from '../../errors/errors'
+import { collectEndpointSchemes } from '../../services/endpoint-schemes/endpointSchemes'
+import { purgeTenantProfile } from '../../services/tenant-purge/TenantProfilePurgeService'
+import { assertNoRelay } from '../../services/tenant-purge/relayGuard'
 import { getWalletPortabilityService } from '../../services/wallet-portability/WalletPortabilityService'
 import {
   WalletPortabilityJobConflictError,
   WalletPortabilityJobType,
 } from '../../services/wallet-portability/WalletPortabilityTypes'
+import { InvalidRecipientKeyError, parseRecipientKey } from '../../services/wallet-portability/sealedStoreKey'
 import { TsLogger } from '../../utils/logger'
 import { CreateTenantOptions } from '../types'
 
@@ -135,6 +142,7 @@ export class MultiTenancyController extends Controller {
     }
   }
 
+  @Response<{ message: string }>(409, 'TENANT_HAS_RELAY')
   @Delete(':tenantId')
   public async deleteTenantById(
     @Request() request: Req,
@@ -144,6 +152,7 @@ export class MultiTenancyController extends Controller {
   ) {
     try {
       const agent = request.agent as Agent<RestMultiTenantAgentModules>
+      await assertNoRelay(agent, tenantId)
       const deleteTenant = await agent.modules.tenants.deleteTenantById(tenantId)
       // Invalidate the cached tenant record so a deleted tenant no longer resolves from cache.
       // Key matches the tenants cache patch (patches/@credo-ts+tenants+0.6.2.patch).
@@ -155,12 +164,66 @@ export class MultiTenancyController extends Controller {
       }
       return JsonTransformer.toJSON(deleteTenant)
     } catch (error) {
+      if (error instanceof ConflictError) {
+        throw error
+      }
       if (error instanceof RecordNotFoundError) {
         return notFoundError(404, {
           reason: `Tenant with id: ${tenantId} not found.`,
         })
       }
       return internalServerError(500, { message: `Something went wrong: ${error}` })
+    }
+  }
+
+  /**
+   * Remove the tenant's wallet from this agent after it has moved to a dedicated agent. Refused until the tenant's
+   * relay forwards to the new agent. The TenantRecord (tagged migrated) and routing records stay. Safe to repeat.
+   */
+  @Response<{ message: string }>(404, 'Tenant not found')
+  @Response<{ message: string }>(
+    409,
+    'RELAY_NOT_FORWARDING, RELAY_DISABLED, a wallet portability job is running, or the tenant has open sessions',
+  )
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Post('/:tenantId/purge-profile')
+  public async purgeProfile(
+    @Request() request: Req,
+    @Path('tenantId') tenantId: string,
+  ): Promise<PurgeTenantProfileResult> {
+    const agent = request.agent as Agent<RestMultiTenantAgentModules>
+    try {
+      return await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).runExclusive(
+        tenantId,
+        () => purgeTenantProfile(agent, tenantId),
+      )
+    } catch (error) {
+      if (error instanceof WalletPortabilityJobConflictError) {
+        throw new ConflictError(error.message)
+      }
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  /**
+   * Which URL schemes the tenant's own DIDs advertise as service endpoints, with a count and example DIDs per
+   * scheme, so a caller can refuse a move for schemes the dedicated agent doesn't serve (ws, wss).
+   */
+  @Response<{ message: string }>(404, 'Tenant not found')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Get('/:tenantId/endpoint-schemes')
+  public async getEndpointSchemes(
+    @Request() request: Req,
+    @Path('tenantId') tenantId: string,
+  ): Promise<EndpointSchemeSummary> {
+    const agent = request.agent as Agent<RestMultiTenantAgentModules>
+    try {
+      await agent.modules.tenants.getTenantById(tenantId)
+      return await agent.modules.tenants.withTenantAgent({ tenantId }, (tenantAgent) =>
+        collectEndpointSchemes(tenantAgent, tenantId),
+      )
+    } catch (error) {
+      throw ErrorHandlingService.handle(error)
     }
   }
 
@@ -191,11 +254,23 @@ export class MultiTenancyController extends Controller {
   public async exportTenantWallet(
     @Request() request: Req,
     @Path('tenantId') tenantId: string,
-    @Body() exportWalletRequest: { passKey: string; walletID?: string },
+    @Body() exportWalletRequest: { passKey?: string; walletID?: string; recipientPublicKey?: string },
     @Res() badRequestError: TsoaResponse<400, { reason: string }>,
   ): Promise<ExportWalletResult> {
-    const { passKey, walletID } = exportWalletRequest
-    if (!passKey || passKey.length < MIN_PASSKEY_LENGTH) {
+    const { passKey, walletID, recipientPublicKey } = exportWalletRequest
+    if (recipientPublicKey) {
+      if (passKey || undefined !== walletID) {
+        return badRequestError(400, { reason: 'recipientPublicKey cannot be combined with passKey or walletID.' })
+      }
+      try {
+        parseRecipientKey(recipientPublicKey).handle.free()
+      } catch (error) {
+        if (error instanceof InvalidRecipientKeyError) {
+          return badRequestError(400, { reason: error.message })
+        }
+        throw ErrorHandlingService.handle(error)
+      }
+    } else if (!passKey || passKey.length < MIN_PASSKEY_LENGTH) {
       return badRequestError(400, { reason: `passKey must be at least ${MIN_PASSKEY_LENGTH} characters.` })
     }
     // walletID becomes the literal Askar profile name mobile's import must match exactly.
@@ -222,10 +297,36 @@ export class MultiTenancyController extends Controller {
         tenantId,
         passKey,
         walletID,
+        recipientPublicKey,
       )
     } catch (error) {
       // Export and import share the tenant's profile namespace and can't safely run
       // concurrently — see WalletPortabilityJobConflictError's docblock.
+      if (error instanceof WalletPortabilityJobConflictError) {
+        throw new ConflictError(error.message)
+      }
+      throw ErrorHandlingService.handle(error)
+    }
+  }
+
+  /**
+   * Delete a finished export's artifact from S3. Safe to repeat; refused with 409 while the export is still running.
+   */
+  @Response<{ message: string }>(409, 'The export is still running')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Delete('/export/:tenantId/:jobId')
+  public async deleteExportedWallet(
+    @Path('tenantId') tenantId: string,
+    @Path('jobId') jobId: string,
+    @Res() notFoundError: TsoaResponse<404, { reason: string }>,
+  ): Promise<DeleteExportResult> {
+    try {
+      const result = await getWalletPortabilityService(new TsLogger(LogLevel.info, 'wallet-portability')).deleteExport(
+        tenantId,
+        jobId,
+      )
+      return result ?? notFoundError(404, { reason: `Export job '${jobId}' not found for tenant '${tenantId}'.` })
+    } catch (error) {
       if (error instanceof WalletPortabilityJobConflictError) {
         throw new ConflictError(error.message)
       }

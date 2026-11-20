@@ -5,6 +5,8 @@ import type {
   SafeW3cJsonLdVerifyCredentialOptions,
   SelfAttestedW3cCredentialResponse,
   VerifyDataOptions,
+  WebhookProbeRequest,
+  WebhookProbeResponse,
 } from '../types'
 import type {
   JsonObject,
@@ -18,8 +20,10 @@ import {
   ClaimFormat,
   DidRepository,
   JsonTransformer,
+  SignatureSuiteRegistry,
   W3cCredential,
   W3cCredentialRecord,
+  W3cJsonLdCredentialService,
   W3cJsonLdVerifiableCredential,
 } from '@credo-ts/core'
 import { Request as Req } from 'express'
@@ -32,8 +36,11 @@ import { injectable } from 'tsyringe'
 import { AgentRole, SCOPES } from '../../enums'
 import ErrorHandlingService from '../../errorHandlingService'
 import { NotFoundError, BadRequestError } from '../../errors'
+import { getAgentRuntimeConfig, getReleaseVersion, getStorageVersion } from '../../utils/agentInfo'
 import { findDefaultDidRecords } from '../../utils/defaultDid'
 import { verifyDidBoundSignature } from '../../utils/didSignatureVerification'
+import { keyFitsProofType, selectAssertionMethod } from '../../utils/verificationMethodSelection'
+import { isProbeId, probeWebhook } from '../../utils/webhookProbe'
 
 // 100 years: effectively non-expiring default when the caller doesn't request an expiry (W3cCredential requires some value).
 const SELF_ATTESTED_DEFAULT_EXPIRATION_MS = 100 * 365.25 * 24 * 60 * 60 * 1000
@@ -156,10 +163,26 @@ export class AgentController extends Controller {
         endpoints: request.agent.modules.didcomm.config.endpoints,
         isInitialized: request.agent.isInitialized,
         publicDid: undefined,
+        releaseVersion: getReleaseVersion(),
+        storageVersion: await getStorageVersion(request.agent),
+        config: getAgentRuntimeConfig(request.agent),
       }
     } catch (error) {
       throw ErrorHandlingService.handle(error)
     }
+  }
+
+  /**
+   * Sends one test event to the agent's own webhook URL, so a caller can confirm the URL is set and reaches the
+   * platform. Whether it was accepted is for the receiver to confirm; this only says whether anything answered.
+   */
+  @Security('jwt', [SCOPES.DEDICATED_AGENT])
+  @Post('/webhook/probe')
+  public async probeWebhook(@Body() body: WebhookProbeRequest): Promise<WebhookProbeResponse> {
+    if (!isProbeId(body?.probeId)) {
+      throw new BadRequestError('probeId must be a UUID')
+    }
+    return probeWebhook(body.probeId)
   }
 
   /**
@@ -356,11 +379,15 @@ export class AgentController extends Controller {
       // Default DID is tracked as an `isDefault` tag on the DID's own DidRecord (see DidController.writeDid).
       // findByQuery (not findSingleByQuery) tolerates a wallet carrying more than one tagged DID (e.g. legacy
       // migration); findDefaultDidRecords sorts by createdAt so this agrees with DidController.getDids.
+      const requestedDid = selfAttestedCredentialOptions.did
+      if (undefined !== requestedDid && 0 === (await request.agent.dids.getCreatedDids({ did: requestedDid })).length) {
+        throw new NotFoundError(`DID '${requestedDid}' was not created by this agent`)
+      }
       const [defaultDidRecord] = await findDefaultDidRecords(
         request.agent.dependencyManager.resolve(DidRepository),
         request.agent.context,
       )
-      let selfDid = defaultDidRecord?.did
+      let selfDid = requestedDid ?? defaultDidRecord?.did
 
       // Fallback for wallets that never explicitly set a default DID: only fires when exactly one
       // non-peer created DID exists (did:peer is excluded -- DIDComm connections use the same role tag).
@@ -385,10 +412,7 @@ export class AgentController extends Controller {
       // credential that fails verification everywhere else -- a loud error here beats a silently-
       // unverifiable credential in a holder's wallet. did:peer lacking an assertionMethod key is a
       // DID-creation gap, not something to work around at signing time.
-      const vmRef = defaultDidDocument?.assertionMethod?.[0]
-      const selfDidVerificationMethod = typeof vmRef === 'string' ? vmRef : vmRef?.id
-
-      if (!selfDidVerificationMethod) {
+      if (!defaultDidDocument?.assertionMethod?.length) {
         throw new Error(
           `Default DID '${selfDid}' has no assertionMethod verification method; it cannot be used to issue credentials`,
         )
@@ -401,6 +425,35 @@ export class AgentController extends Controller {
         proofType: selfAttestedProofType,
         expirationDate: selfAttestedExpirationDate,
       } = selfAttestedCredentialOptions
+
+      // The key must suit the proof type, not merely come first: did:ethr lists `#controller` (an
+      // address, no public key) before `#controllerKey`, the key EcdsaSecp256k1Signature2019 signs
+      // with. Same lookup Credo's own JSON-LD issuance uses (getVerificationMethodTypesByProofType).
+      let acceptedTypes: string[]
+      try {
+        acceptedTypes = request.agent.dependencyManager
+          .resolve(W3cJsonLdCredentialService)
+          .getVerificationMethodTypesByProofType(selfAttestedProofType)
+      } catch {
+        throw new BadRequestError(`proofType '${selfAttestedProofType}' is not supported by this agent`)
+      }
+      const selected = selectAssertionMethod(defaultDidDocument, acceptedTypes)
+      // A fallback key of a type the suite does not list is kept only if its key still fits the suite
+      // (e.g. a did:ethr asked for Ed25519Signature2018 does not): the same 400, not a 500 from the signer.
+      const misfit =
+        selected?.verificationMethod?.type &&
+        !acceptedTypes.includes(selected.verificationMethod.type) &&
+        !keyFitsProofType(
+          request.agent.dependencyManager.resolve(SignatureSuiteRegistry),
+          selected.verificationMethod,
+          selfAttestedProofType,
+        )
+      const selfDidVerificationMethod = misfit ? undefined : selected?.id
+      if (!selfDidVerificationMethod) {
+        throw new BadRequestError(
+          `DID '${selfDid}' has no assertionMethod key usable with proofType '${selfAttestedProofType}'`,
+        )
+      }
 
       // Caller-controlled @context can reach Credo's native JSON-LD loader with no egress restriction
       // (SSRF) for any URL outside its small static context cache. Blocks non-https and literal

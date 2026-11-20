@@ -17,6 +17,7 @@ import cron from 'node-cron'
 import { randomUUID } from 'node:crypto'
 
 import { RotationLease } from '../../services/did-rotation/RotationLease'
+import { isTenantMigrated } from '../../utils/migratedTenant'
 import { isTenantAdmissionError } from '../../utils/tenantSessionConfig'
 import { purgeTenant } from '../PurgeEngine'
 import { PurgeDeletionStatus, sendPurgeWebhook } from '../PurgeWebhook'
@@ -151,13 +152,17 @@ export class CronPurgeScheduler {
 
     if (isShared) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const tenants: Array<{ id: string }> = await (agent as any).modules.tenants.getAllTenants()
+      const tenantsModule = (agent as any).modules.tenants as {
+        getAllTenants(): Promise<Array<{ id: string; getTag?: (name: string) => unknown }>>
+      }
+      const tenants = await tenantsModule.getAllTenants()
 
       for (const tenant of tenants) {
         if (leaseLost()) {
           logger.warn('[Purge] Another task took over the cron scan lease — stopping this scan', { runId })
           break
         }
+        if (isTenantMigrated(tenant)) continue
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           await (agent as any).modules.tenants.withTenantAgent({ tenantId: tenant.id }, async (tenantAgent: Agent) => {

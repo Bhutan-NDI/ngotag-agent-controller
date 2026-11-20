@@ -10,6 +10,7 @@ import { container } from 'tsyringe'
 import { AgentRole, ErrorMessages, SCOPES } from './enums'
 import { StatusException } from './errors'
 import { TsLogger } from './utils/logger'
+import { tagRequestSpan, withSpan } from './utils/telemetry'
 import { isTenantAdmissionError, tenantCapacityResponse } from './utils/tenantSessionConfig'
 
 // export type AgentType = Agent<RestAgentModules> | Agent<RestMultiTenantAgentModules> | TenantAgent<RestAgentModules>
@@ -104,7 +105,9 @@ export async function expressAuthentication(request: Request, securityName: stri
           if (!tenantId) {
             return Promise.reject(new StatusException(ErrorMessages.Unauthorized, 401))
           }
-          const tenantAgent = await agent.modules.tenants.getTenantAgent({ tenantId }).catch((error: unknown) => {
+          const tenantAgent = await withSpan('tenant.session.open', () =>
+            agent.modules.tenants.getTenantAgent({ tenantId }),
+          ).catch((error: unknown) => {
             if (isTenantAdmissionError(error)) {
               throw Object.assign(new StatusException(tenantCapacityResponse.message, tenantCapacityResponse.status), {
                 cause: error,
@@ -118,6 +121,7 @@ export async function expressAuthentication(request: Request, securityName: stri
 
           // Only need to registerInstance for TenantAgent.
           request.agent = tenantAgent
+          tagRequestSpan('credo.tenant.id', tenantId)
           return true
         }
       } else if (role === AgentRole.RestRootAgentWithTenants) {

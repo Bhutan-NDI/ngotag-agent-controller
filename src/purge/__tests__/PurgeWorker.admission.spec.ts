@@ -11,7 +11,8 @@ import { CronPurgeScheduler } from '../schedulers/CronPurgeScheduler'
 function fixture(error: Error, deliveryCount: number) {
   const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() }
   const withTenantAgent = jest.fn<() => Promise<void>>().mockRejectedValue(error)
-  const agent = { config: { logger }, modules: { tenants: { withTenantAgent } } }
+  const getTenantById = jest.fn<() => Promise<unknown>>().mockResolvedValue({ id: 'tenant' })
+  const agent = { config: { logger }, modules: { tenants: { withTenantAgent, getTenantById } } }
   const msg = {
     data: StringCodec().encode(
       JSON.stringify({

@@ -44,5 +44,8 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser && \
 
 USER appuser
 
+ARG RELEASE_VERSION
+ENV RELEASE_VERSION=${RELEASE_VERSION}
+
 # Set entry point
 ENTRYPOINT ["node", "./bin/afj-rest.js", "start"]

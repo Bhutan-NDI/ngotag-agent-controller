@@ -30,6 +30,7 @@ import type { Agent, Logger, QueryOptions } from '@credo-ts/core'
 import { RecordNotFoundError } from '@credo-ts/core'
 import { OpenId4VcIssuanceSessionRepository, OpenId4VcVerificationSessionRepository } from '@credo-ts/openid4vc'
 
+import { purgeDuration, purgeFailures, purgeRecordsDeleted } from '../utils/telemetry'
 import { sleep } from '../utils/webhook'
 
 import {
@@ -215,6 +216,11 @@ export async function purgeTenant(
     failed: sumBy(categories, (c) => c.failed),
     truncated: categories.some((c) => c.truncated),
   }
+
+  const dryRun = { dry_run: summary.dryRun }
+  purgeRecordsDeleted.add(summary.parentsDeleted + summary.childrenDeleted, dryRun)
+  purgeFailures.add(summary.failed, dryRun)
+  purgeDuration.record(summary.durationMs, dryRun)
 
   ctx.logger.info('[Purge] Tenant summary', {
     runId,

@@ -15,8 +15,9 @@ image=$1
 expected_arch=$2
 
 check="const v={arch:process.arch};\
-const k=require('@openwallet-foundation/askar-nodejs').askarNodeJS;v.askar=k.version();\
-v.key=!!k.keyGenerate({algorithm:'ed25519',keyBackend:'software'});\
+const k=require('@openwallet-foundation/askar-nodejs').askarNodeJS;\
+v.askar=require('koffi').decode(k.version(),'char',-1);\
+v.key=!!k.keyGenerate({algorithm:'ed25519',keyBackend:'software',ephemeral:false});\
 v.anoncreds=require('@hyperledger/anoncreds-nodejs').anoncredsNodeJS.version();\
 v.indyVdr=require('@hyperledger/indy-vdr-nodejs').indyVdrNodeJS.version();\
 v.ffi=typeof require('@2060.io/ffi-napi').Library;\

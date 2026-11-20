@@ -18,17 +18,11 @@
  */
 import { jest } from '@jest/globals'
 
-const emitted: { body: unknown; attributes: Record<string, unknown> }[] = []
+import { captureOutput, tracerMock, type EmittedRecord } from './loggerTestUtils'
 
-jest.unstable_mockModule('../../tracer', () => ({
-  otelLogger: {
-    emit: (record: { body: unknown; attributes: Record<string, unknown> }) => {
-      emitted.push(record)
-    },
-  },
-  otelLoggerProviderInstance: {},
-  otelSDK: {},
-}))
+const emitted: EmittedRecord[] = []
+
+jest.unstable_mockModule('../../tracer', () => tracerMock(emitted))
 
 const { TsLogger } = await import('../logger')
 const { LogLevel } = await import('@credo-ts/core')
@@ -50,22 +44,6 @@ class FakeAxiosError extends Error {
 }
 
 const SENTINELS = ['SENTINEL_BEARER_TOKEN', 'SENTINEL_CLIENT_SECRET', 'SENTINEL_WALLET_SEED', 'SENTINEL_RESPONSE_TOKEN']
-
-/** tslog writes error-level records to stderr, not stdout. */
-function captureStderr(run: () => void): string {
-  const original = process.stderr.write.bind(process.stderr)
-  let captured = ''
-  process.stderr.write = ((chunk: string | Uint8Array): boolean => {
-    captured += String(chunk)
-    return true
-  }) as typeof process.stderr.write
-  try {
-    run()
-  } finally {
-    process.stderr.write = original
-  }
-  return captured
-}
 
 function thrownAxiosError(): FakeAxiosError {
   function failingCallSite(): never {
@@ -103,7 +81,7 @@ describe('TsLogger error boundary', () => {
 
   for (const [shapeName, buildPayload] of SHAPES) {
     it(`leaks nothing to the console transport via ${shapeName}`, () => {
-      const output = captureStderr(() => {
+      const output = captureOutput(() => {
         new TsLogger(LogLevel.error, 'boundary-test').error('boundary', buildPayload())
       })
 
@@ -114,7 +92,7 @@ describe('TsLogger error boundary', () => {
     })
 
     it(`leaks nothing to OpenTelemetry via ${shapeName}`, () => {
-      captureStderr(() => {
+      captureOutput(() => {
         new TsLogger(LogLevel.error, 'boundary-test').error('boundary', buildPayload())
       })
 
@@ -133,7 +111,7 @@ describe('TsLogger error boundary', () => {
 
   it('does not write any enumerable property of the error to the console transport', () => {
     const error = thrownAxiosError()
-    const output = captureStderr(() => {
+    const output = captureOutput(() => {
       new TsLogger(LogLevel.error, 'boundary-test').error('POST /token -> 500: upstream failed', { error })
     })
 
@@ -145,7 +123,7 @@ describe('TsLogger error boundary', () => {
 
   it('keeps name, message and the original stack after sanitisation', () => {
     const error = thrownAxiosError()
-    const output = captureStderr(() => {
+    const output = captureOutput(() => {
       new TsLogger(LogLevel.error, 'boundary-test').error('POST /token -> 500: upstream failed', { error })
     })
 
@@ -162,7 +140,7 @@ describe('TsLogger error boundary', () => {
 
   it('emits named fields rather than one inspected blob', () => {
     const error = thrownAxiosError()
-    const output = captureStderr(() => {
+    const output = captureOutput(() => {
       new TsLogger(LogLevel.error, 'boundary-test').error('boom', { error })
     })
 
@@ -172,7 +150,7 @@ describe('TsLogger error boundary', () => {
 
   it('gives OpenTelemetry the same sanitised error, never the raw object', () => {
     const error = thrownAxiosError()
-    captureStderr(() => {
+    captureOutput(() => {
       new TsLogger(LogLevel.error, 'boundary-test').error('boom', { error, statusCode: 500 })
     })
 
@@ -189,7 +167,7 @@ describe('TsLogger error boundary', () => {
 
   it('sanitises an error passed under `cause` (WebhookEvent / ProofEvents / CredentialEvents)', () => {
     const error = thrownAxiosError()
-    const output = captureStderr(() => {
+    const output = captureOutput(() => {
       new TsLogger(LogLevel.error, 'boundary-test').error('webhook failed', { cause: error, aborted: false })
     })
 
@@ -206,7 +184,7 @@ describe('TsLogger error boundary', () => {
 
   it('sanitises an Error handed over as the whole data argument (authentication.ts)', () => {
     const error = thrownAxiosError()
-    const output = captureStderr(() => {
+    const output = captureOutput(() => {
       // authentication.ts:82 does exactly this: logger.error(msg, err as Record<string, any>)
       new TsLogger(LogLevel.error, 'boundary-test').error(
         'Error decoding token',
@@ -224,7 +202,7 @@ describe('TsLogger error boundary', () => {
 
   it('sanitises an error nested below the top level', () => {
     const error = thrownAxiosError()
-    const output = captureStderr(() => {
+    const output = captureOutput(() => {
       new TsLogger(LogLevel.error, 'boundary-test').error('nested', { context: { inner: { error } } })
     })
 
@@ -234,7 +212,7 @@ describe('TsLogger error boundary', () => {
   })
 
   it('does not copy the contents of a thrown string into the record', () => {
-    const output = captureStderr(() => {
+    const output = captureOutput(() => {
       new TsLogger(LogLevel.error, 'boundary-test').error('GET /x -> 500: non-Error rejection (string)')
     })
 
@@ -248,7 +226,7 @@ describe('TsLogger error boundary', () => {
         throw new Error('getter exploded')
       },
     }
-    const output = captureStderr(() => {
+    const output = captureOutput(() => {
       new TsLogger(LogLevel.error, 'boundary-test').error('hostile payload', hostile as Record<string, unknown>)
     })
 
@@ -259,7 +237,7 @@ describe('TsLogger error boundary', () => {
     const error = thrownAxiosError()
     const cyclic: Record<string, unknown> = { error }
     cyclic.self = cyclic
-    const output = captureStderr(() => {
+    const output = captureOutput(() => {
       new TsLogger(LogLevel.error, 'boundary-test').error('cyclic', cyclic)
     })
 
@@ -269,7 +247,7 @@ describe('TsLogger error boundary', () => {
   })
 
   it('never emits a secret-bearing non-Error value handed to it as data', () => {
-    const output = captureStderr(() => {
+    const output = captureOutput(() => {
       new TsLogger(LogLevel.error, 'boundary-test').error('GET /x -> 500', {
         error: { clientSecret: 'SENTINEL_CLIENT_SECRET' },
       })

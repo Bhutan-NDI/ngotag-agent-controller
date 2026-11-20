@@ -28,6 +28,9 @@ const config: Config.InitialOptions = {
   // own. Map them back to extensionless so a spec can import a module that uses them.
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
+    // Askar's FFI layer declares named koffi types once per process; see jest.koffi.cjs.
+    '^koffi$': '<rootDir>/jest.koffi.cjs',
+    '^@2060\\.io/ffi-napi$': '<rootDir>/jest.ffistub.cjs',
   },
   // Workers inherit the parent's --max-old-space-size, so the cap bounds total heap, not just concurrency.
   maxWorkers: 2,

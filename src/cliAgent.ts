@@ -40,7 +40,6 @@ import {
   DidCommHttpOutboundTransport,
   DidCommWsOutboundTransport,
   DidCommJsonLdCredentialFormatService,
-  DidCommDifPresentationExchangeProofFormatService,
   DidCommAutoAcceptCredential,
   DidCommAutoAcceptProof,
   DidCommProofV2Protocol,
@@ -77,17 +76,30 @@ import {
 } from './purge/PurgeSchedulerFactory'
 import { buildPurgeConfig } from './purge/PurgeTypes'
 import { setupServer } from './server'
+import { initRotationRuntime, shutdownRotationRuntime } from './services/did-rotation/rotationRuntime'
+import {
+  initRelayRuntime,
+  shutdownRelayRuntime,
+  warnIfRelayEntriesExist,
+} from './services/migration-relay/relayRuntime'
 import { shutdownWalletPortabilityService } from './services/wallet-portability/WalletPortabilityService'
+import { PlanStableAskarStorageModule, walletQueryPlanning } from './storage/PlanStableAskarStorageModule'
+import { shutdownTelemetry } from './tracer'
 import { CachedDocumentLoader } from './utils/CachedDocumentLoader'
 import { RedisCache } from './utils/RedisCache'
+import { adminRequestTimeoutMs } from './utils/adminRequestTimeout'
 import { AuthTypes, getAuthType } from './utils/auth'
 import { generateSecretKey } from './utils/helpers'
+import { HolderBoundDifPresentationExchangeProofFormatService } from './utils/holderBinding'
 import { TsLogger } from './utils/logger'
+import { withNetworkErrorCodes } from './utils/networkErrorCodes'
 import {
   getMixedCredentialRequestToCredentialMapper,
   getX509CertsByClientToken,
   getX509CertsByUrl,
 } from './utils/oid4vc-agent'
+import { getProofRequestExpiryConfig } from './utils/proofRequestExpiry'
+import { armShutdownDeadline, shutdownTimeoutMs } from './utils/shutdownDeadline'
 import { tenantSessionConfig } from './utils/tenantSessionConfig'
 
 export type Transports = 'ws' | 'http'
@@ -215,7 +227,10 @@ const getModules = (
   const jsonLdCredentialFormatService = new DidCommJsonLdCredentialFormatService()
   const anonCredsCredentialFormatService = new AnonCredsDidCommCredentialFormatService()
   const anonCredsProofFormatService = new AnonCredsDidCommProofFormatService()
-  const presentationExchangeProofFormatService = new DidCommDifPresentationExchangeProofFormatService()
+  const presentationExchangeProofFormatService = new HolderBoundDifPresentationExchangeProofFormatService()
+
+  const queryPlanning = walletQueryPlanning(process.env)
+  logger.info(`Wallet query planning: ${queryPlanning ? 'on' : 'off'}`)
 
   return {
     askar: new AskarModule({
@@ -224,7 +239,10 @@ const getModules = (
         ...storeOptions,
       },
       multiWalletDatabaseScheme: walletScheme || AskarMultiWalletDatabaseScheme.ProfilePerWallet,
+      // The wallet StorageService is registered by askarStorage below.
+      enableStorage: false,
     }),
+    askarStorage: new PlanStableAskarStorageModule(queryPlanning),
 
     indyVdr: new IndyVdrModule({
       indyVdr,
@@ -581,7 +599,7 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     modules: {
       ...modules,
     },
-    dependencies: agentDependencies,
+    dependencies: { ...agentDependencies, fetch: withNetworkErrorCodes(agentDependencies.fetch) },
   })
 
   // Register outbound transports
@@ -589,6 +607,9 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
     const OutboundTransport = outboundTransportMapping[outboundTransport]
     agent.modules.didcomm.registerOutboundTransport(new OutboundTransport())
   }
+
+  // The migration relay only exists on a shared (multi-tenant) agent, and only when it is explicitly enabled.
+  const relay = afjConfig.tenancy ? initRelayRuntime(logger) : undefined
 
   // Register inbound transports
   for (const inboundTransport of inboundTransports) {
@@ -605,6 +626,9 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
         }),
       )
       transport.app.use(bodyParser.json({ limit: process.env.APP_JSON_BODY_SIZE ?? '5mb' }))
+      // After the transport's own text parser, so the middleware reads the raw envelope; before its POST handler,
+      // which is only registered by agent.initialize().
+      if (relay) transport.app.use(relay.middleware)
     }
   }
 
@@ -613,6 +637,24 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   mountBaseMiddleware(expressApp)
 
   await agent.initialize()
+
+  if (relay) {
+    relay.service.watchRoutingKeys(agent as unknown as Agent<RestMultiTenantAgentModules>)
+    await relay.service
+      .rehydrate(agent as unknown as Agent<RestMultiTenantAgentModules>)
+      .then((count) => logger.info(`[Relay] restored ${count} relay entr${1 === count ? 'y' : 'ies'}`))
+      .catch((error) => logger.error(`[Relay] could not restore relay state: ${error}`))
+    relay.service.startMirror(agent as unknown as Agent<RestMultiTenantAgentModules>)
+  } else if (afjConfig.tenancy) {
+    await warnIfRelayEntriesExist(agent as unknown as Agent<RestMultiTenantAgentModules>, logger).catch((error) =>
+      logger.error(`[Relay] could not check for relay entries: ${error}`),
+    )
+  }
+
+  // A dedicated agent can receive an organisation's wallet and then rotate its connections to this agent.
+  if (!afjConfig.tenancy) {
+    await initRotationRuntime(agent as unknown as Agent, logger)
+  }
 
   const genericRecord = await agent.genericRecords.findAllByQuery({ hasSecretKey: 'true' })
   const recordsWithSecretKey = genericRecord[0]
@@ -651,10 +693,19 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
 
   logger.info('*** API Key: set')
 
-  // Start purge schedulers if enabled (NATS and Cron are independent)
   const purgeConfig = buildPurgeConfig()
+  if (purgeConfig) await validatePurgeConfig(purgeConfig)
+
+  // Fail at startup, not on the first request, if DIDCOMM_PROOF_REQUEST_EXPIRY is invalid or above
+  // the purge ceiling. Checked after the purge config so a bad purge TTL gets the validator's message.
+  const proofRequestExpiry = getProofRequestExpiryConfig()
+  logger.info(
+    `Proof request expiry: default ${proofRequestExpiry.defaultSeconds}s, max ${proofRequestExpiry.maxSeconds}s ` +
+      `(${proofRequestExpiry.ceilingSource})`,
+  )
+
+  // Start purge schedulers if enabled (NATS and Cron are independent)
   if (purgeConfig) {
-    await validatePurgeConfig(purgeConfig)
     initPurgeSchedulers(purgeConfig.natsConfig.enabled, purgeConfig.cronConfig.enabled)
 
     const purgeWebhookUrl = purgeConfig.webhookEnabled ? webhookUrl : undefined
@@ -671,10 +722,21 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
   const server = app.listen(adminPort, () => {
     logger.info(`Successfully started server on port ${adminPort}`)
   })
+  server.requestTimeout = adminRequestTimeoutMs()
 
   // Graceful shutdown
+  let shuttingDown = false
   const shutdown = async () => {
+    // A second signal must not run the steps again while the first is still in them.
+    if (shuttingDown) return
+    shuttingDown = true
     agent.config.logger.info('[Shutdown] Stopping services...')
+    // One bound over the whole thing, under ECS's 30s stop timeout. What is still running is abandoned,
+    // telemetry gets a last short flush, and the non-zero exit says it was not clean.
+    armShutdownDeadline(shutdownTimeoutMs(), () => {
+      agent.config.logger.error('[Shutdown] Did not finish in time; exiting')
+      void shutdownTelemetry(2000).finally(() => process.exit(1))
+    })
     server.close()
     await stopPurgeSchedulers()
     const cache = agent.dependencyManager.resolve(CacheModuleConfig).cache
@@ -682,7 +744,10 @@ export async function runRestAgent(restConfig: AriesRestConfig) {
       await cache.disconnect()
     }
     await shutdownWalletPortabilityService()
+    await shutdownRelayRuntime()
+    await shutdownRotationRuntime()
     await agent.shutdown()
+    await shutdownTelemetry()
     process.exit(0)
   }
 

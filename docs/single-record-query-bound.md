@@ -38,6 +38,8 @@ change PostgreSQL query plans or establish a database CPU reduction.
 Upstream ownership references:
 
 - [JavaScript Scan v0.4.3](https://github.com/openwallet-foundation/askar-wrapper-javascript/blob/v0.4.3/packages/askar-shared/src/store/Scan.ts)
+- [JavaScript Scan 0.6.1, published build](https://unpkg.com/@openwallet-foundation/askar-shared@0.6.1/build/store/Scan.js)
+  (same missing release; the patch is carried over unchanged)
 - [Native scan creation/free v0.4.6](https://github.com/openwallet-foundation/askar/blob/v0.4.6/src/ffi/store.rs)
 
 ## Regression verification

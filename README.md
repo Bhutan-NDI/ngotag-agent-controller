@@ -179,6 +179,8 @@ In case of an event, we will send the event to the webhookUrl with the topic of 
 
 So in this case when a connection event is triggered, it will be sent to: http://test.com/connections
 
+A change of a connection's DID (ours or theirs, or a hangup) is not a state change: it is sent to http://test.com/connections/did-rotated, with the connection record and a `didRotated` field holding the old and new DID.
+
 The payload of the webhook contains the serialized record related to the topic of the event. For the `connections` topic this will be a `ConnectionRecord`, for the `credentials` topic it will be a `CredentialRecord`, and so on.
 
 For the WebSocket clients, the events are sent as JSON stringified objects

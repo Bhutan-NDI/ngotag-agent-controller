@@ -1,6 +1,7 @@
 import type { ILogObject } from 'tslog'
 
 import { LogLevel, BaseLogger } from '@credo-ts/core'
+import { SeverityNumber } from '@opentelemetry/api-logs'
 import { promises as fsPromises } from 'fs'
 import { Logger } from 'tslog'
 
@@ -10,6 +11,71 @@ import { otelLogger } from '../tracer'
 const logFilePath = process.env.LOG_FILE_PATH
 // Bounds the sink so an opt-in debug flag can't fill the disk: one rotation, `${path}.1`, kept as backup.
 const maxLogFileBytes = Number(process.env.LOG_FILE_MAX_BYTES) || 10 * 1024 * 1024
+
+// Loki and Grafana read the level from the OTLP severity number, not from severityText.
+const otelSeverity = {
+  [LogLevel.test]: SeverityNumber.TRACE,
+  [LogLevel.trace]: SeverityNumber.TRACE,
+  [LogLevel.debug]: SeverityNumber.DEBUG,
+  [LogLevel.info]: SeverityNumber.INFO,
+  [LogLevel.warn]: SeverityNumber.WARN,
+  [LogLevel.error]: SeverityNumber.ERROR,
+  [LogLevel.fatal]: SeverityNumber.FATAL,
+} as const
+
+// The floor for what is exported over OTLP only (test|trace|debug|info|warn|error|fatal); the console is
+// unaffected. Defaults to info: the controllers run at debug, and every debug line sent to Loki would
+// swamp it and cost serialisation here. OTEL_LOGS_MIN_LEVEL lowers (or raises) it.
+function parseOtelMinLevel(raw: string | undefined): LogLevel {
+  if (!raw) return LogLevel.info
+  const level = LogLevel[raw.trim().toLowerCase() as keyof typeof LogLevel]
+  if (typeof level === 'number' && level < LogLevel.off) return level
+  process.stderr.write(`[logger] ignoring invalid OTEL_LOGS_MIN_LEVEL "${raw}"\n`)
+  return LogLevel.info
+}
+const otelMinLevel = parseOtelMinLevel(process.env.OTEL_LOGS_MIN_LEVEL)
+
+type PlainObject = Record<string, unknown>
+const isPlainObject = (value: unknown): value is PlainObject => null !== value && 'object' === typeof value
+
+// Message type URIs: the current didcomm.org prefix, and the legacy did:sov one.
+const DIDCOMM_TYPE_URI = /^(https:\/\/didcomm\.org\/|did:sov:[^;]+;spec\/)/
+
+// A DIDComm v1 message ('@type'), a v2 one ('type' under a didcomm.org URL), or a Credo message instance:
+// its class keeps the same fields as 'type' and 'id', with the rest of the message beside them.
+const isDidcommMessage = (value: PlainObject): boolean =>
+  'string' === typeof value['@type'] || ('string' === typeof value.type && DIDCOMM_TYPE_URI.test(value.type))
+
+// Credo also logs a message as JSON text (a parse failure passes JSON.stringify(message)).
+const looksLikeDidcommJson = (value: string): boolean => value.startsWith('{') && value.includes('"@type"')
+
+/**
+ * A decrypted DIDComm message is the plaintext of someone's credential or proof exchange. Credo logs every
+ * inbound one at info with the whole message as the log data, and at error when it cannot parse or deliver
+ * one, as a plain object, a message instance or JSON text. The sanitiser keeps their values (the console
+ * needs them to debug). Over OTLP they would sit in Loki for the retention period, so only the type and id
+ * of a message leave the process, wherever in the payload it sits.
+ */
+export function withoutDidcommBodies(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutDidcommBodies)
+  if ('string' === typeof value && looksLikeDidcommJson(value)) {
+    try {
+      const parsed: unknown = JSON.parse(value)
+      return isPlainObject(parsed) && isDidcommMessage(parsed) ? withoutDidcommBodies(parsed) : value
+    } catch {
+      // Truncated or not JSON after all: nothing recognisable to reduce, and it must not leave whole either.
+      return '[omitted: unparseable DIDComm-like JSON]'
+    }
+  }
+  if (!isPlainObject(value)) return value
+  if (isDidcommMessage(value)) {
+    const id = value['@id'] ?? value.id
+    return { '@type': value['@type'] ?? value.type, ...(id === undefined ? {} : { '@id': id }) }
+  }
+  const out: PlainObject = {}
+  for (const key of Object.keys(value)) out[key] = withoutDidcommBodies(value[key])
+  return out
+}
 
 // Serializes writes so rotation (stat -> rename -> append) can't race across overlapping log calls.
 let writeQueue: Promise<void> = Promise.resolve()
@@ -127,6 +193,12 @@ function sanitiseLogPayload(data?: Record<string, any>): { primaryError?: Error;
   }
 }
 
+// The level arrives unchecked from --log-level, AFJ_REST_LOG_LEVEL or the config file. Out of range
+// (or NaN) it would fail every isEnabled() check and silence errors too.
+function isLogLevel(value: unknown): value is LogLevel {
+  return Number.isInteger(value) && LogLevel.test <= (value as number) && (value as number) <= LogLevel.off
+}
+
 export class TsLogger extends BaseLogger {
   private logger: Logger
 
@@ -142,9 +214,11 @@ export class TsLogger extends BaseLogger {
   } as const
 
   public constructor(logLevel: LogLevel, name: string = 'credo-controller-service' as string) {
-    super(logLevel)
+    super(isLogLevel(logLevel) ? logLevel : LogLevel.info)
 
-    const minLevel = this.logLevel == LogLevel.off ? undefined : this.tsLogLevelMap[this.logLevel]
+    // log() returns before tslog for LogLevel.off; 'fatal' only keeps minLevel defined, since tslog
+    // reads undefined as "log everything".
+    const minLevel = this.logLevel == LogLevel.off ? 'fatal' : this.tsLogLevelMap[this.logLevel]
 
     this.logger = new Logger({
       name,
@@ -152,27 +226,29 @@ export class TsLogger extends BaseLogger {
       type: 'json' === process.env.LOG_FORMAT ? 'json' : 'pretty',
       minLevel,
       ignoreStackLevels: 5,
-      // minLevel is undefined only when LogLevel.off, in which case no transport should fire anyway.
-      attachedTransports:
-        logFilePath && minLevel
-          ? [
-              {
-                transportLogger: {
-                  silly: logToTransport,
-                  debug: logToTransport,
-                  trace: logToTransport,
-                  info: logToTransport,
-                  warn: logToTransport,
-                  error: logToTransport,
-                  fatal: logToTransport,
-                },
-                // tslog filters attached transports independently of the logger's own minLevel,
-                // so this must be set explicitly to match — otherwise the file sink gets everything.
-                minLevel,
+      attachedTransports: logFilePath
+        ? [
+            {
+              transportLogger: {
+                silly: logToTransport,
+                debug: logToTransport,
+                trace: logToTransport,
+                info: logToTransport,
+                warn: logToTransport,
+                error: logToTransport,
+                fatal: logToTransport,
               },
-            ]
-          : [],
+              // tslog filters attached transports independently of the logger's own minLevel,
+              // so this must be set explicitly to match — otherwise the file sink gets everything.
+              minLevel,
+            },
+          ]
+        : [],
     })
+
+    if (!isLogLevel(logLevel)) {
+      this.warn(`Invalid log level ${String(logLevel)}; falling back to info`)
+    }
   }
 
   private log(
@@ -180,6 +256,11 @@ export class TsLogger extends BaseLogger {
     message: string | { message: string },
     data?: Record<string, any>,
   ): void {
+    // Disabled levels cost nothing, as in Credo's ConsoleLogger; this also keeps LogLevel.off silent.
+    if (!this.isEnabled(level)) {
+      return
+    }
+
     const tsLogLevel = this.tsLogLevelMap[level]
 
     // Sanitised once, here, so no call site can leak by forgetting to. tslog inspects a plain
@@ -195,6 +276,10 @@ export class TsLogger extends BaseLogger {
     } else {
       this.logger[tsLogLevel](message)
     }
+    // Below the OTLP floor nothing more is built for it.
+    if (level < otelMinLevel) {
+      return
+    }
     let logMessage = ''
     if (typeof message === 'string') {
       logMessage = message
@@ -202,12 +287,13 @@ export class TsLogger extends BaseLogger {
       logMessage = message.message
     }
 
-    // The same sanitised values the console transport received -- OpenTelemetry is a second
-    // egress for the identical object, so it must not be given the raw one.
+    // The sanitised values the console transport received (OpenTelemetry is a second egress for the same
+    // object, so it must not be given the raw one), minus the bodies of DIDComm messages.
     const errorDetails = primaryError ? toSafeErrorShape(primaryError) : undefined
-    const safeAttributes = rest ?? {}
+    const safeAttributes = withoutDidcommBodies(rest ?? {}) as PlainObject
     otelLogger.emit({
       body: logMessage,
+      severityNumber: otelSeverity[level],
       severityText: LogLevel[level].toUpperCase(),
       attributes: {
         ...safeAttributes,

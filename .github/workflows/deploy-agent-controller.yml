@@ -205,6 +205,7 @@ jobs:
             exit 0
           fi
           docker buildx build --platform linux/arm64 --provenance=false --sbom=false --load \
+            --build-arg "RELEASE_VERSION=$(jq -r .version package.json)+${GITHUB_SHA:0:12}" \
             --cache-from type=gha,scope=agent-controller-arm64 \
             --cache-to type=gha,mode=max,scope=agent-controller-arm64 \
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \

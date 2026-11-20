@@ -5,6 +5,7 @@ import type { DidCommProofStateChangedEvent } from '@credo-ts/didcomm'
 
 import { DidCommProofEventTypes, DidCommProofState } from '@credo-ts/didcomm'
 
+import { proofStateChanges, proofVerifications } from '../utils/telemetry'
 import { isTenantAdmissionError } from '../utils/tenantSessionConfig'
 
 import { sendWebSocketEvent } from './WebSocketEvents'
@@ -13,6 +14,10 @@ import { sendWebhookEvent } from './WebhookEvent'
 export const proofEvents = async (agent: Agent, config: ServerConfig) => {
   agent.events.on(DidCommProofEventTypes.ProofStateChanged, async (event: DidCommProofStateChangedEvent) => {
     const record = event.payload.proofRecord
+    proofStateChanges.add(1, { state: record.state })
+    if (record.state === DidCommProofState.Done && record.isVerified !== undefined) {
+      proofVerifications.add(1, { verified: record.isVerified })
+    }
     const tenantId =
       !event.metadata.contextCorrelationId || event.metadata.contextCorrelationId === 'default'
         ? event.metadata.contextCorrelationId
